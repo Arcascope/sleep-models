@@ -1,0 +1,20 @@
+# Workspace tooling only. Each model family under this repository is its own
+# installable distribution; this file carries no package of its own.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+# The packages live under `autofish/src/`, which ruff does not discover as the
+# source root from the workspace root, so `autofish` imports are otherwise
+# treated as third-party. Naming it preserves the existing convention -- a
+# third-party block, a blank line, then the first-party block -- under
+# `ruff check --fix`.
+known-first-party = ["autofish"]
+
+[tool.pytest.ini_options]
+testpaths = ["autofish/tests"]

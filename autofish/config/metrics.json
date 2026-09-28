@@ -1,0 +1,19 @@
+{
+  "num_classes": 4,
+  "class_names": ["wake", "light", "deep", "rem", "gap"],
+  "psg_dt_minutes": 0.5,
+  "min_stage_minutes": 5.0,
+  "waso_bout_max_wake_gap_minutes": 30.0,
+  "metrics": [
+    "sleep_sensitivity",
+    "wake_specificity",
+    "tst_error_minutes",
+    "tst_mape",
+    "waso_mape",
+    "kappa_4stage",
+    "kappa_sleep_wake"
+  ],
+  "per_class_counts": true,
+  "per_class_mape": true,
+  "confusion_matrix": false
+}

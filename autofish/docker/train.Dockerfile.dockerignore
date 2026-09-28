@@ -1,0 +1,11 @@
+feature_cache/
+build/
+results/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.npz
+*.pisces
+*.safetensors

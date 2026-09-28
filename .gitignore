@@ -11,3 +11,5 @@ feature_cache/
 *.safetensors
 *.pisces
 *.npz
+
+plans/**

@@ -1,0 +1,328 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Self-contained infrastructure for one Autofish training job: its own VPC,
+  cluster, GPU capacity, roles and repository. Nothing here is shared with any
+  other stack, so deleting the stack removes everything it made.
+
+Parameters:
+  NamePrefix:
+    Type: String
+    Default: autofish-train
+    Description: Prefix for every resource this stack names.
+
+  InstanceType:
+    Type: String
+    Default: g6.2xlarge
+    Description: >
+      One GPU with 24 GB VRAM. g6.2xlarge is an L4 with 8 vCPU and 32 GiB RAM;
+      g5.2xlarge (A10G) is the same VRAM on older silicon if L4 capacity is
+      short. Measured peak is around 22 GB with XLA preallocation off.
+
+  GpuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id
+    Description: >
+      ECS-optimized GPU AMI, resolved at deploy time. It ships the NVIDIA
+      driver and container runtime, so nothing has to be installed on boot.
+
+  RootVolumeSizeGb:
+    Type: Number
+    Default: 120
+    Description: The training image is ~8 GB; this leaves room for it and its layers.
+
+  ResultsBucket:
+    Type: String
+    Default: arcascope-sleep-models-data
+    Description: Bucket the finished run is uploaded to.
+
+  ResultsPrefix:
+    Type: String
+    Default: training_outputs
+    Description: Key prefix under ResultsBucket. The task role is scoped to it.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+
+Resources:
+  # ---------------------------------------------------------------- network
+  # A job that pulls an image and writes to S3 needs egress and nothing else.
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-vpc" }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-igw" }]
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # Four AZs, not two. GPU instance families run out in individual zones
+  # routinely -- the first attempt at this stack failed to launch in both of
+  # its AZs while capacity existed in others -- and a subnet costs nothing.
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/20
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-a" }]
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.16.0/20
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-b" }]
+
+  SubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.32.0/20
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-c" }]
+
+  SubnetD:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.48.0/20
+      AvailabilityZone: !Select [3, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-d" }]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-rt" }]
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetA, RouteTableId: !Ref RouteTable }
+
+  SubnetBRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetB, RouteTableId: !Ref RouteTable }
+
+  SubnetCRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetC, RouteTableId: !Ref RouteTable }
+
+  SubnetDRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref SubnetD, RouteTableId: !Ref RouteTable }
+
+  # No ingress rule at all: the job is not a service and nobody connects to it.
+  # Shell access, if ever needed, is ECS Exec over SSM, which is outbound.
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${NamePrefix} egress only"
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: ECR, S3, CloudWatch, SSM
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-sg" }]
+
+  # ------------------------------------------------------------------- image
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref NamePrefix
+      ImageScanningConfiguration: { ScanOnPush: true }
+      # Tags move; a run is pinned by digest. Keeping tags immutable makes the
+      # code half of a run fingerprint mean something.
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the 10 most recent images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${NamePrefix}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # -------------------------------------------------------------------- IAM
+  # The instance registers itself with the cluster and pulls the image.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-instance" }]
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref InstanceRole] }
+
+  # ECS itself uses this to pull the image and open the log stream, before the
+  # container exists. It is not the container's identity.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-execution" }]
+
+  # The container's own identity: write the run's results, and nothing else.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: results-upload
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Scoped to the results prefix. A training job has no reason to
+              # read or write anything else in the bucket.
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:AbortMultipartUpload]
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}/${ResultsPrefix}/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Condition:
+                  StringLike: { "s3:prefix": !Sub "${ResultsPrefix}/*" }
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}"
+        - PolicyName: exec-shell
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-task" }]
+
+  # -------------------------------------------------------- GPU capacity
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${NamePrefix}-lt"
+      LaunchTemplateData:
+        ImageId: !Ref GpuAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: { Arn: !GetAtt InstanceProfile.Arn }
+        SecurityGroupIds: [!Ref TaskSecurityGroup]
+        MetadataOptions: { HttpTokens: required }
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref RootVolumeSizeGb
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            echo "ECS_CLUSTER=${NamePrefix}" >> /etc/ecs/ecs.config
+            echo "ECS_ENABLE_GPU_SUPPORT=true" >> /etc/ecs/ecs.config
+            # The image is large; give the pull room before ECS gives up.
+            echo "ECS_IMAGE_PULL_BEHAVIOR=default" >> /etc/ecs/ecs.config
+            echo "ECS_CONTAINER_STOP_TIMEOUT=2m" >> /etc/ecs/ecs.config
+
+  # Desired 0: the capacity provider starts an instance when a task is placed
+  # and scales back to nothing when it ends. A training run should not leave a
+  # GPU idling.
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${NamePrefix}-asg"
+      MinSize: "0"
+      MaxSize: "1"
+      DesiredCapacity: "0"
+      VPCZoneIdentifier: [!Ref SubnetA, !Ref SubnetB, !Ref SubnetC, !Ref SubnetD]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      NewInstancesProtectedFromScaleIn: true
+      Tags:
+        - { Key: Name, Value: !Sub "${NamePrefix}-gpu", PropagateAtLaunch: true }
+        - { Key: AmazonECSManaged, Value: "", PropagateAtLaunch: true }
+
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "${NamePrefix}-capacity"
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+          Status: ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 1
+        ManagedTerminationProtection: ENABLED
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref NamePrefix
+      ClusterSettings: [{ Name: containerInsights, Value: enabled }]
+
+  ClusterCapacity:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref Cluster
+      CapacityProviders: [!Ref CapacityProvider]
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref CapacityProvider
+          Weight: 1
+
+Outputs:
+  ClusterName: { Value: !Ref Cluster }
+  CapacityProviderName: { Value: !Sub "${NamePrefix}-capacity" }
+  RepositoryUri: { Value: !GetAtt Repository.RepositoryUri }
+  ExecutionRoleArn: { Value: !GetAtt ExecutionRole.Arn }
+  TaskRoleArn: { Value: !GetAtt TaskRole.Arn }
+  LogGroupName: { Value: !Ref LogGroup }
+  SubnetIds: { Value: !Join [",", [!Ref SubnetA, !Ref SubnetB, !Ref SubnetC, !Ref SubnetD]] }
+  SecurityGroupId: { Value: !Ref TaskSecurityGroup }
+  ResultsUri: { Value: !Sub "s3://${ResultsBucket}/${ResultsPrefix}" }

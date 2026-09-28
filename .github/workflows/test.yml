@@ -1,0 +1,51 @@
+name: test
+
+# CI for the autofish distribution. The workspace root pyproject.toml carries no
+# package; every build and install below is scoped to autofish/.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      # [all] carries the runtime deps the suite exercises (jax, pisces-lite,
+      # safetensors, ...); [report] adds pandas/matplotlib, which the summary
+      # and compare tests import directly. Tests for optional paths
+      # importorskip anything a future matrix entry cannot install.
+      - name: Install with dev, all and report extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./autofish[dev,all,report]"
+      - name: Run tests
+        run: python -m pytest autofish/tests -q
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: python -m pip install "ruff>=0.8"
+      # The root pyproject.toml holds the workspace ruff configuration.
+      # Gate on fatal errors only (syntax, undefined names): the full rule set
+      # in that config still reports pre-existing style findings. Tighten this
+      # selector as those are cleaned up.
+      - name: Check syntax and undefined names
+        run: ruff check --select E9,F63,F7,F82 autofish/src autofish/tests

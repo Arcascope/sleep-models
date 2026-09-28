@@ -1,0 +1,15 @@
+{
+  "run_seed": 0,
+  "seed_count": 1,
+  "epochs": 200,
+  "batch_size": 4,
+  "sliding_copies": 2,
+  "lr": 0.0005,
+  "weight_decay": 0.0005,
+  "x_length": 3000,
+  "y_length": 3000,
+  "deblip_schedule": "interleaved",
+  "curriculum_loss_mode": "weighted",
+  "deblip_adjustment_epochs": 20,
+  "deblip_logit_weight": 0.5
+}

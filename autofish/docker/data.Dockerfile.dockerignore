@@ -1,0 +1,8 @@
+# Ignore file for data.Dockerfile only; BuildKit picks it up by name, which
+# keeps it out of the cache directory that serves as the build context.
+#
+# Deny everything, then re-admit exactly the cache NPZs. The cache directory is
+# a working directory on someone's machine and picks up editor scratch files,
+# .DS_Store and stray scripts; none of that belongs in a byte-pinned image.
+*
+!*_features.npz
