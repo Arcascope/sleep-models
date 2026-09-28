@@ -26,7 +26,7 @@ pip install "arcascope-autofish[publish]"    # build a release bundle
 pip install "arcascope-autofish[hub]"        # build + upload to the Hugging Face Hub
 ```
 
-`pisces-lite` (4.0.0) and `arcascope-senpy` are public on PyPI; pisces-lite
+`pisces-lite` (4.1.0) and `arcascope-senpy` are public on PyPI; pisces-lite
 supplies the dataset/IO layer and the metric registry. Feature preparation
 additionally needs its `[proc]` extra, which pulls the prebuilt senpy wheel:
 

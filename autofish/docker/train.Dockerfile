@@ -15,7 +15,7 @@
 # than to whatever this tag froze.
 FROM nvidia/cuda:12.6.2-base-ubuntu24.04
 ARG JAX_VERSION=0.11.2
-ARG PISCES_LITE_VERSION=4.0.0
+ARG PISCES_LITE_VERSION=4.1.0
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \

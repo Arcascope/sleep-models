@@ -11,7 +11,7 @@ set -euo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 DOCKERFILE="$REPO_ROOT/docker/train.Dockerfile"
 IMAGE_NAME="${AUTOFISH_TRAIN_IMAGE_NAME:-autofish-train}"
-PISCES_LITE_VERSION="${PISCES_LITE_VERSION:-4.0.0}"
+PISCES_LITE_VERSION="${PISCES_LITE_VERSION:-4.1.0}"
 
 usage() {
     echo "Usage: $0 <data-image-ref> [--push <repository-uri>]" >&2
