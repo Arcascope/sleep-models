@@ -458,7 +458,12 @@ _METRIC_LABELS: dict[str, tuple[str, str, bool | None]] = {
     "kappa_sleep_wake": ("Cohen's κ, sleep/wake", "", True),
     "sleep_sensitivity": ("Sleep sensitivity", "%", True),
     "wake_specificity": ("Wake specificity", "%", True),
+    "balanced_accuracy": ("Balanced accuracy, sleep/wake", "%", True),
+    "f1_sleep": ("Sleep F1", "%", True),
+    "f1_wake": ("Wake F1", "%", True),
+    "f1_macro": ("Macro F1, sleep/wake mean", "%", True),
     "tst_error_minutes": ("TST error", "min", None),
+    "waso_error_minutes": ("WASO error", "min", None),
     "tst_mape": ("TST error", "%", False),
     "waso_mape": ("WASO error", "%", False),
     "kappa_4stage": ("Cohen's κ, 4-stage", "", True),
@@ -516,7 +521,7 @@ def _fmt_metric(metric: str, value: Any) -> str:
     value = float(value)
     if metric.startswith("kappa"):
         return f"{value:.2f}"
-    if metric == "tst_error_minutes":
+    if metric in ("tst_error_minutes", "waso_error_minutes"):
         return f"{value:+.1f}".replace("-", "−")
     if metric.endswith("_count"):
         return f"{value:.0f}" if abs(value) >= 10 or value == 0 else f"{value:.2f}"
