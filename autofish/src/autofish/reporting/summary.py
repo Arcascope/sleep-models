@@ -43,6 +43,9 @@ HEADLINE_METRICS = [
     "sleep_sensitivity",
     "wake_specificity",
     "kappa_sleep_wake",
+    "f1_sleep",
+    "f1_wake",
+    "f1_macro",
     "kappa_4stage",
     "tst_error_minutes",
     "tst_mape",
@@ -112,11 +115,39 @@ def discover_phases(directories: Iterable[Path | str]) -> list[Phase]:
     return phases
 
 
+def add_f1(wide: pd.DataFrame) -> pd.DataFrame:
+    """Add per-subject sleep/wake F1 (percent), derived from what the CSV holds.
+
+    Sensitivity and specificity are fractions of the true sleep and wake epoch
+    counts (light + deep + REM, and wake), which recovers the sleep-as-positive
+    confusion matrix exactly; wake F1 takes wake as positive. ``f1_macro`` is
+    their unweighted mean. Subjects missing a needed column are left out.
+    """
+    need = {"sleep_sensitivity", "wake_specificity", "true_wake_count",
+            "true_light_count", "true_deep_count", "true_rem_count"}
+    if not need <= set(wide.columns):
+        return wide
+    true_sleep = (wide["true_light_count"] + wide["true_deep_count"]
+                  + wide["true_rem_count"])
+    true_wake = wide["true_wake_count"]
+    sleep_tp = wide["sleep_sensitivity"] * true_sleep
+    wake_tp = wide["wake_specificity"] * true_wake
+    sleep_fn = true_sleep - sleep_tp
+    wake_fn = true_wake - wake_tp
+    # Each class's false positives are the other's misses.
+    wide = wide.copy()
+    wide["f1_sleep"] = 200.0 * sleep_tp / (2 * sleep_tp + wake_fn + sleep_fn)
+    wide["f1_wake"] = 200.0 * wake_tp / (2 * wake_tp + sleep_fn + wake_fn)
+    wide["f1_macro"] = (wide["f1_sleep"] + wide["f1_wake"]) / 2.0
+    return wide
+
+
 def to_subjects(frame: pd.DataFrame) -> pd.DataFrame:
     """One row per subject, one column per metric, percentages where expected."""
     wide = frame.pivot_table(
         index="subject_id", columns="metric", values="value", aggfunc="first"
     )
+    wide = add_f1(wide)
     for metric in AS_PERCENT:
         if metric in wide.columns:
             wide[metric] = wide[metric] * 100.0

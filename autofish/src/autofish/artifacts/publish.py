@@ -71,6 +71,9 @@ CARD_GRID_METRICS = (
     "tst_error_minutes",
     "tst_mape",
     "waso_mape",
+    "f1_sleep",
+    "f1_wake",
+    "f1_macro",
 )
 CARD_GRID_COLUMNS = 3
 #: Bounded scores drawn on their full range, so bar heights compare honestly.
@@ -78,6 +81,9 @@ CARD_GRID_YLIMS = {
     "sleep_sensitivity": (0.0, 100.0),
     "wake_specificity": (0.0, 100.0),
     "kappa_sleep_wake": (0.0, 1.0),
+    "f1_sleep": (0.0, 100.0),
+    "f1_wake": (0.0, 100.0),
+    "f1_macro": (0.0, 100.0),
 }
 
 #: The config snapshots a phase writes, and what each becomes in the bundle.
