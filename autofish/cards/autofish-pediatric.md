@@ -29,8 +29,8 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
 Trained on the pediatric cohort of Weaver _et al_
 ([PubMed 40676371](https://pubmed.ncbi.nlm.nih.gov/40676371/)), a clinical sample spanning
-no, mild, moderate and severe obstructive sleep apnea. 
+no, mild, moderate and severe obstructive sleep apnea (OSA). 
 
-Two adult cohorts were additoinally used for evaluating the trained model:
-1. SleepAccel: healthy adults ([Walch _et al_ 2019](https://pubmed.ncbi.nlm.nih.gov/31579900/))
-2. SleepAccel-Clinical: adults, with no, mild, moderate, and severe OSA  ([Canton, Tavella, _et al_, 2026](https://doi.org/10.1093/sleepadvances/zpag051))
+Two adult cohorts were additionally used for evaluating the trained model:
+1. [SleepAccel](https://pubmed.ncbi.nlm.nih.gov/31579900/): healthy adults
+2. [SleepAccel-Clinical](https://doi.org/10.1093/sleepadvances/zpag051): adults, with no diagnosis, plus mild, moderate, and severe OSA diagnoses.
