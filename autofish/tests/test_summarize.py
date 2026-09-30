@@ -223,3 +223,18 @@ def test_summarize_accepts_the_phase_directories_directly(tmp_path: Path) -> Non
 
     written = pd.read_csv(path)
     assert set(written.cohort) == {CV_COHORT, "SleepAccel-Clinical"}
+
+
+def test_balanced_accuracy_is_the_mean_of_sensitivity_and_specificity_in_percent() -> None:
+    frame = pd.DataFrame(
+        {
+            "subject_id": ["a", "a"],
+            "dataset": ["A", "A"],
+            "metric": ["sleep_sensitivity", "wake_specificity"],
+            "value": [0.9, 0.5],
+        }
+    )
+
+    subjects = to_subjects(frame)
+
+    assert subjects.loc["a", "balanced_accuracy"] == pytest.approx(70.0)

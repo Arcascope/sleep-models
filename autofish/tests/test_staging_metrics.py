@@ -108,3 +108,22 @@ def test_pooled_confusion_counts_only_scored_epochs() -> None:
     cm = pooled_confusion(np.asarray(y_true), np.asarray(y_pred), num_classes=4)
 
     assert cm.sum() == 2
+
+# --- waso_error_minutes ------------------------------------------------------
+
+#: Sleep interrupted by two wake epochs, bracketed by wake.
+_INTERRUPTED = [WAKE, LIGHT, LIGHT, WAKE, WAKE, DEEP, REM, WAKE]
+_UNBROKEN = [WAKE, LIGHT, LIGHT, LIGHT, LIGHT, DEEP, REM, WAKE]
+
+
+def test_waso_error_minutes_is_zero_for_a_perfect_prediction() -> None:
+    ctx = _ctx(_INTERRUPTED, _INTERRUPTED, {"psg_dt_minutes": 0.5})
+    assert staging_metrics._waso_error_minutes(ctx) == 0.0
+
+
+def test_waso_error_minutes_is_predicted_minus_true() -> None:
+    missed = _ctx(_INTERRUPTED, _UNBROKEN, {"psg_dt_minutes": 0.5})
+    invented = _ctx(_UNBROKEN, _INTERRUPTED, {"psg_dt_minutes": 0.5})
+
+    assert staging_metrics._waso_error_minutes(missed) == pytest.approx(-1.0)
+    assert staging_metrics._waso_error_minutes(invented) == pytest.approx(1.0)

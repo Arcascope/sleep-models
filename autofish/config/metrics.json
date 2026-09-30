@@ -9,6 +9,7 @@
     "wake_specificity",
     "tst_error_minutes",
     "tst_mape",
+    "waso_error_minutes",
     "waso_mape",
     "kappa_4stage",
     "kappa_sleep_wake"

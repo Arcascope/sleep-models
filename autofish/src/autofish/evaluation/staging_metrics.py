@@ -7,6 +7,7 @@ name them alongside the built-ins (``auroc``, ``tst_mape``, ``waso_mape``):
     wake_specificity       sleep-vs-wake specificity
     tst_error_minutes      signed TST error, predicted minus true
     tst_abs_error_minutes  the same error's magnitude
+    waso_error_minutes     signed WASO error, predicted minus true
     kappa_4stage           Cohen's kappa over the four sleep stages
     kappa_sleep_wake       Cohen's kappa over binarized wake/sleep
 
@@ -42,7 +43,7 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 from pisces_lite.metrics.context import EvalContext
-from pisces_lite.metrics.specs import hard_preds, psg_dt, register_metric
+from pisces_lite.metrics.specs import hard_preds, psg_dt, register_metric, waso_minutes
 from pisces_lite.metrics.specs.base import gap_class_indices, sleep_mask
 
 
@@ -362,6 +363,14 @@ def _tst_abs_error_minutes(ctx: EvalContext) -> float:
     near-zero error. Report this beside it, not instead of it.
     """
     return abs(_tst_error_minutes(ctx))
+
+
+@register_metric("waso_error_minutes")
+def _waso_error_minutes(ctx: EvalContext) -> float:
+    """Signed WASO error in minutes: predicted minus true."""
+    y_true, y_pred = _hard_arrays(ctx)
+    dt = psg_dt(ctx)
+    return waso_minutes(y_pred, dt, ctx) - waso_minutes(y_true, dt, ctx)
 
 
 @register_metric("kappa_4stage")

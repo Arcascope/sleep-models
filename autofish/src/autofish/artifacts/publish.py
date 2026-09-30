@@ -63,14 +63,15 @@ _FRONTMATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 _HTML_IMG_SRC = re.compile(r'(?P<pre><img\b[^>]*?\bsrc=")(?P<src>[^"]+)(?P<post>")')
 
 #: The card's metrics-grid panels, in reading order, three to a row: the
-#: sleep/wake agreement metrics, then the total-sleep and WASO errors.
+#: sleep/wake agreement metrics, the total-sleep and WASO errors with balanced
+#: accuracy, then the F1 scores.
 CARD_GRID_METRICS = (
     "sleep_sensitivity",
     "wake_specificity",
     "kappa_sleep_wake",
     "tst_error_minutes",
-    "tst_mape",
-    "waso_mape",
+    "waso_error_minutes",
+    "balanced_accuracy",
     "f1_sleep",
     "f1_wake",
     "f1_macro",
@@ -81,6 +82,7 @@ CARD_GRID_YLIMS = {
     "sleep_sensitivity": (0.0, 100.0),
     "wake_specificity": (0.0, 100.0),
     "kappa_sleep_wake": (0.0, 1.0),
+    "balanced_accuracy": (0.0, 100.0),
     "f1_sleep": (0.0, 100.0),
     "f1_wake": (0.0, 100.0),
     "f1_macro": (0.0, 100.0),

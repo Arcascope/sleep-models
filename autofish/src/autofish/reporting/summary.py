@@ -48,6 +48,8 @@ HEADLINE_METRICS = [
     "f1_macro",
     "kappa_4stage",
     "tst_error_minutes",
+    "waso_error_minutes",
+    "balanced_accuracy",
     "tst_mape",
     "waso_mape",
     "light_mape",
@@ -151,6 +153,10 @@ def to_subjects(frame: pd.DataFrame) -> pd.DataFrame:
     for metric in AS_PERCENT:
         if metric in wide.columns:
             wide[metric] = wide[metric] * 100.0
+    if AS_PERCENT <= set(wide.columns):
+        wide["balanced_accuracy"] = (
+            wide["sleep_sensitivity"] + wide["wake_specificity"]
+        ) / 2.0
     return wide
 
 
