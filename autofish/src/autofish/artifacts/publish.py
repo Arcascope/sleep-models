@@ -795,10 +795,9 @@ def _model_card(
         "",
         f"# {repo_id or 'autofish'} · {version}",
         "",
-        "**Sleep stages from a raw wrist accelerometer recording.** No PSG needed "
-        "to run it: one prediction per 30-second epoch, scored across the whole "
-        "recording at once. Built and evaluated first for sleep/wake.",
-        "",
+        "**Sleep stages from triaxial accelerometer recordings.**  ",
+        "4-class sleep stage prediction, metric reports, and hypnograms. ",
+        "Built with a focus on sleep-wake."
     ]
 
     fs = preprocessing.get("fs")
