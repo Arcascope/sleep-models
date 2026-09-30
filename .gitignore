@@ -11,5 +11,6 @@ feature_cache/
 *.safetensors
 *.pisces
 *.npz
+autofish_pseudonym.key
 
 plans/**

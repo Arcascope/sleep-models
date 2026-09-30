@@ -41,6 +41,7 @@ from pisces_lite.proc import ProcessingConfig
 
 from autofish.data.bundle import AutofishBundle
 from autofish.data.cache import CACHE_SUFFIX
+from autofish.data.pseudonyms import cache_ids, load_pseudonym_key
 from autofish.ggir import anglez_bins, epoch_bins
 from autofish.data.constants import MIN_SCORED_MINUTES
 
@@ -289,30 +290,34 @@ def median_sampling_rate(timestamps: np.ndarray) -> float:
     return 1.0 / float(steps[steps.size // 2]) if steps.size else 0.0
 
 
-def _load_one(subject_id: str) -> tuple[str, object]:
-    """Worker-side load: ``("ok", PreparedSubject)`` or a reason it was dropped."""
+def _load_one(subject_id: str, cache_id: str) -> tuple[str, object]:
+    """Worker-side load: ``("ok", PreparedSubject)`` or a reason it was dropped.
+
+    ``subject_id`` reads the source files; the subject is reported and cached
+    as ``cache_id``, its pseudonym when the dataset has a key.
+    """
     data_set = _LOAD_STATE["data_set"]
     try:
         item = prepare_subject(data_set, subject_id)
     except Exception as exc:  # noqa: BLE001 - reported with the subject attached
-        return "failed", f"{subject_id}: {type(exc).__name__}: {exc}"
+        return "failed", f"{cache_id}: {type(exc).__name__}: {exc}"
     finally:
         # DataSetObject keeps every DataFrame it has read; a worker sees many
         # nights, so drop them once the subject is prepared.
         for frames in getattr(data_set, "_feature_cache", {}).values():
             frames.pop(subject_id, None)
-    item = replace(item, anglez_bins=anglez_bins(item.accel_values))
+    item = replace(item, subject_id=cache_id, anglez_bins=anglez_bins(item.accel_values))
     # Checked before the NUFFT, which is the expensive part of prep.
     minutes = scored_minutes(item.labels)
     if minutes < _LOAD_STATE["min_scored_minutes"]:
-        return "excluded", f"{subject_id}: {minutes:.1f} min scored"
+        return "excluded", f"{cache_id}: {minutes:.1f} min scored"
     # senpy refuses a batch holding any recording sampled below the target
     # rate: its bins above that recording's Nyquist would be aliasing.
     target_fs = _LOAD_STATE["target_fs"]
     if target_fs and item.accel_values.shape[0] > 1:
         fs = median_sampling_rate(item.accel_values[:, 0])
         if fs < target_fs:
-            return "failed", f"{subject_id}: sampled at {fs:.2f} Hz, below target {target_fs:g} Hz"
+            return "failed", f"{cache_id}: sampled at {fs:.2f} Hz, below target {target_fs:g} Hz"
     return "ok", item
 
 
@@ -349,20 +354,29 @@ def process_dataset(
     same way. They are dropped here rather than at training time so the cache
     is the cohort: a short or wholly unscored night cannot be trained on, and
     scoring one yields metrics that are undefined rather than merely poor.
+
+    A dataset directory with a pseudonym key is cached under its subjects'
+    pseudonyms (see :mod:`autofish.data.pseudonyms`), never their source ids.
     """
     data_set = load_dataset(dataset_dir, name)
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     subject_ids = list(data_set.ids)
-    print(f"{data_set.name}: {len(subject_ids)} subjects -> {cache_dir}")
+    key = load_pseudonym_key(dataset_dir)
+    to_cache_id = cache_ids(key, subject_ids)
+    print(
+        f"{data_set.name}: {len(subject_ids)} subjects -> {cache_dir}"
+        + (" (pseudonymised)" if key is not None else "")
+    )
 
     pending: List[str] = []
     written: List[Path] = []
     for subject_id in subject_ids:
-        destination = cache_dir / get_features_cache_name(data_set.name, subject_id)
+        cache_id = to_cache_id[subject_id]
+        destination = cache_dir / get_features_cache_name(data_set.name, cache_id)
         if destination.exists() and not overwrite:
-            print(f"  {subject_id}: cached")
+            print(f"  {cache_id}: cached")
             written.append(destination)
             continue
         pending.append(subject_id)
@@ -404,7 +418,7 @@ def process_dataset(
                 subject_id = next(ids, None)
                 if subject_id is None:
                     return
-                loading.add(loaders.submit(_load_one, subject_id))
+                loading.add(loaders.submit(_load_one, subject_id, to_cache_id[subject_id]))
 
         def collect_saves(block: bool) -> None:
             done = [f for f in saving if f.done()] if not block else list(saving)
@@ -488,15 +502,17 @@ def backfill_sib(
     """
     data_set = load_dataset(dataset_dir, name)
     cache_dir = Path(cache_dir)
+    to_cache_id = cache_ids(load_pseudonym_key(dataset_dir), data_set.ids)
     written: List[Path] = []
     failures: List[str] = []
     for subject_id in data_set.ids:
-        path = cache_dir / get_features_cache_name(data_set.name, subject_id)
+        cache_id = to_cache_id[subject_id]
+        path = cache_dir / get_features_cache_name(data_set.name, cache_id)
         if not path.exists():
             continue
         bundle = AutofishBundle.from_npz(path)
         if bundle.anglez_5s is not None and not overwrite:
-            print(f"  {subject_id}: already has anglez_5s")
+            print(f"  {cache_id}: already has anglez_5s")
             continue
         try:
             item = prepare_subject(data_set, subject_id)
@@ -505,7 +521,7 @@ def backfill_sib(
                 raise ValueError("cached labels differ from the source data's")
             bundle.anglez_5s = epoch_bins(*anglez_bins(item.accel_values), n_labels)[None]
         except Exception as exc:  # noqa: BLE001 - reported with the subject attached
-            failures.append(f"{subject_id}: {type(exc).__name__}: {exc}")
+            failures.append(f"{cache_id}: {type(exc).__name__}: {exc}")
             continue
         finally:
             for frames in getattr(data_set, "_feature_cache", {}).values():
@@ -514,7 +530,7 @@ def backfill_sib(
         bundle.save_npz(staging)
         staging.replace(path)
         written.append(path)
-        print(f"  {subject_id}: anglez_5s {bundle.anglez_5s.shape[1:]}")
+        print(f"  {cache_id}: anglez_5s {bundle.anglez_5s.shape[1:]}")
     if failures:
         print(f"{len(failures)} subject(s) not updated:")
         for line in failures:

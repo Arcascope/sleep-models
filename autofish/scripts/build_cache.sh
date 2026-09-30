@@ -6,4 +6,4 @@ if [[ -z "${VOLUME_DIR}" ]]; then
     exit 1;
 fi
 
-autofish process -pc config/inputs.json -dd "${VOLUME_DIR}/weaver" -dd "${VOLUME_DIR}/SleepAccel" -dd "${VOLUME_DIR}/SleepAccel-Clinical" --batch-size 16
+autofish process -pc config/inputs.json -dd "${VOLUME_DIR}/weaver" -dd "${VOLUME_DIR}/Foundry" -dd "${VOLUME_DIR}/SleepAccel" -dd "${VOLUME_DIR}/SleepAccel-Clinical" --batch-size 16
