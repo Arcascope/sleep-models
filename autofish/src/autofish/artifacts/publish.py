@@ -20,12 +20,22 @@ import json
 import math
 import re
 import shutil
+import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from string import Template
 from typing import Any
 
 from autofish.artifacts.provenance import code_digest, run_provenance, sha256_file
+
+#: Hand-edited Markdown that ships with the package (``quickstart.md``).
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def _template_path(name: str) -> Path:
+    return TEMPLATES_DIR / f"{name}.md"
+
 
 BUNDLE_FILES = (
     "model.safetensors",
@@ -80,10 +90,54 @@ _CONFIG_TO_BUNDLE = {
 #: generated card that still says PENDING is a bundle that must not ship.
 CARD_REVIEW_PENDING = "PENDING"
 
-#: The public Hub repository a release targets by default. One repo per model
-#: variant, versions as tags/revisions -- the pediatric clinical cohort is a
-#: distinct variant, so it has its own repository rather than sharing one.
-DEFAULT_HUB_REPO = "arcascope/autofish-pediatric"
+
+
+@dataclass(frozen=True)
+class ReleaseInfo:
+    """What distinguishes one model variant's release, read from ``--info``.
+
+    One TOML file per variant (one Hub repo per variant, versions as tags), so
+    nothing about an audience is baked into the code. Every key is optional:
+
+    ``repo``           Hub repository the card is titled for, e.g. ``org/name``
+    ``card``           authored Markdown, relative to the TOML (what ``--card`` takes)
+    ``audience``       the glance table's "For" row
+    ``protocol``       paragraph describing how the reported numbers were produced
+    ``require_cv``     the glance score must come from the pooled ``cv`` cohort
+    ``[cohorts]``      cohort name -> one-line description for the performance section
+    """
+
+    repo: str | None = None
+    card: Path | None = None
+    audience: str | None = None
+    protocol: str | None = None
+    require_cv: bool = False
+    cohorts: Mapping[str, str] = field(default_factory=dict)
+
+
+_INFO_KEYS = frozenset({"repo", "card", "audience", "protocol", "require_cv", "cohorts"})
+
+
+def load_release_info(path: Path | str) -> ReleaseInfo:
+    """Parse a release-info TOML; unknown keys are an error so typos surface."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"no such release info file: {path}")
+    try:
+        raw = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+    unknown = sorted(set(raw) - _INFO_KEYS)
+    if unknown:
+        raise ValueError(f"{path}: unknown keys {unknown}; expected {sorted(_INFO_KEYS)}")
+    return ReleaseInfo(
+        repo=raw.get("repo"),
+        card=path.parent / raw["card"] if "card" in raw else None,
+        audience=raw.get("audience"),
+        protocol=raw.get("protocol"),
+        require_cv=bool(raw.get("require_cv", False)),
+        cohorts=dict(raw.get("cohorts", {})),
+    )
 
 
 @dataclass(frozen=True)
@@ -305,7 +359,7 @@ def _summary_by_cohort(table: Any) -> dict[str, dict[str, dict[str, Any]]]:
 
 
 def _draw_metrics_grid(table: Any, output_dir: Path) -> str:
-    """Draw the summary's headline metrics into ``assets/metrics_grid.png``.
+    """Draw the summary's headline metrics into a PNG under :data:`ASSETS_DIR`.
 
     One panel per metric, cohorts across the x-axis, so the card carries the
     same figure ``autofish summarize`` and ``autofish compare`` would produce.
@@ -412,15 +466,6 @@ CARD_TABLE_EXCLUDED_METRICS = frozenset({"kappa_4stage"})
 
 #: The pooled cross-validation cohort :func:`_discovered_metrics` builds.
 _CV_COHORT = "cv"
-
-#: Who each evaluation cohort is, so a reader knows which column to trust for
-#: the pediatric population the model is for.
-_COHORT_DESCRIPTIONS = {
-    _CV_COHORT: "held-out folds of the pediatric training data; the closest "
-    "estimate for the intended population",
-    "SleepAccel": "healthy adults",
-    "SleepAccel-Clinical": "adults with sleep apnea of varying severity",
-}
 
 #: Epoch length the readout scores, in seconds.
 _EPOCH_SECONDS = 30
@@ -535,9 +580,8 @@ def _glance_score(
 ) -> str | None:
     """One line for the at-a-glance table: the headline κ on its headline cohort.
 
-    The pediatric release is for the Weaver population, so its card must not
-    silently substitute an adult external holdout when the pooled five-fold
-    results are missing.
+    With ``require_cv`` the card must not silently substitute an external
+    holdout when the pooled cross-validation results are missing.
     """
     if not summary:
         return None
@@ -559,61 +603,20 @@ def _glance_score(
     )
 
 
-def _training_and_validation_protocol(repo_id: str) -> list[str]:
-    """How the pediatric release's numbers were produced, in two sentences.
-
-    Specific to the pediatric release rather than presented as a property of
-    every future Autofish variant.
-    """
-    if repo_id != DEFAULT_HUB_REPO:
-        return []
-    return [
-        "**Protocol.** The pediatric dataset from Weaver _et al_ was split into "
-        "five fixed, participant-level folds, balanced across no-diagnosis, mild, "
-        "moderate, and severe obstructive sleep apnea. The cross-validation column "
-        "pools five models, each scoring the fold it did not train on; the "
-        "released model was then trained on all Weaver data and scored on the two "
-        "adult cohorts.",
-        "",
-    ]
-
-
 def _quickstart(repo_id: str, local_dir: str, stage_names: Sequence[str]) -> list[str]:
-    """Raw accelerometer file in, per-epoch stages out: the card's main use case."""
-    columns = ", ".join(stage_names)
-    return [
-        "## Quickstart",
-        "",
-        "```bash",
-        "pip install 'arcascope-autofish[inference,hub]'",
-        f"hf download {repo_id} --local-dir {local_dir}",
-        "",
-        "# One CSV per recording: epoch, start_s, "
-        + columns
-        + ", stage, is_gap",
-        f"autofish predict {local_dir} recordings/*.csv -o predictions/",
-        "```",
-        "",
-        "Or from Python:",
-        "",
-        "```python",
-        "from autofish.predict import Predictor, read_accelerometer",
-        "",
-        f'predictor = Predictor("{local_dir}")     # load once, reuse',
-        'accel = read_accelerometer("night.csv")  # (N, 4): t [s], x, y, z [g]',
-        "result = predictor.predict(accel)",
-        "",
-        f"result.probabilities   # (epochs, {len(stage_names)}): {columns}",
-        'result.labels          # stage name per 30-s epoch, "gap" where there was no data',
-        "result.epoch_start_s   # epoch start times, on the input clock",
-        'result.to_csv("night_stages.csv")',
-        "```",
-        "",
-        "Pass `origin=` (seconds on the input clock, or `\"unix\"`) to put epoch "
-        "boundaries somewhere other than the first sample, for example at the "
-        "start of a PSG recording you want to compare with.",
-        "",
-    ]
+    """Raw accelerometer file in, per-epoch stages out: the card's main use case.
+
+    The prose lives in ``templates/quickstart.md`` so it can be edited as
+    Markdown; ``$repo_id``, ``$local_dir``, ``$columns`` and ``$n_stages`` are
+    filled from the bundle.
+    """
+    text = Template(_template_path("quickstart").read_text()).safe_substitute(
+        repo_id=repo_id,
+        local_dir=local_dir,
+        columns=", ".join(stage_names),
+        n_stages=len(stage_names),
+    )
+    return [*text.rstrip("\n").split("\n"), ""]
 
 
 def _input_requirements(preprocessing: Mapping[str, Any], input_shape: Sequence[int]) -> list[str]:
@@ -645,7 +648,7 @@ def _input_requirements(preprocessing: Mapping[str, Any], input_shape: Sequence[
     return lines
 
 
-def _outputs(stage_names: Sequence[str], score_gap: bool) -> list[str]:
+def _outputs(stage_names: Sequence[str]) -> list[str]:
     lines = [
         "## Outputs",
         "",
@@ -661,19 +664,14 @@ def _outputs(stage_names: Sequence[str], score_gap: bool) -> list[str]:
     lines += [
         "",
         "`is_gap` is not a model output: it marks epochs with no accelerometer "
-        "samples"
-        + (
-            ". The network also has a gap logit, which `autofish.predict` drops."
-            if score_gap
-            else "."
-        ),
+        "samples.",
         "",
     ]
     return lines
 
 
 def _performance(
-    repo_id: str,
+    info: ReleaseInfo,
     metrics: Mapping[str, Any],
     evaluation: Mapping[str, Any] | None,
     summary: Mapping[str, Any] | None,
@@ -701,11 +699,12 @@ def _performance(
         "averaged over subjects, with 95% confidence intervals of the mean.",
         "",
     ]
-    described = [c for c in _ordered_cohorts(summary) if c in _COHORT_DESCRIPTIONS]
-    lines += [f"- **{_cohort_title(c)}:** {_COHORT_DESCRIPTIONS[c]}." for c in described]
+    described = [c for c in _ordered_cohorts(summary) if c in info.cohorts]
+    lines += [f"- **{_cohort_title(c)}:** {info.cohorts[c]}." for c in described]
     if described:
         lines.append("")
-    lines += _training_and_validation_protocol(repo_id)
+    if info.protocol:
+        lines += [f"**Protocol.** {info.protocol.strip()}", ""]
 
     declared = list(metrics.get("metrics", []))
     lines += [
@@ -756,6 +755,7 @@ def _model_card(
     evaluation: Mapping[str, Any] | None,
     summary: Mapping[str, Any] | None,
     authored_card: str | None,
+    info: ReleaseInfo = ReleaseInfo(),
     grid_asset: str | None = None,
     parameter_count: int | None = None,
     assets: Sequence[str] = (),
@@ -777,7 +777,7 @@ def _model_card(
     labels = _label_map(config)
     stage_names = labels["class_names"][: labels["num_classes"]]
     input_shape = tuple(provenance.get("input_shape") or ())
-    local_dir = repo_id.rsplit("/", 1)[-1]
+    local_dir = repo_id.rsplit("/", 1)[-1] or "autofish"
 
     lines: list[str] = []
     # Hub YAML frontmatter: without it the license and task tags would be absent
@@ -793,7 +793,7 @@ def _model_card(
         "- time-series",
         "---",
         "",
-        f"# {repo_id} · {version}",
+        f"# {repo_id or 'autofish'} · {version}",
         "",
         "**Sleep stages from a raw wrist accelerometer recording.** No PSG needed "
         "to run it: one prediction per 30-second epoch, scored across the whole "
@@ -804,14 +804,15 @@ def _model_card(
     fs = preprocessing.get("fs")
     glance = [
         ("Predicts", ", ".join(f"`{c}`" for c in stage_names) + " per 30-s epoch"),
-        ("For", "Children and adolescents aged 5 to 18"),
         (
             "Input",
             "Timestamped triaxial accelerometer"
             + (f", {float(fs):g} Hz or faster" if fs is not None else ""),
         ),
     ]
-    score = _glance_score(summary, require_cv=repo_id == DEFAULT_HUB_REPO)
+    if info.audience:
+        glance.insert(1, ("For", info.audience))
+    score = _glance_score(summary, require_cv=info.require_cv)
     if score:
         glance.append(("Score", score))
     glance.append(
@@ -827,6 +828,8 @@ def _model_card(
     lines.append("|:---|:---|")
     lines += [f"| **{key}** | {value} |" for key, value in glance[1:]]
     lines.append("")
+    lines += _quickstart(repo_id, local_dir, stage_names)
+    lines += _performance(info, metrics, evaluation, summary, grid_asset)
 
     if reviewed:
         lines += [authored_card.strip(), ""]
@@ -839,10 +842,8 @@ def _model_card(
             "",
         ]
 
-    lines += _quickstart(repo_id, local_dir, stage_names)
-    lines += _performance(repo_id, metrics, evaluation, summary, grid_asset)
     lines += _input_requirements(preprocessing, input_shape)
-    lines += _outputs(stage_names, bool(config.get("score_gap", True)))
+    lines += _outputs(stage_names)
 
     lines += ["## Model", ""]
     lines += _describe_architecture(config, parameter_count)
@@ -922,12 +923,12 @@ def _is_remote_image(src: str) -> bool:
 def _collect_assets(
     card_text: str, card_dir: Path, output_dir: Path
 ) -> tuple[str, tuple[str, ...]]:
-    """Copy images the authored card references into ``assets/``.
+    """Copy images the authored card references into :data:`ASSETS_DIR`.
 
     A relative ``src`` is read from next to the card file, copied into the
     bundle's :data:`ASSETS_DIR`, and the link is rewritten to point there, so the
     published card resolves on the Hub without the author's machine. A remote URL
-    (``https://``, ``data:`` or an already-bundled ``assets/`` path) is left
+    (``https://``, ``data:`` or an already-bundled :data:`ASSETS_DIR` path) is left
     alone. A relative path that does not resolve is an error: silently dropping a
     figure the author asked for would ship a card with broken images.
     """
@@ -981,7 +982,7 @@ def _bundle_relpaths(directory: Path) -> list[str]:
 
 
 def _inline_assets(html: str, bundle_dir: Path) -> str:
-    """Replace ``assets/...`` image srcs with data URIs so a preview is portable.
+    """Replace bundled-asset image srcs with data URIs so a preview is portable.
 
     Operates on the rendered HTML, so it matches the ``src`` attribute rather
     than Markdown image syntax.
@@ -1004,7 +1005,7 @@ def render_card_html(bundle_dir: Path | str) -> str:
     """Render a built bundle's ``README.md`` to a self-contained HTML page.
 
     This is a local preview only: it is not part of the released bundle. Images
-    referenced from ``assets/`` are inlined as data URIs so the page opens
+    referenced from :data:`ASSETS_DIR` are inlined as data URIs so the page opens
     standalone and matches what the Hub will render. Requires the ``preview``
     extra (``markdown-it-py``); imports it lazily so the base install is
     unaffected.
@@ -1179,7 +1180,8 @@ def build_release_bundle(
     metrics_summary: Path | str | None = None,
     card: Path | str | None = None,
     input_shape: tuple[int, ...] | None = None,
-    repo_id: str = DEFAULT_HUB_REPO,
+    repo_id: str | None = None,
+    info: Path | str | None = None,
     overwrite: bool = False,
 ) -> ReleaseBundle:
     """Build the release bundle from ``training_dir`` into ``output_dir``.
@@ -1189,8 +1191,10 @@ def build_release_bundle(
     is derived from the phase's own config snapshots, the run provenance
     primitives, and any evaluation or summary artifact supplied.
 
-    ``repo_id`` is the destination Hub repository; it titles and metadata-tags
-    the card, so pass the variant's repo when building for one.
+    ``info`` is a release-info TOML (:class:`ReleaseInfo`) describing the
+    variant: its repo, audience, protocol, cohort descriptions and authored
+    card. ``repo_id`` and ``card`` override what it names. ``repo_id`` titles
+    the card, so a variant in its own repository is labelled as that variant.
 
     When ``metrics_summary`` is omitted, the phase's own
     ``cv_results_<n>_stages.csv`` and any sibling ``fold<i>`` directories are
@@ -1200,12 +1204,16 @@ def build_release_bundle(
     ``card`` is an authored Markdown file: intended use, limitations, how to
     apply, comparisons, figures. Its text is placed after the title and the
     generated model/input-pipeline/labels/evaluation/provenance sections follow
-    it. Relative images it references are copied into ``assets/`` and rewritten.
-    Without ``card`` the card is generated with a PENDING review marker and
+    it. Relative images it references are copied into :data:`ASSETS_DIR` and rewritten.
+    Without ``card`` the card is generated with a :data:`CARD_REVIEW_PENDING` review marker and
     :attr:`ReleaseBundle.approved` is false.
     """
     training_dir = Path(training_dir)
     output_dir = Path(output_dir)
+    release_info = load_release_info(info) if info is not None else ReleaseInfo()
+    repo_id = repo_id or release_info.repo or ""
+    if card is None:
+        card = release_info.card
     if output_dir.exists() and any(output_dir.iterdir()):
         if not overwrite:
             raise FileExistsError(
@@ -1309,6 +1317,7 @@ def build_release_bundle(
         evaluation=phase_eval,
         summary=summary,
         authored_card=authored_text,
+        info=release_info,
         grid_asset=grid_asset,
         parameter_count=parameter_count,
         assets=assets,
@@ -1394,7 +1403,7 @@ def publish_to_hub(
 
     The whole bundle goes up in one ``upload_folder`` call, so an approved
     publication is one atomic Hub commit rather than a run of per-file commits.
-    Every regular file in the bundle -- the fixed files plus any ``assets/``
+    Every regular file in the bundle -- the fixed files plus any :data:`ASSETS_DIR`
     images the card references -- is included, restricted to what
     :func:`verify_bundle` accepted. ``revision`` optionally targets a branch
     (e.g. ``main``); tags are created separately by the release process. Without

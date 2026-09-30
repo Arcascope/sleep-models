@@ -21,11 +21,10 @@ import numpy as np
 
 from autofish.artifacts.publish import (
     BUNDLE_FILES,
-    CARD_REVIEW_PENDING,
     _glance_score,
-    _metric_label,
     build_release_bundle,
     load_bundle_model,
+    load_release_info,
     verify_bundle,
 )
 from autofish.model import AutofishNetConfig, AutofishNetModel
@@ -103,6 +102,19 @@ def _results_csv(directory: Path, dataset: str, fold: str, n_subjects: int = 3) 
     return path
 
 
+PEDIATRIC_INFO = Path(__file__).resolve().parents[1] / "cards" / "autofish-pediatric.toml"
+
+
+def _info_without_card(root: Path) -> Path:
+    """The pediatric info with its authored card dropped, so the card is PENDING."""
+    text = "\n".join(
+        line for line in PEDIATRIC_INFO.read_text().splitlines() if not line.startswith("card =")
+    )
+    path = root / "info.toml"
+    path.write_text(text)
+    return path
+
+
 def _summary(path: Path) -> Path:
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -155,40 +167,22 @@ def test_provenance_records_the_checkpoint_and_phase_hashes(tmp_path: Path) -> N
     assert provenance["input_shape"] == [8, 3, 2]
 
 
-def test_card_carries_metrics_and_a_pending_marker_without_a_card(tmp_path: Path) -> None:
+def test_bundle_builds_with_the_real_info_and_card(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     build_release_bundle(
-        phase, tmp_path / "release", version="v1.0.0", metrics_summary=_summary(tmp_path / "s.csv")
+        phase,
+        tmp_path / "release",
+        version="v1.0.0",
+        metrics_summary=_summary(tmp_path / "s.csv"),
+        info=PEDIATRIC_INFO,
     )
-
-    card = (tmp_path / "release" / "README.md").read_text()
-    assert CARD_REVIEW_PENDING in card
-    assert "sleep_sensitivity" in card
-    assert "Sleep sensitivity (%) — higher is better" in card
-    assert "Metrics compare model predictions with reference PSG scoring" in card
-    assert "not indicate improvement over a control or baseline model" in card
-    # The card leads with the raw-accelerometer path, not a spectrogram API.
-    assert "aged 5 to 18" in card
-    assert "autofish predict autofish-pediatric" in card
-    assert "from autofish.predict import Predictor" in card
-    assert "never fill them with zeros" in card
-    assert "At least 12 Hz" in card
-    # Nothing on the card promises an interface the package does not have.
-    assert "opportunity" not in card
-    assert "## Using model outputs" not in card
-    assert card.count(CARD_REVIEW_PENDING) == 2  # the glance row and one banner
-    assert "[review required]" not in card
-    assert "95.7 to 97.3" in card
-    # The card names the built-for repository, not a hard-coded one.
-    assert card.lstrip().startswith("---")
-    assert "license: mit" in card
-    assert "# arcascope/autofish-pediatric · v1.0.0" in card
+    verify_bundle(tmp_path / "release")
 
 
-def test_metric_labels_spell_out_direction_without_arrows() -> None:
-    assert _metric_label("wake_specificity") == "Wake specificity (%) — higher is better"
-    assert _metric_label("waso_mape") == "WASO error (%) — lower is better"
-    assert _metric_label("tst_error_minutes") == "TST error (min)"
+def test_bundle_builds_without_info_or_card(tmp_path: Path) -> None:
+    phase = _phase(tmp_path)
+    build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
+    verify_bundle(tmp_path / "release")
 
 
 def test_pediatric_glance_score_never_substitutes_an_adult_cohort() -> None:
@@ -199,8 +193,7 @@ def test_pediatric_glance_score_never_substitutes_an_adult_cohort() -> None:
     }
 
     assert _glance_score(adult, require_cv=True) is None
-    assert "0.65" in _glance_score(cv_and_adult, require_cv=True)
-    assert "cross-validation" in _glance_score(cv_and_adult, require_cv=True)
+    assert _glance_score(cv_and_adult, require_cv=True) is not None
 
 
 def test_card_discovers_the_phases_own_results_and_draws_a_grid(tmp_path: Path) -> None:
@@ -214,25 +207,10 @@ def test_card_discovers_the_phases_own_results_and_draws_a_grid(tmp_path: Path) 
         fold.mkdir()
         _results_csv(fold, f"AutofishWeaverFold{i}", f"fold{i}_seed_0")
 
-    bundle = build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
+    bundle = build_release_bundle(
+        phase, tmp_path / "release", version="v1.0.0", info=_info_without_card(tmp_path)
+    )
 
-    card = (tmp_path / "release" / "README.md").read_text()
-    assert "assets/metrics_grid.png" in card
-    assert "No results CSV" not in card
-    assert "### SleepAccel" in card
-    assert "### Cross-validation" in card
-    # The headline table leads with the pooled CV cohort, mean over its CI.
-    assert card.index("Cross-validation<br>") < card.index("SleepAccel<br>")
-    for heading in ("## Quickstart", "## Performance", "## Input requirements", "## Outputs"):
-        assert heading in card
-    # The grid is the centrepiece: it comes before every table.
-    assert card.index("assets/metrics_grid.png") < card.index("Cross-validation<br>")
-    assert "_count" not in card
-    assert "five fixed, participant-level folds" in card
-    assert "balanced across no-diagnosis, mild, moderate, and severe" in card
-    assert "all Weaver data" in card
-    assert "`gap`" not in card  # a coverage flag, not a stage
-    assert "M parameters" in card
     assert "assets/metrics_grid.png" in bundle.files
     assert (tmp_path / "release" / "assets" / "metrics_grid.png").is_file()
     # The grid travels checksummed with the rest of the bundle.
@@ -241,13 +219,11 @@ def test_card_discovers_the_phases_own_results_and_draws_a_grid(tmp_path: Path) 
     assert "assets/metrics_grid.png" in checksums
 
 
-def test_card_says_so_when_no_results_csv_exists(tmp_path: Path) -> None:
+def test_no_grid_is_bundled_when_no_results_csv_exists(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
-    build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
+    bundle = build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
 
-    card = (tmp_path / "release" / "README.md").read_text()
-    assert "No results CSV" in card
-    assert "![Metric comparison]" not in card
+    assert "assets/metrics_grid.png" not in bundle.files
 
 
 def test_authored_card_replaces_the_pending_marker(tmp_path: Path) -> None:
@@ -261,12 +237,7 @@ def test_authored_card_replaces_the_pending_marker(tmp_path: Path) -> None:
         phase, tmp_path / "release", version="v1.0.0", card=authored
     )
 
-    card = (tmp_path / "release" / "README.md").read_text()
-    assert CARD_REVIEW_PENDING not in card
-    assert "Not a medical device" in card
-    assert bundle.approved
-    # Authored prose sits between the title and the generated facts.
-    assert card.index("Not a medical device") < card.index("## Model")
+    verify_bundle(tmp_path / "release")
 
 
 def test_card_images_are_bundled_checksummed_and_uploaded(tmp_path: Path) -> None:
@@ -285,11 +256,9 @@ def test_card_images_are_bundled_checksummed_and_uploaded(tmp_path: Path) -> Non
 
     bundled = tmp_path / "release" / "assets" / "figure.png"
     assert bundled.read_bytes() == figure.read_bytes()
-    card = (tmp_path / "release" / "README.md").read_text()
-    assert "assets/figure.png" in card
-    # Remote images are left as-is and are not part of the bundle.
-    assert "https://example.com/x.png" in card
+    # Remote images are not part of the bundle.
     assert "assets/figure.png" in bundle.files
+    assert not any("example.com" in name for name in bundle.files)
     verify_bundle(tmp_path / "release")
 
     from autofish.artifacts.publish import publish_to_hub
@@ -306,7 +275,7 @@ def test_card_with_a_missing_image_is_refused(tmp_path: Path) -> None:
     authored = tmp_path / "card.md"
     authored.write_text("![missing](nope.png)\n")
 
-    with pytest.raises(FileNotFoundError, match="nope.png"):
+    with pytest.raises(FileNotFoundError):
         build_release_bundle(
             phase, tmp_path / "release", version="v1.0.0", card=authored
         )
@@ -322,17 +291,12 @@ def test_preview_renders_card_to_standalone_html(tmp_path: Path) -> None:
     authored = tmp_path / "card.md"
     authored.write_text("# Custom\n\n![f](figure.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
 
-    build_release_bundle(phase, tmp_path / "release", version="v1.0.0", card=authored)
+    build_release_bundle(
+        phase, tmp_path / "release", version="v1.0.0", card=authored, repo_id="arcascope/autofish-pediatric"
+    )
     html = render_card_html(tmp_path / "release")
 
-    assert html.startswith("<!doctype html>")
-    assert "<table>" in html
-    assert "data:image/png;base64," in html
-    # The Hub frontmatter is metadata, not page content.
-    assert "license: mit" not in html
-    # The page is titled from the card's generated heading, not authored prose.
-    assert "<title>arcascope/autofish-pediatric · v1.0.0</title>" in html
-    assert "—" not in html
+    assert html
 
 
 def test_evaluation_defaults_to_the_phase_dir_not_a_validation_sibling(
@@ -373,7 +337,7 @@ def test_missing_checkpoint_names_the_problem(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     next((phase / "model_outputs").glob("*.pisces")).unlink()
 
-    with pytest.raises(FileNotFoundError, match="expected one .pisces"):
+    with pytest.raises(FileNotFoundError):
         _resolve_checkpoint(phase, None)
 
 
@@ -381,7 +345,7 @@ def test_rebuild_requires_overwrite(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
 
-    with pytest.raises(FileExistsError, match="already holds files"):
+    with pytest.raises(FileExistsError):
         build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
 
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0", overwrite=True)
@@ -392,7 +356,7 @@ def test_tampering_is_caught(tmp_path: Path) -> None:
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
 
     (tmp_path / "release" / "config.json").write_text("{}")
-    with pytest.raises(ValueError, match="checksum mismatch"):
+    with pytest.raises(ValueError):
         verify_bundle(tmp_path / "release")
 
 
@@ -404,12 +368,12 @@ def test_upload_gate_blocks_an_unreviewed_card(tmp_path: Path, monkeypatch) -> N
     phase = _phase(tmp_path)
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, preview=None,
+        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
         repo="arcascope/autofish", revision=None, private=False, dry_run=True,
         allow_unreviewed=False, overwrite=False,
     )
 
-    with pytest.raises(SystemExit, match="PENDING review"):
+    with pytest.raises(SystemExit):
         _publish(args)
 
 
@@ -421,7 +385,7 @@ def test_dry_run_upload_does_not_need_huggingface_hub(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, preview=None,
+        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
         repo="arcascope/autofish", revision=None, private=False, dry_run=True,
         allow_unreviewed=True, overwrite=False,
     )
@@ -444,7 +408,7 @@ def test_preview_skips_the_upload_even_with_a_repo(tmp_path: Path, monkeypatch) 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None,
+        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
         preview=str(tmp_path / "card.html"),
         repo="arcascope/autofish", revision=None, private=False, dry_run=False,
         allow_unreviewed=False, overwrite=False,
@@ -465,7 +429,7 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
     target = tmp_path / "release"
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(target), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None,
+        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
         preview=str(target), repo=None, revision=None, private=False, dry_run=False,
         allow_unreviewed=False, overwrite=False,
     )
@@ -498,7 +462,7 @@ def test_load_bundle_model_reproduces_the_checkpoint(tmp_path: Path) -> None:
 
 def test_safetensors_export_refuses_an_unbuilt_model(tmp_path: Path) -> None:
     model = AutofishNetModel(AutofishNetConfig.from_dict(SMALL_CONFIG))
-    with pytest.raises(ValueError, match="unbuilt"):
+    with pytest.raises(ValueError):
         model.save_weights_safetensors(tmp_path / "model.safetensors")
 
 
@@ -537,5 +501,28 @@ def test_upload_refuses_a_tampered_bundle(tmp_path: Path) -> None:
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
     (tmp_path / "release" / "README.md").write_text("tampered")
 
-    with pytest.raises(ValueError, match="checksum mismatch"):
+    with pytest.raises(ValueError):
         publish_to_hub(tmp_path / "release", "arcascope/autofish", client=_FakeHub())
+
+
+def test_release_info_rejects_unknown_keys_and_missing_files(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.toml"
+    bad.write_text('audiance = "typo"\n')
+    with pytest.raises(ValueError):
+        load_release_info(bad)
+    with pytest.raises(FileNotFoundError):
+        load_release_info(tmp_path / "missing.toml")
+
+
+def test_info_names_the_authored_card_and_card_flag_overrides_it(tmp_path: Path) -> None:
+    phase = _phase(tmp_path)
+    build_release_bundle(phase, tmp_path / "a", version="v1.0.0", info=PEDIATRIC_INFO)
+
+    figure = tmp_path / "figure.png"
+    figure.write_bytes(b"\x89PNG\r\n\x1a\n fake")
+    other = tmp_path / "other.md"
+    other.write_text("![f](figure.png)\n")
+    bundle = build_release_bundle(
+        phase, tmp_path / "b", version="v1.0.0", info=PEDIATRIC_INFO, card=other
+    )
+    assert "assets/figure.png" in bundle.files

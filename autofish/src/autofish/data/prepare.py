@@ -1,8 +1,9 @@
 """Build the feature cache that training reads.
 
-One dataset directory in, one NPZ per subject out:
-
-``<cache_root>/<cache_prefix>/<dataset>_subject_<id>_features.npz``
+One dataset directory in, one NPZ per subject out, named
+``<dataset>``, :data:`~autofish.data.cache.SUBJECT_SEPARATOR`, ``<id>``,
+:data:`~autofish.data.cache.CACHE_SUFFIX` and kept under
+``<cache_root>/<cache_prefix>/``.
 
 This is the only step that needs senpy and a NUFFT backend. Training itself
 reads the cache and nothing else, which is what keeps a training host free of
@@ -10,7 +11,7 @@ signal-processing dependencies.
 
 A dataset directory is either a tree of ``cleaned_*`` feature directories that
 :meth:`DataSetObject.find_data_sets` understands, or one carrying its own
-``pisces_lite_adapter.py``.
+:data:`ADAPTER_FILENAME`.
 """
 from __future__ import annotations
 
@@ -35,10 +36,12 @@ from pisces_lite.datasets import (
     mask_data,
 )
 from pisces_lite.datasets.constants import PSG_COL, PSG_DT
-from pisces_lite.model_io import ModelIOBundle, get_features_cache_name
+from pisces_lite.model_io import get_features_cache_name
 from pisces_lite.proc import ProcessingConfig
 
+from autofish.data.bundle import AutofishBundle
 from autofish.data.cache import CACHE_SUFFIX
+from autofish.ggir import anglez_bins, epoch_bins
 from autofish.data.constants import MIN_SCORED_MINUTES
 
 
@@ -59,6 +62,9 @@ class PreparedSubject:
     subject_id: str
     accel_values: np.ndarray
     labels: np.ndarray
+    #: ``(bin_start_s, anglez_5s)`` from :func:`autofish.ggir.anglez_bins`,
+    #: taken while the raw night is still in memory.
+    anglez_bins: tuple[np.ndarray, np.ndarray] | None = None
 
 
 def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
@@ -179,7 +185,7 @@ def bundle_subject(
     prepared: PreparedSubject,
     features: np.ndarray,
     processing_config: ProcessingConfig,
-) -> ModelIOBundle:
+) -> AutofishBundle:
     """Pair features with labels on the shared wall-clock range.
 
     Windowing leaves X slightly longer than the PSG count, and with a sub-epoch
@@ -195,7 +201,11 @@ def bundle_subject(
         )
     n_frames = n_labels * ratio
 
-    return ModelIOBundle(
+    anglez_5s = None
+    if prepared.anglez_bins is not None:
+        anglez_5s = epoch_bins(*prepared.anglez_bins, n_labels)[None]
+
+    return AutofishBundle(
         X=features[:n_frames][None],
         y=prepared.labels[:n_labels][None],
         datasets=np.array([prepared.dataset]),
@@ -205,6 +215,7 @@ def bundle_subject(
         time=np.arange(n_frames, dtype=np.float64)
         * float(processing_config.window_step_seconds),
         freq=np.asarray(processing_config.get_frequencies(), dtype=np.float64),
+        anglez_5s=anglez_5s,
     )
 
 
@@ -290,6 +301,7 @@ def _load_one(subject_id: str) -> tuple[str, object]:
         # nights, so drop them once the subject is prepared.
         for frames in getattr(data_set, "_feature_cache", {}).values():
             frames.pop(subject_id, None)
+    item = replace(item, anglez_bins=anglez_bins(item.accel_values))
     # Checked before the NUFFT, which is the expensive part of prep.
     minutes = scored_minutes(item.labels)
     if minutes < _LOAD_STATE["min_scored_minutes"]:
@@ -455,4 +467,56 @@ def process_dataset(
         for failure in failures:
             print(f"  {failure}")
     print(f"{data_set.name}: {len(written)} cached NPZ files ({CACHE_SUFFIX})")
+    return written
+
+
+def backfill_sib(
+    dataset_dir: Path | str,
+    cache_dir: Path | str,
+    *,
+    name: str | None = None,
+    overwrite: bool = False,
+) -> List[Path]:
+    """Add ``anglez_5s`` to a dataset's existing cache NPZs, without a NUFFT.
+
+    Only the raw signal is re-read; ``X`` and ``y`` are carried over untouched.
+    Each subject is re-prepared exactly as :func:`process_dataset` did, and the
+    cached labels must match the freshly prepared ones: if they do not, the raw
+    data no longer lines up with the cache and the subject is refused rather
+    than given a misaligned series. Subjects with no NPZ, or one that already
+    has the array (unless ``overwrite``), are skipped. Returns the NPZs written.
+    """
+    data_set = load_dataset(dataset_dir, name)
+    cache_dir = Path(cache_dir)
+    written: List[Path] = []
+    failures: List[str] = []
+    for subject_id in data_set.ids:
+        path = cache_dir / get_features_cache_name(data_set.name, subject_id)
+        if not path.exists():
+            continue
+        bundle = AutofishBundle.from_npz(path)
+        if bundle.anglez_5s is not None and not overwrite:
+            print(f"  {subject_id}: already has anglez_5s")
+            continue
+        try:
+            item = prepare_subject(data_set, subject_id)
+            n_labels = bundle.y.shape[1]
+            if not np.array_equal(item.labels[:n_labels], bundle.y[0]):
+                raise ValueError("cached labels differ from the source data's")
+            bundle.anglez_5s = epoch_bins(*anglez_bins(item.accel_values), n_labels)[None]
+        except Exception as exc:  # noqa: BLE001 - reported with the subject attached
+            failures.append(f"{subject_id}: {type(exc).__name__}: {exc}")
+            continue
+        finally:
+            for frames in getattr(data_set, "_feature_cache", {}).values():
+                frames.pop(subject_id, None)
+        staging = path.with_name(path.stem + ".tmp.npz")
+        bundle.save_npz(staging)
+        staging.replace(path)
+        written.append(path)
+        print(f"  {subject_id}: anglez_5s {bundle.anglez_5s.shape[1:]}")
+    if failures:
+        print(f"{len(failures)} subject(s) not updated:")
+        for line in failures:
+            print(f"  {line}")
     return written

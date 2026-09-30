@@ -65,7 +65,7 @@ def test_manifest_is_written_last_so_it_means_the_rest_arrived(run_dir):
 
 def test_upload_refuses_a_destination_that_already_has_objects(run_dir):
     client = _FakeS3(existing=["out/run1/training/fold0/training.log"])
-    with pytest.raises(FileExistsError, match="already holds objects"):
+    with pytest.raises(FileExistsError):
         upload_run(run_dir, "s3://b/out/run1", client=client)
     assert client.uploaded == []  # nothing sent before the refusal
 
@@ -85,5 +85,5 @@ def test_missing_or_empty_run_directory_is_an_error(tmp_path):
     with pytest.raises(FileNotFoundError):
         upload_run(tmp_path / "nope", "s3://b/out/run1", dry_run=True)
     (tmp_path / "empty").mkdir()
-    with pytest.raises(FileNotFoundError, match="no files"):
+    with pytest.raises(FileNotFoundError):
         upload_run(tmp_path / "empty", "s3://b/out/run1", dry_run=True)

@@ -39,6 +39,7 @@ from autofish.artifacts.provenance import (
 )
 from autofish.data.batching import pool_frames_to_epochs
 from autofish.evaluation import staging_metrics  # noqa: F401  (registers the metrics)
+from autofish.evaluation.staging_metrics import GAP_STAGE_INDEX
 from autofish.model import AutofishNetModel
 from autofish.training.config import RunConfig
 from autofish.training.driver import RULE, evaluate_subject
@@ -166,6 +167,47 @@ def cohort_input_shape(
     return (config.training.x_length, *feature_dims)
 
 
+#: The class index the metrics treat as wake (``staging_metrics._wake_class``).
+WAKE_STAGE_INDEX = 0
+
+
+def apply_sib_filter(
+    proba: np.ndarray, anglez_5s: np.ndarray, n_epochs: int
+) -> tuple[np.ndarray, int]:
+    """Demote predicted sleep that is not a GGIR sustained inactivity bout.
+
+    The same rule as :func:`autofish.predict.predict`'s corrected ``stage``:
+    an epoch whose argmax is a sleep class but which vanHees2015 does not call
+    a sustained inactivity bout becomes wake. It is a hard decision, so the
+    epoch's row is replaced by a one-hot wake row and every metric --
+    thresholded or argmax -- sees wake. Sleep is never promoted, gap epochs are
+    untouched, and naps outside the main sleep window are kept, since the
+    scored night has no notion of them.
+
+    ``anglez_5s`` is the bundle's ``(epochs, 6)`` 5 s z-angle series
+    (:class:`autofish.data.bundle.AutofishBundle`). It covers the whole
+    recording, so the judgement is made on all of it even when only the first
+    ``n_epochs`` are scored -- the number of leading rows of ``proba`` that are
+    real epochs rather than padding. Returns the filtered copy and the number
+    of epochs demoted.
+    """
+    from autofish.ggir import EPOCH_SECONDS, bins_from_epochs, evaluate_bins
+
+    total = anglez_5s.shape[0]
+    bin_start_s, anglez = bins_from_epochs(anglez_5s)
+    is_sib = evaluate_bins(bin_start_s, anglez, EPOCH_SECONDS * np.arange(total), total).is_sib[
+        :n_epochs
+    ]
+    filtered = np.array(proba, copy=True)
+    predicted = filtered[:n_epochs].argmax(axis=-1)
+    sleep = (predicted != WAKE_STAGE_INDEX) & (predicted != GAP_STAGE_INDEX)
+    demote = np.zeros(filtered.shape[0], dtype=bool)
+    demote[:n_epochs] = sleep & ~is_sib
+    filtered[demote] = 0.0
+    filtered[demote, WAKE_STAGE_INDEX] = 1.0
+    return filtered, int(demote.sum())
+
+
 def _banner(message: str) -> None:
     print(f"\n{RULE}\n{message}\n{RULE}\n")
 
@@ -229,6 +271,7 @@ def run_evaluation(
     overwrite: bool = False,
     render_hypnograms: bool = False,
     stage_style: str = "apple",
+    ggir_sib_filter: bool = False,
 ) -> Path:
     """Score every subject and return the directory the results landed in.
 
@@ -237,12 +280,30 @@ def run_evaluation(
     same file would quietly score nothing rather than duplicate anything.
 
     ``render_hypnograms`` additionally draws one per-subject PNG into
-    ``<output_dir>/hypnograms/`` from the arrays that were scored, using
+    ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were scored, using
     :mod:`autofish.reporting.hypnogram` -- the same figure the research
     repository renders during training.
+
+    ``ggir_sib_filter`` demotes predicted sleep that is not a sustained
+    inactivity bout to wake (:func:`apply_sib_filter`) before anything is scored
+    or drawn, using the ``anglez_5s`` each cached bundle carries. A subject
+    whose cache lacks it is an error, raised before any scoring -- never a
+    silently unfiltered row.
     """
     checkpoint = Path(checkpoint)
     output_dir = Path(output_dir)
+    if ggir_sib_filter:
+        missing = [
+            f"{ref.dataset_name}/{ref.subject_id}"
+            for ref, bundle in subjects.items()
+            if getattr(bundle, "anglez_5s", None) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"--ggir-sib-filter needs anglez_5s in the feature cache, which "
+                f"{len(missing)} subject(s) lack (e.g. {missing[0]}); add it with "
+                "`autofish process --sib-only`"
+            )
     # Resolve the renderer before touching the CSV: a missing matplotlib must
     # fail before an existing results file is deleted.
     renderer = _hypnogram_renderer(config, stage_style) if render_hypnograms else None
@@ -269,7 +330,8 @@ def run_evaluation(
         f"input_shape: {input_shape} (x_length from training.json)\n"
         f"identity: fold={identity.fold} epoch={identity.epoch}\n"
         f"          training_dataset={identity.training_dataset}\n"
-        f"hypnograms: {'yes -> ' + str(hypnogram_dir) if renderer else 'no'}"
+        f"hypnograms: {'yes -> ' + str(hypnogram_dir) if renderer else 'no'}\n"
+        f"ggir sib filter: {'yes' if ggir_sib_filter else 'no'}"
     )
 
     model = AutofishNetModel.loadz(checkpoint, input_shape=input_shape)
@@ -277,6 +339,7 @@ def run_evaluation(
 
     truncated: list[SubjectRef] = []
     hypnograms: Dict[str, str] = {}
+    sib_demoted: Dict[str, int] = {}
     for ref in subjects:
         bundle = subjects[ref]
         epochs = int(bundle.y.shape[1])
@@ -299,6 +362,17 @@ def run_evaluation(
         )
         if renderer is not None:
             y_true, y_pred_proba, inputs, labels = scored
+        else:
+            y_true, y_pred_proba = scored
+        if ggir_sib_filter:
+            name = f"{ref.dataset_name}/{ref.subject_id}"
+            try:
+                y_pred_proba, sib_demoted[name] = apply_sib_filter(
+                    y_pred_proba, bundle.anglez_5s[0], min(epochs, training.x_length)
+                )
+            except Exception as exc:
+                raise ValueError(f"{name}: GGIR SIB filter failed: {type(exc).__name__}: {exc}") from exc
+        if renderer is not None:
             output_path = hypnogram_dir / f"{ref.dataset_name}_{ref.subject_id}.png"
             renderer(
                 output_path,
@@ -308,8 +382,6 @@ def run_evaluation(
                 f"{ref.dataset_name}/{ref.subject_id}",
             )
             hypnograms[f"{ref.dataset_name}/{ref.subject_id}"] = str(output_path)
-        else:
-            y_true, y_pred_proba = scored
         logger.record(
             csv_path=csv_path,
             y_true=y_true,
@@ -339,6 +411,8 @@ def run_evaluation(
             "subjects": by_dataset,
             "truncated": [f"{ref.dataset_name}/{ref.subject_id}" for ref in truncated],
             "hypnograms": hypnograms,
+            "ggir_sib_filter": ggir_sib_filter,
+            "sib_demoted_epochs": sib_demoted,
             **dict(provenance or {}),
         },
     )

@@ -1,7 +1,7 @@
 {
   "run_seed": 0,
   "seed_count": 1,
-  "epochs": 200,
+  "epochs": 30,
   "batch_size": 4,
   "sliding_copies": 2,
   "lr": 0.0005,

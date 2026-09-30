@@ -1,6 +1,6 @@
 {
   "num_classes": 4,
-  "score_gap": false,
+  "score_gap": true,
   "d_model": 256,
   "n_heads": 8,
   "n_transformer_layers": 4,
@@ -31,5 +31,5 @@
       1.0
     ]
   ],
-  "temporal_slide": true
+  "temporal_slide": false 
 }

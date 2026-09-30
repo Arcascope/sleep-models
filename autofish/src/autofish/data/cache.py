@@ -1,8 +1,8 @@
 """Feature-cache discovery and loading.
 
-Autofish v1 trains from a prebuilt NUFFT feature cache laid out as
-
-``<cache_root>/<cache_prefix>/<dataset>_subject_<id>_features.npz``
+Autofish v1 trains from a prebuilt NUFFT feature cache laid out under
+``<cache_root>/<cache_prefix>/``, one file per subject named ``<dataset>``,
+:data:`SUBJECT_SEPARATOR`, ``<subject_id>``, :data:`CACHE_SUFFIX`.
 
 ``cache_prefix`` names the feature surface the cache was built for, so one
 root can hold several. Each NPZ is a
@@ -20,6 +20,8 @@ from typing import Dict, Iterable, List, Sequence
 
 from pisces_lite.cv import SubjectRef
 from pisces_lite.model_io import ModelIOBundle
+
+from autofish.data.bundle import AutofishBundle
 
 
 CACHE_SUFFIX = "_features.npz"
@@ -50,9 +52,10 @@ def discover_cached_subjects(
 ) -> Dict[str, List[CachedSubject]]:
     """Group the cache's NPZ files by dataset name.
 
-    Filenames are ``{dataset}_subject_{subject_id}_features.npz``. The *first*
-    ``_subject_`` separates the two, so subject IDs that themselves contain the
-    word "subject" round-trip correctly.
+    Filenames are the dataset name, :data:`SUBJECT_SEPARATOR`, the subject ID and
+    :data:`CACHE_SUFFIX`. The *first* separator splits the dataset from the
+    subject ID, so subject IDs that themselves contain the separator round-trip
+    correctly.
 
     A requested dataset with no cached subjects raises: training on a silent
     subset of the configured cohorts is never what the caller wanted.
@@ -103,7 +106,7 @@ def load_bundles(paths: Iterable[Path | str]) -> Dict[SubjectRef, ModelIOBundle]
         path = Path(raw)
         if not path.is_file():
             raise FileNotFoundError(f"no such feature cache file: {path}")
-        bundle = ModelIOBundle.from_npz(path)
+        bundle = AutofishBundle.from_npz(path)
         ref = SubjectRef(str(bundle.datasets[0]), str(bundle.subject_ids[0]))
         if ref in found:
             raise ValueError(

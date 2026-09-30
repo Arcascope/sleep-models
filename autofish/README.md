@@ -56,12 +56,15 @@ turns it into the public bundle:
 ```bash
 autofish publish \
     -t runs/<run>/training/final \
-    -o release/v1.0.0 \
-    --version v1.0.0 \
-    --card card.md \                      # your authored model card
-    --preview release/v1.0.0 \            # optional local HTML preview
-    --repo arcascope/autofish-pediatric
+    -o release/v1.1.0 \
+    --version v1.1.0 \
+    --info cards/autofish-pediatric.toml \
+    --preview \
+    --overwrite
 ```
+
+Add `--repo arcascope/autofish-pediatric` (and drop `--preview`) to upload.
+`--overwrite` replaces an existing output directory.
 
 `--metrics-summary` is optional. When omitted, the phase's own results CSV and
 any sibling `fold<i>` directories are pooled automatically: the phase's datasets
@@ -71,33 +74,59 @@ directory is therefore enough to build a fully scored card.
 
 The bundle contains `model.safetensors`, `config.json`, `preprocessing.json`,
 `metrics.json`, `provenance.json`, `checksums.sha256`, a model card
-(`README.md`) and any `assets/` figures. The card is titled for `--repo` (default
-`arcascope/autofish-pediatric`), so a variant built for its own repository is
-labelled as that variant. Checksums are verified before any upload. Without
-`--card` the card carries a `PENDING` review marker and an upload is refused
-unless `--allow-unreviewed` is passed.
+(`README.md`) and any `assets/` figures. Checksums are verified before any
+upload. Without an authored card (from `--info` or `--card`) the card carries a
+`PENDING` review marker and an upload is refused unless `--allow-unreviewed` is
+passed.
+
+### The release info file
+
+Each model variant has a small TOML file, passed with `--info`, that describes
+the release so none of it is baked into the code
+(`cards/autofish-pediatric.toml` is the example). Every key is optional:
+
+| Key | Purpose |
+|:---|:---|
+| `repo` | Hub repository the card is titled for; `--repo` overrides it |
+| `card` | the authored Markdown, relative to the TOML |
+| `audience` | the "For" row of the at-a-glance table |
+| `protocol` | how the reported numbers were produced |
+| `require_cv` | take the glance score only from the pooled `cv` cohort |
+| `[cohorts]` | cohort name to one-line description, for the performance section |
+
+`--info` does not upload anything; upload still needs `--repo`.
 
 ### The model card
 
-`--card` is your Markdown: intended use and limitations, how to apply the model,
-your own metrics and comparisons, and figures. It is placed after the title; the
-generated model, input-pipeline, labels, evaluation and provenance sections
-always follow, so the card describes what the network does rather than listing
-raw config keys, and cannot drift from the release. Relative images
+The authored Markdown named by `--info` (or passed directly as `--card`, which
+takes precedence) holds intended use and limitations, your own metrics and
+comparisons, and figures. The card also carries generated sections: 
+* an at-a-glance table, 
+* performance, 
+* quickstart, 
+* input requirements, 
+* outputs, 
+* model, 
+* and provenance. 
+
+Their order is set in `_model_card` in
+`src/autofish/artifacts/publish.py`. They are read from the bundle, so they
+cannot drift from the release. The quickstart is plain Markdown in
+`src/autofish/artifacts/templates/quickstart.md`. Relative images
 (`![...](figure.png)`) are copied into a checksummed `assets/` directory, their
 links rewritten, and shipped in the same Hub commit; remote URLs are left as-is.
 
 Preview it before publishing. `autofish card-preview <bundle>` (or
-`publish --preview path.html`) renders the card to a standalone HTML page with
-images inlined, so you can open it in a browser and see what the Hub will show.
-With `publish --preview` nothing is uploaded: the command builds, verifies and
+`publish --preview`) renders the card to a standalone HTML page with images
+inlined, so you can open it in a browser and see what the Hub will show. With
+`publish --preview` nothing is uploaded: the command builds, verifies and
 renders the card, then stops, even when `--repo` is also given. `--preview`
 takes an optional path; omit it to write `card.html` into the bundle, or point
 it at a directory to write `card.html` there. This needs the `preview` extra:
 
 ```bash
 pip install "arcascope-autofish[preview]"
-autofish card-preview release/v1.0.0 -o card.html
+autofish card-preview release/v1.1.0 -o card.html
 ```
 
 Adding `--repo` uploads the verified bundle as one atomic Hub commit. Loading a

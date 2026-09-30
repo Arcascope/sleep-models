@@ -15,7 +15,6 @@ from autofish.artifacts.provenance import (
     run_fingerprint,
     write_manifest,
 )
-from autofish.artifacts.publish import DEFAULT_HUB_REPO
 from autofish.data.constants import MIN_SCORED_MINUTES
 
 
@@ -116,6 +115,18 @@ def _process(args: argparse.Namespace) -> int:
         or os.environ.get("FEATURE_CACHE_DIR", DEFAULT_FEATURE_CACHE_DIR)
     )
     cache_dir = resolve_feature_cache_dir(cache_root, cache_prefix)
+
+    if args.sib_only:
+        from autofish.data.prepare import backfill_sib
+
+        for dataset_dir in args.data_dir:
+            backfill_sib(
+                dataset_dir,
+                cache_dir,
+                name=args.name or Path(dataset_dir.rstrip("/")).name,
+                overwrite=args.overwrite,
+            )
+        return 0
 
     for dataset_dir in args.data_dir:
         process_dataset(
@@ -378,6 +389,7 @@ def _evaluate(args: argparse.Namespace) -> int:
             provenance={"training_dir": str(training_dir), "input": list(args.input)},
             overwrite=args.overwrite,
             render_hypnograms=args.hypnograms,
+            ggir_sib_filter=getattr(args, "ggir_sib_filter", False),
         )
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -463,6 +475,7 @@ def _evaluate_folds(args: argparse.Namespace) -> int:
                 },
                 overwrite=args.overwrite,
                 render_hypnograms=args.hypnograms,
+                ggir_sib_filter=getattr(args, "ggir_sib_filter", False),
             )
         except (FileNotFoundError, FileExistsError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
@@ -513,11 +526,39 @@ def _predict(args: argparse.Namespace) -> int:
         origin = float(origin)
     try:
         inputs = _expand_inputs(args.inputs)
-        written = predict_files(args.bundle_dir, inputs, args.output_dir, origin)
+        written = predict_files(
+            args.bundle_dir,
+            inputs,
+            args.output_dir,
+            origin,
+            return_gap_head=args.return_gap_head,
+            ggir_sleep_filter=args.ggir_sleep_filter,
+            ggir_error_fails=args.ggir_error_fails,
+            hypnogram=args.hypnogram,
+        )
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     for path in written:
         print(path)
+    return 0
+
+
+def _hypnogram(args: argparse.Namespace) -> int:
+    """Hypnogram PNGs from prediction CSVs that `autofish predict` wrote."""
+    from autofish.predict import read_prediction_csv
+    from autofish.reporting.prediction_plot import plot_prediction
+
+    inputs = [path for path in _expand_inputs(args.inputs) if not path.stem.endswith("_summary")]
+    if not inputs:
+        raise SystemExit("no prediction CSVs among the inputs (summary files are skipped)")
+    for path in inputs:
+        output_dir = Path(args.output_dir) if args.output_dir else path.parent
+        try:
+            prediction = read_prediction_csv(path)
+            written = plot_prediction(prediction, output_dir / f"{path.stem}.png", title=path.stem)
+        except (FileNotFoundError, ValueError) as exc:
+            raise SystemExit(f"{path}: {exc}") from exc
+        print(written)
     return 0
 
 
@@ -546,9 +587,8 @@ def _publish(args: argparse.Namespace) -> int:
             evaluation=args.evaluation,
             metrics_summary=args.metrics_summary,
             card=args.card,
-            # The card names the destination: a build with no --repo still gets
-            # a card for the default variant repository.
-            repo_id=args.repo or DEFAULT_HUB_REPO,
+            info=args.info,
+            repo_id=args.repo,
             overwrite=args.overwrite,
         )
     except (
@@ -740,6 +780,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="threads compressing NPZs (default: a third of the cores, at most 12)",
     )
     process.add_argument(
+        "--sib-only",
+        action="store_true",
+        help="add the GGIR anglez_5s array to existing cache files without "
+             "re-running the NUFFT; with --overwrite, replace one already there",
+    )
+    process.add_argument(
         "--overwrite", action="store_true", help="rebuild subjects already cached"
     )
     process.set_defaults(handler=_process)
@@ -787,6 +833,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--hypnograms",
         action="store_true",
         help="also draw one per-subject hypnogram PNG into <output-dir>/hypnograms/",
+    )
+    evaluate.add_argument(
+        "--ggir-sib-filter",
+        action="store_true",
+        help="demote predicted sleep that is not a GGIR (vanHees2015) sustained "
+             "inactivity bout to wake before scoring; needs anglez_5s in the "
+             "cache (built by `process`, or added with `process --sib-only`)",
     )
     evaluate.add_argument(
         "--overwrite",
@@ -848,11 +901,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="a metrics_summary.csv whose per-cohort means go on the card",
     )
     publish.add_argument(
+        "--info",
+        help="release-info TOML for this model variant: repo, audience, protocol, "
+             "cohort descriptions and the authored card Markdown (see "
+             "cards/autofish-pediatric.toml)",
+    )
+    publish.add_argument(
         "--card",
         help="authored Markdown for the card (intended use, limitations, how to "
              "apply, metrics, figures); placed after the title with the generated "
-             "facts following. Relative images are bundled into assets/. Without "
-             "it the card carries a PENDING review marker",
+             "facts following. Relative images are bundled into assets/. Overrides "
+             "the card named by --info; with neither, the card carries a PENDING "
+             "review marker",
     )
     publish.add_argument(
         "--preview",
@@ -865,7 +925,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     publish.add_argument(
         "--repo",
-        help=f"Hub model repo to upload to, e.g. {DEFAULT_HUB_REPO}; omit to only build",
+        help="Hub model repo to upload to, e.g. org/autofish-variant; omit to only build "
+             "(also titles the card, overriding the repo in --info)",
     )
     publish.add_argument("--revision", help="Hub branch/revision to commit to")
     publish.add_argument("--private", action="store_true", help="create the Hub repo private")
@@ -900,7 +961,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="where epoch 0 starts, in seconds on the input clock, or 'unix'; "
              "defaults to the first sample",
     )
+    predict.add_argument(
+        "--return-gap-head",
+        action="store_true",
+        help="add a gap_head column with the network's gap probability; the stage "
+             "columns still sum to 1",
+    )
+    predict.add_argument(
+        "--ggir-sleep-filter",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="demote quiet wakefulness to wake and flag sleep outside the main "
+             "sleep window as naps, GGIR-style (default: on; use "
+             "--no-ggir-sleep-filter for the raw Autofish stage)",
+    )
+    predict.add_argument(
+        "--ggir-error-fails",
+        action="store_true",
+        help="abort if the GGIR sleep filter raises, instead of warning and "
+             "writing the raw Autofish stages",
+    )
+    predict.add_argument(
+        "--hypnogram",
+        action="store_true",
+        help="also save a <input stem>.png hypnogram per input (needs the [report] extra)",
+    )
     predict.set_defaults(handler=_predict)
+
+    hypnogram = commands.add_parser(
+        "hypnogram",
+        help="draw hypnogram PNGs from prediction CSVs written by `autofish predict`",
+    )
+    hypnogram.add_argument(
+        "inputs", nargs="+", help="prediction CSVs; globs allowed; *_summary.csv files are skipped"
+    )
+    hypnogram.add_argument(
+        "-o", "--output-dir", help="where <csv stem>.png is written (default: beside each CSV)"
+    )
+    hypnogram.set_defaults(handler=_hypnogram)
 
     preview = commands.add_parser(
         "card-preview",
