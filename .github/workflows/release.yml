@@ -35,10 +35,14 @@ jobs:
       || startsWith(github.event.release.tag_name, 'autofish-v')
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags: setuptools-scm derives the version from the
+      # nearest `autofish-v*` tag, which a shallow clone would not contain.
       - name: Check out source
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -50,24 +54,25 @@ jobs:
         run: python -m build --outdir dist autofish
       - name: Check distribution metadata
         run: twine check dist/*
-      # The release tag is the source of truth for when to publish; pyproject
-      # (via autofish.__version__) is the source of truth for what. Refuse to
-      # publish when they disagree. On workflow_dispatch with no tag (the
-      # default branch), the package version is the fallback.
+      # setuptools-scm derives the version from the tag, so this is a sanity
+      # check that the built artifact agrees with the release tag rather than a
+      # guard against a hand-edited version. On workflow_dispatch with no tag
+      # (the default branch), the built version is the fallback.
       - name: Verify the tag matches the built version
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          version=$(python -c "import sys; sys.path.insert(0, 'autofish/src'); import autofish; print(autofish.__version__)")
+          python -m pip install --no-deps dist/*.whl
+          version=$(python -c "import autofish; print(autofish.__version__)")
           if [ -n "$TAG" ]; then
             tag_version="${TAG#autofish-v}"
             if [ "$tag_version" != "$version" ]; then
-              echo "::error::tag '$TAG' != package version $version"
+              echo "::error::tag '$TAG' != built version $version"
               exit 1
             fi
-            echo "tag $TAG matches package version $version"
+            echo "tag $TAG matches built version $version"
           else
-            echo "no release tag on this event; package version is $version"
+            echo "no release tag on this event; built version is $version"
           fi
       - name: Upload distributions
         uses: actions/upload-artifact@v7

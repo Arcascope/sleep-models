@@ -21,10 +21,14 @@ jobs:
     name: Build distributions
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags: setuptools-scm derives the version from the
+      # nearest `autofish-v*` tag, which a shallow clone would not contain.
       - name: Check out source
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Set up Python
         uses: actions/setup-python@v7
         with:

@@ -18,7 +18,13 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
+      # Full history and tags: the local install below builds autofish with
+      # setuptools-scm, which reads the version from the nearest `autofish-v*`
+      # tag and fails on a shallow clone without it.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}

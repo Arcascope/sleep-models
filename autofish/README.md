@@ -145,8 +145,11 @@ token is stored. `.github/workflows/release.yml` builds sdist + wheel from this
 directory, tests the built wheel, and publishes when a GitHub Release is
 published. The tag is namespaced for the monorepo: `autofish-v1.0.0`.
 
-The tag is the source of truth for *when* to publish and `autofish.__version__`
-for *what*; the workflow fails if they disagree. Before releasing, bump the
-version and push an `autofish-vX.Y.Z` tag. A manual `workflow_dispatch` runs the
-build and wheel tests without publishing. `.github/workflows/dry-run-testpypi.yml`
-rehearses the same path against TestPyPI.
+The tag is the source of truth for the version: `setuptools-scm` reads the
+nearest `autofish-vX.Y.Z` tag (configured in `pyproject.toml`), so the
+distribution version and the release tag cannot drift. To release, push an
+`autofish-vX.Y.Z` tag and publish a GitHub Release for it -- there is no version
+literal to edit. The workflow fails if the tag and the built version disagree.
+A manual `workflow_dispatch` runs the build and wheel tests without publishing;
+commits past a tag build as the next patch dev version (`X.Y.(Z+1).devN`), which
+is what `.github/workflows/dry-run-testpypi.yml` rehearses against TestPyPI.
