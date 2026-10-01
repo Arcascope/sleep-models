@@ -422,12 +422,18 @@ def _spectral_bins(preprocessing: Mapping[str, Any]) -> int | None:
 
 
 def _describe_preprocessing(
-    preprocessing: Mapping[str, Any], input_shape: Sequence[int]
+    preprocessing: Mapping[str, Any], input_shape: Sequence[int], frames_per_epoch: int
 ) -> list[str]:
     """One line on the feature surface, from the phase's ``inputs.json``."""
     names = preprocessing.get("spectral_channels", ["mag", "jerk"])
     channels = " and ".join(f"`{c}`" for c in names)
-    shape = f" The model input for one pass is `{tuple(input_shape)}`." if input_shape else ""
+    shape = ""
+    if input_shape:
+        shape = (
+            f" The model input for one pass is `{tuple(input_shape)}`."
+            if frames_per_epoch == 1
+            else f" Training segments are `{tuple(input_shape)}`."
+        )
     bins = _spectral_bins(preprocessing)
     bins_text = f"{bins} bins, " if bins is not None else ""
     return [
@@ -435,9 +441,14 @@ def _describe_preprocessing(
         f"{channels} channels over `{preprocessing.get('window_seconds', '?')}`-s "
         f"windows every `{preprocessing.get('window_step_seconds', '?')}` s "
         f"({bins_text}`{preprocessing.get('fmin', '?')}`–`{preprocessing.get('fmax', '?')}` Hz), "
-        "averaged to 30-s epochs, plus one row giving the fraction of each epoch "
-        "with no data." + shape + " `arcasleep.predict` builds it from "
-        "`preprocessing.json`.",
+        + (
+            "averaged to 30-s epochs, plus one row giving the fraction of each epoch "
+            "with no data."
+            if frames_per_epoch == 1
+            else f"read as raw frames, `{frames_per_epoch}` per 30-s epoch."
+        )
+        + shape
+        + " `arcasleep.predict` builds it from `preprocessing.json`.",
     ]
 
 
@@ -468,9 +479,6 @@ CARD_TABLE_EXCLUDED_METRICS = frozenset({"kappa_4stage"})
 
 #: The pooled cross-validation cohort :func:`_discovered_metrics` builds.
 _CV_COHORT = "cv"
-
-#: Epoch length the readout scores, in seconds.
-_EPOCH_SECONDS = 30
 
 #: What each readout index means, for the labels table.
 _CLASS_MEANINGS = {
@@ -624,7 +632,9 @@ def _quickstart(
     return [*text.rstrip("\n").split("\n"), ""]
 
 
-def _input_requirements(preprocessing: Mapping[str, Any], input_shape: Sequence[int]) -> list[str]:
+def _input_requirements(
+    family: ModelFamily, preprocessing: Mapping[str, Any], input_shape: Sequence[int]
+) -> list[str]:
     """What a recording must look like; the sampling floor is read from the config."""
     fs = preprocessing.get("fs")
     lines = [
@@ -644,10 +654,9 @@ def _input_requirements(preprocessing: Mapping[str, Any], input_shape: Sequence[
         "leave them out of sleep durations."
     )
     if input_shape:
-        hours = input_shape[0] * _EPOCH_SECONDS / 3600
         lines.append(
-            f"- **Length.** At least 2 hours recommended. Up to {hours:g} hours are "
-            "scored in one pass; longer recordings are scored in consecutive passes."
+            "- **Length.** At least 2 hours recommended. "
+            + family.describe_length(input_shape)
         )
     lines.append("")
     return lines
@@ -847,13 +856,15 @@ def _model_card(
             "",
         ]
 
-    lines += _input_requirements(preprocessing, input_shape)
+    lines += _input_requirements(family, preprocessing, input_shape)
     lines += _outputs(stage_names)
 
     lines += ["## Model", ""]
     lines += family.describe_architecture(config, parameter_count)
     lines.append("")
-    lines += _describe_preprocessing(preprocessing, input_shape)
+    lines += _describe_preprocessing(
+        preprocessing, input_shape, int(config.get("frames_per_epoch", 1))
+    )
     lines.append("")
 
     lines += [

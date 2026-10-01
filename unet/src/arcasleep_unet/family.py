@@ -64,6 +64,12 @@ class UNetFamily(ModelFamily):
         model.load_weights_safetensors(weights)
         return model
 
+    def prediction_window(self, model) -> tuple[int | None, int]:
+        return None, model.config.padded_epoch_multiple
+
+    def describe_length(self, input_shape: Sequence[int]) -> str:
+        return "Recordings of any length are scored whole, in one pass."
+
     def describe_architecture(
         self, config: Mapping[str, Any], parameter_count: int | None
     ) -> list[str]:

@@ -42,3 +42,15 @@ arcasleep unet train \
     -tc config/training.json -mtc config/metrics.json -extn <run>/training
 arcasleep unet evaluate -t results/<run>/training -i '<cache>/*_features.npz' -o results/<run>/evaluation
 ```
+
+## Release and inference
+
+`arcasleep unet publish` builds the same release bundle as BiDoze
+(`model.safetensors` with the BatchNorm statistics beside the parameters,
+`config.json`, `preprocessing.json`, the card), and `arcasleep unet predict`
+scores raw accelerometer files with it:
+
+```bash
+arcasleep unet publish -t results/<run>/training/final -o release/v0.1.0 --version v0.1.0 --preview
+arcasleep unet predict release/v0.1.0 recordings/*.csv -o predictions/
+```
