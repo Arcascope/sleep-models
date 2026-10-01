@@ -1,4 +1,4 @@
-# ArcaSleep
+# Arcasleep
 
 Arcascope's open source, open weights sleep models.
 
