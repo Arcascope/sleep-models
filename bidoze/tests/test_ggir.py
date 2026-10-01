@@ -268,11 +268,11 @@ def test_van_hees_sib_with_no_long_stretch_follows_the_posture_change_count() ->
     assert not ggir.van_hees_sib(ten_changes).any()
 
 
-def test_filter_demotes_non_sib_sleep_and_flags_outside_spt_sleep_as_naps() -> None:
+def test_filter_keeps_sleep_inside_spt_and_flags_outside_spt_sleep_as_naps() -> None:
     probabilities = np.array(
         [
             [0.1, 0.6, 0.2, 0.1],  # sleep, quiet and inside SPT -> stays
-            [0.1, 0.6, 0.2, 0.1],  # sleep, but not a SIB -> wake
+            [0.1, 0.6, 0.2, 0.1],  # sleep, not a SIB but inside SPT -> stays
             [0.1, 0.6, 0.2, 0.1],  # sleep, SIB but outside SPT -> kept, nap
             [0.7, 0.1, 0.1, 0.1],  # already wake
         ]
@@ -288,8 +288,26 @@ def test_filter_demotes_non_sib_sleep_and_flags_outside_spt_sleep_as_naps() -> N
         probabilities, ("wake", "light", "deep", "rem"), is_gap, ggir_result
     )
 
-    assert list(stage) == ["light", "wake", "light", "wake"]
+    assert list(stage) == ["light", "light", "light", "wake"]
     assert list(is_nap) == [0, 0, 1, 0]
+
+
+def test_filter_demotes_non_sib_sleep_only_outside_spt() -> None:
+    probabilities = np.tile([0.1, 0.6, 0.2, 0.1], (3, 1))
+    is_gap = np.zeros(3, dtype=bool)
+    # All three are non-SIB sleep, but the middle epoch is inside the SPT.
+    ggir_result = SimpleNamespace(
+        is_sib=np.zeros(3, dtype=bool),
+        is_spt=np.array([False, True, False]),
+        spt_ran=True,
+    )
+
+    stage, is_nap = _apply_ggir_filter(
+        probabilities, ("wake", "light", "deep", "rem"), is_gap, ggir_result
+    )
+
+    assert list(stage) == ["wake", "light", "wake"]
+    assert list(is_nap) == [0, 0, 0]
 
 
 def test_gaps_and_demoted_sleep_outside_spt_are_not_naps() -> None:
@@ -348,7 +366,7 @@ def test_summary_from_corrected_labels_excludes_demoted_sleep() -> None:
     probabilities = np.array([[0.1, 0.6, 0.2, 0.1]] * 2)
     is_gap = np.zeros(2, dtype=bool)
     ggir_result = SimpleNamespace(
-        is_sib=np.array([True, False]), is_spt=np.ones(2, dtype=bool), spt_ran=True
+        is_sib=np.array([True, False]), is_spt=np.array([True, False]), spt_ran=True
     )
 
     stage, _ = _apply_ggir_filter(
@@ -357,6 +375,27 @@ def test_summary_from_corrected_labels_excludes_demoted_sleep() -> None:
     summary = _summarize(stage, is_gap, nap_minutes=0.0, subject_id=None)
 
     assert summary.tst_minutes == pytest.approx(0.5)
+
+
+def test_sib_does_not_flip_sleep_on_a_recording_without_spt() -> None:
+    # A <= 9 h sub-recording is all SPT, so the filter leaves its sleep alone
+    # even where vanHees2015 sees no sustained inactivity.
+    probabilities = np.tile([0.1, 0.6, 0.2, 0.1], (4, 1))
+    is_gap = np.zeros(4, dtype=bool)
+    all_spt = SimpleNamespace(
+        is_sib=np.array([False, False, False, False]),
+        is_spt=np.ones(4, dtype=bool),
+        spt_ran=False,
+    )
+
+    stage, is_nap = _apply_ggir_filter(
+        probabilities, ("wake", "light", "deep", "rem"), is_gap, all_spt
+    )
+    summary = _summarize(stage, is_gap, nap_minutes=0.0, subject_id=None)
+
+    assert list(stage) == ["light"] * 4
+    assert list(is_nap) == [0, 0, 0, 0]
+    assert summary.tst_minutes == pytest.approx(2.0)
 
 
 class _StubModel:

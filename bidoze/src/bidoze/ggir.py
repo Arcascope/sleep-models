@@ -5,9 +5,11 @@ is little movement, so a quiet reading session can look like sleep. GGIR has
 solved a version of this: it finds sustained inactivity bouts (SIB) with the
 ``vanHees2015`` rule (no z-angle change over 5 degrees for 5 minutes) and then
 estimates the Sleep Period Time (SPT) window with HDCZA, the main sleep block
-of the day. Model sleep that is not a SIB is quiet wakefulness. The SPT window
-is informational only: sleep outside it is flagged as a nap, not removed,
-because people on split-sleep schedules have several real sleep periods a day.
+of the day. Outside that window model sleep that is not a SIB is quiet
+wakefulness; inside it the model's sleep stands without the SIB test, since the
+SPT is by construction a period of sleep. The SPT window itself is informational
+for sleep: sleep outside it is flagged as a nap, not removed, because people on
+split-sleep schedules have several real sleep periods a day.
 
 This module reimplements just those pieces for a raw ``(N, 4)`` accelerometer
 array. It is deliberately self-contained: no GGIR, no timezone, no clock. The
