@@ -412,6 +412,7 @@ def _evaluate(args: argparse.Namespace) -> int:
             overwrite=args.overwrite,
             render_hypnograms=args.hypnograms,
             ggir_sib_filter=getattr(args, "ggir_sib_filter", False),
+            target_sensitivity=getattr(args, "target_sensitivity", None),
         )
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -431,10 +432,25 @@ def _evaluate_folds(args: argparse.Namespace) -> int:
     :mod:`arcasleep.reporting.summary` pools into its ``cv`` cohort, so a run of
     models that never trained on the participant they are scored on lands in one
     summary.
+
+    With ``--target-sensitivity`` every fold is scored first, and the metrics
+    are then recorded at one sleep threshold meeting the target over all the
+    held-out subjects together.
     """
     from arcasleep.data.cache import load_bundles
     from arcasleep.data.splits import read_plan
-    from arcasleep.evaluation.run import lift_identity, run_evaluation
+    from arcasleep.evaluation.run import (
+        lift_identity,
+        operating_point,
+        prepare_output,
+        score_cohort,
+        write_cohort,
+    )
+
+    target = getattr(args, "target_sensitivity", None)
+    ggir_sib_filter = getattr(args, "ggir_sib_filter", False)
+    if target is not None and ggir_sib_filter:
+        raise SystemExit("--target-sensitivity cannot be combined with --ggir-sib-filter")
 
     training_root = Path(args.fold_training)
     if not training_root.is_dir():
@@ -457,6 +473,7 @@ def _evaluate_folds(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
+    scored = []
     for fold_dir in fold_dirs:
         config = _load_phase_config(fold_dir, args.family)
         plan_folds = sorted(set(config.cv.test_sets) & set(plan.folds))
@@ -484,23 +501,40 @@ def _evaluate_folds(args: argparse.Namespace) -> int:
         output_dir = output_root / fold_dir.name
         print(f"\n==> {fold_dir.name}: {len(subjects)} subjects from {plan_folds}")
         try:
-            run_evaluation(
+            prepare_output(config, output_dir, args.overwrite)
+            cohort = score_cohort(
                 config,
                 subjects=subjects,
                 checkpoint=checkpoint,
                 output_dir=output_dir,
-                identity=lift_identity(fold_dir, config),
-                provenance={
-                    "training_dir": str(fold_dir),
-                    "fold_config": str(args.fold_config),
-                    "held_out": plan_folds,
-                    "input": list(args.input),
-                },
-                overwrite=args.overwrite,
                 render_hypnograms=args.hypnograms,
-                ggir_sib_filter=getattr(args, "ggir_sib_filter", False),
+                ggir_sib_filter=ggir_sib_filter,
             )
         except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        provenance = {
+            "training_dir": str(fold_dir),
+            "fold_config": str(args.fold_config),
+            "held_out": plan_folds,
+            "input": list(args.input),
+        }
+        scored.append((fold_dir, output_dir, cohort, provenance))
+
+    threshold = None
+    if target is not None:
+        threshold = operating_point([cohort for _, _, cohort, _ in scored], target)
+        print(f"\noperating point over every fold: {threshold}")
+    for fold_dir, output_dir, cohort, provenance in scored:
+        try:
+            write_cohort(
+                cohort,
+                output_dir=output_dir,
+                identity=lift_identity(fold_dir, cohort.config),
+                provenance=provenance,
+                threshold=threshold,
+                target_sensitivity=target,
+            )
+        except (FileNotFoundError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
 
     print(f"\nCross-validation results: {output_root}")
@@ -816,6 +850,14 @@ def _add_family_commands(commands, family: str) -> None:
              "scoring; a recording <= 9 h is all main sleep window and is left "
              "alone; needs anglez_5s in the cache (built by `process`, or added "
              "with `process --sib-only`)",
+    )
+    evaluate.add_argument(
+        "--target-sensitivity",
+        type=float,
+        metavar="S",
+        help="score at the sleep threshold whose mean sleep sensitivity over the "
+             "scored subjects (every fold together, with -ft) is S, instead of "
+             "the argmax; the threshold is recorded in evaluation.json",
     )
     evaluate.add_argument(
         "--overwrite",
