@@ -4,8 +4,8 @@ name: Dry run publish to TestPyPI
 # Trusted Publisher for this repository (workflow `dry-run-testpypi.yml`,
 # environment `testpypi`).
 #
-# Because arcascope-autofish is a monorepo member, the workflow is named for the
-# distribution and only builds autofish/.
+# Because arcasleep-bidoze is a monorepo member, the workflow is named for the
+# distribution and only builds bidoze/.
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Full history and tags: setuptools-scm derives the version from the
-      # nearest `autofish-v*` tag, which a shallow clone would not contain.
+      # nearest `bidoze-v*` tag, which a shallow clone would not contain.
       - name: Check out source
         uses: actions/checkout@v7
         with:
@@ -33,10 +33,10 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Build the autofish sdist and wheel
+      - name: Build the bidoze sdist and wheel
         run: |
           python -m pip install --upgrade pip build
-          python -m build --outdir dist autofish
+          python -m build --outdir dist bidoze
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
@@ -66,7 +66,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "dist/"*.whl pytest "jax" "flax" "pisces-lite>=4.1.0" safetensors pandas matplotlib
-          python -m pytest autofish/tests -q
+          python -m pytest bidoze/tests -q
 
   publish-testpypi:
     name: Publish to TestPyPI
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/arcascope-autofish
+      url: https://test.pypi.org/p/arcasleep-bidoze
     permissions:
       id-token: write
     steps:

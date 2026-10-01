@@ -1,4 +1,7 @@
-# Arcasope's Open Source, Open Weights Sleep Models
+# ArcaSleep
+
+Arcascope's open source, open weights sleep models.
+
 ---
 
 This is the top-level repository containing several Python packages. They are available on
@@ -6,7 +9,10 @@ PyPI as separate packages.
 
 We release them in separate packages for a clean and easy to separate structure, and for ease of publishing model versions clearly on HuggingFace.
 
-## Autofish
+## BiDoze
+
+Published on Hugging Face as [`arcascope/arcasleep-bidoze-pediatric`](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric); the package lives in [`bidoze/`](bidoze/).
+
 Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in accelerometer. 
 
 1. **Architecture:** `[CNN encoder] -> [ALiBi Transformers] -> [5-head MLP]`.

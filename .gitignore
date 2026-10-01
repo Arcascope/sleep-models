@@ -11,6 +11,6 @@ feature_cache/
 *.safetensors
 *.pisces
 *.npz
-autofish_pseudonym.key
+arcasleep_pseudonym.key
 
 plans/**
