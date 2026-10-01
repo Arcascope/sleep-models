@@ -184,3 +184,12 @@ def test_warns_when_there_is_no_manifest_to_compare_against() -> None:
 def test_digest_survives_a_json_round_trip(tmp_path) -> None:
     plan = _plan_with_digest("c" * 64)
     assert read_plan(write_plan(plan, tmp_path / "p.json")).provenance[DATA_DIGEST_KEY] == "c" * 64
+
+
+def test_a_template_without_deblip_sets_gets_none_in_its_fold_configs():
+    template = {k: v for k, v in TEMPLATE.items() if k != "deblip_sets"}
+    plan = plan_splits(IDS, cohort="weaver", n_splits=5, seed=0)
+
+    configs = cv_configs_for_plan(plan, template, external_test_sets=["SleepAccel"])
+
+    assert all("deblip_sets" not in config for config in configs.values())

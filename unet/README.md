@@ -36,6 +36,17 @@ training subjects (`eval_fraction`) are held out, the learning rate drops by
 √10 after `lr_drop_patience` epochs without an improvement in their Cohen's
 kappa, training stops after `early_stop_patience`, and the best epoch is kept.
 
+`scripts/harness.sh` runs the whole recipe: one model per fold of the
+committed split plan (`config/splits/weaver_5fold.json`), each scored on the
+fold it held out, then a final model on every fold, scored on the external
+test sets. Phases can be named to run a subset, in order:
+
+```bash
+FEATURE_CACHE_DIR=<cache root> UNET_RUN_ID=<run> scripts/harness.sh [--dry-run] [final fold0 ...]
+```
+
+Results land in `results/<run>/training/<phase>/`. One phase by hand:
+
 ```bash
 arcasleep unet train \
     -pc config/inputs.json -mc config/model.json -cvc config/cv.json \
