@@ -10,7 +10,7 @@ REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$REPO_ROOT"
 
 RUN_ID="${BIDOZE_RUN_ID:-bidoze-training}"
-# BIDOZE_RESULTS_DIR is what `bidoze train` itself reads; harness.sh reads
+# BIDOZE_RESULTS_DIR is what `arcasleep bidoze train` itself reads; harness.sh reads
 # the same variable so the two cannot disagree. Its fallback matches the CLI's
 # ("results", relative) because we cd to REPO_ROOT just above.
 RESULTS_ROOT="${BIDOZE_RESULTS_DIR:-$REPO_ROOT/results}"
@@ -65,14 +65,14 @@ if [[ $DRY_RUN -eq 1 ]]; then
     printf 'Upload to:     %s\n' "${RESULTS_S3_PREFIX:-<disabled>}"
     printf 'Linked cache:  %s\n' "$LINK_ROOT"
     for phase in "${PHASES[@]}"; do
-        printf '  '; printf ' %q' bidoze train "${BASE_ARGS[@]}" \
+        printf '  '; printf ' %q' arcasleep bidoze train "${BASE_ARGS[@]}" \
             -cvc "$CV_DIR/cv_$phase.json" -extn "$RUN_ID/training/$phase"; printf '\n'
     done
     exit 0
 fi
 
 echo "==> materialising $SPLIT_PLAN"
-bidoze splits-apply \
+arcasleep splits-apply \
     -pc config/inputs.json \
     -cvc config/cv.json \
     --plan "$SPLIT_PLAN" \
@@ -91,7 +91,7 @@ upload_results() {
     if [[ -n "$RESULTS_S3_PREFIX" ]]; then
         echo
         echo "==> upload $RESULTS_ROOT/$RUN_ID -> $RESULTS_S3_PREFIX (exit $status)"
-        bidoze upload-results \
+        arcasleep upload-results \
             --run-dir "$RESULTS_ROOT/$RUN_ID" \
             --destination "$RESULTS_S3_PREFIX" \
             --run-id "$RUN_ID" \
@@ -106,7 +106,7 @@ for phase in "${PHASES[@]}"; do
     mkdir -p "$BASE_DIR"
     echo
     echo "==> $phase"
-    PYTHONUNBUFFERED=1 bidoze train "${BASE_ARGS[@]}" \
+    PYTHONUNBUFFERED=1 arcasleep bidoze train "${BASE_ARGS[@]}" \
         -cvc "$CV_DIR/cv_$phase.json" \
         -extn "$RUN_ID/training/$phase" 2>&1 | tee "$BASE_DIR/training.log"
 done

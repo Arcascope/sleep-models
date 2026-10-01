@@ -36,14 +36,22 @@ RUN apt-get update \
 RUN pip install --no-cache-dir "pisces-lite==${PISCES_LITE_VERSION}" \
     && pip install --no-cache-dir "jax[cuda12]==${JAX_VERSION}"
 
-WORKDIR /opt/bidoze
-COPY pyproject.toml README.md ./
-COPY src ./src
-COPY config ./config
-COPY scripts ./scripts
+# The build context is the repository root: the arcasleep distribution holds
+# the shared code and every model family. The image has no .git, so the
+# version setuptools-scm would read from a tag is supplied instead.
+ARG PACKAGE_VERSION=0.0.0
+WORKDIR /opt/arcasleep
+COPY pyproject.toml README.md LICENSE MANIFEST.in ./
+COPY core/src ./core/src
+COPY bidoze/src ./bidoze/src
 # [aws] as well as [train]: the harness uploads the finished run to S3, and
 # boto3 is pure Python -- ~15MB, no compiler, no CUDA.
-RUN pip install --no-cache-dir ".[train,aws]"
+RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PACKAGE_VERSION} \
+    pip install --no-cache-dir ".[bidoze,train,aws]"
+
+WORKDIR /opt/bidoze
+COPY bidoze/config ./config
+COPY bidoze/scripts ./scripts
 
 COPY --from=data /data/feature_cache ./feature_cache
 COPY --from=data /data/manifest.jsonl ./build/manifest/manifest.jsonl

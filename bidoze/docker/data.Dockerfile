@@ -12,7 +12,7 @@
 #
 # Both commands run from the bidoze/ directory, as harness.sh does.
 #
-#   bidoze manifest-local \
+#   arcasleep manifest-local \
 #       --root feature_cache/12Hz_log_PSD \
 #       --output build/manifest/manifest.jsonl
 #
@@ -27,9 +27,9 @@
 # so nothing has to be dropped inside the cache directory itself either.
 
 # CACHE_PREFIX names the subdirectory training looks in. It is the same string
-# as "cache_prefix" in config/inputs.json, and bidoze train derives the path
-# from that config, so a mismatch here surfaces as a missing-cache error rather
-# than a silently empty run.
+# as "cache_prefix" in config/inputs.json, and `arcasleep bidoze train` derives
+# the path from that config, so a mismatch here surfaces as a missing-cache
+# error rather than a silently empty run.
 ARG CACHE_PREFIX=12Hz_log_PSD
 
 FROM scratch

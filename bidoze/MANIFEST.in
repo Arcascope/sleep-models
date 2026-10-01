@@ -1,8 +1,0 @@
-# setuptools_scm puts every Git-tracked file in the sdist. Only the package,
-# its tests and the project metadata belong there; run configs, split plans,
-# cards and deployment files are repository material.
-prune cards
-prune config
-prune deploy
-prune docker
-prune scripts

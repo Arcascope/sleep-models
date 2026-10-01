@@ -4,14 +4,52 @@ Arcascope's open source, open weights sleep models.
 
 ---
 
-This is the top-level repository containing several Python packages. They are available on
-PyPI as separate packages.
+One Python distribution, `arcasleep`, carries the shared data, training,
+evaluation and release tooling (`core/`, the `arcasleep` import package) and
+every model family (`bidoze/`, the `arcasleep_bidoze` import package). Model
+weights are released on the Hugging Face Hub, one repository per model variant.
 
-We release them in separate packages for a clean and easy to separate structure, and for ease of publishing model versions clearly on HuggingFace.
+## Install
+
+The base install is dependency-free: it provides the manifest tools and a
+working CLI, and every other command imports its dependencies on demand.
+
+```bash
+pip install arcasleep                           # CLI + manifest tools, no heavy deps
+pip install "arcasleep[bidoze,inference,hub]"   # run a released BiDoze model
+pip install "arcasleep[bidoze,train]"           # training stack (adds optax, matplotlib)
+pip install "arcasleep[prep]"                   # build the feature cache
+pip install "arcasleep[aws]"                    # S3 manifests and result upload
+pip install "arcasleep[publish]"                # build a release bundle
+```
+
+`pisces-lite` and `arcascope-senpy` are public on PyPI; pisces-lite supplies
+the dataset/IO layer and the metric registry, and its `[proc]` extra (pulled by
+`[prep]`) the prebuilt senpy NUFFT wheel.
+
+## Commands
+
+Every model family reads the same feature cache, so the cache and results
+commands are shared; training, scoring and release sit under each family:
+
+```bash
+arcasleep process          # build the feature cache (needs [prep])
+arcasleep splits-plan / splits-apply
+arcasleep summarize        # pool finished phases into a metrics_summary.csv
+arcasleep compare          # draw a metric grid across summaries
+arcasleep hypnogram        # hypnogram PNGs from prediction CSVs
+arcasleep card-preview     # render a built bundle's model card to HTML
+arcasleep manifest-local / manifest-s3 / upload-results
+
+arcasleep bidoze train     # run the recipe from a feature cache
+arcasleep bidoze evaluate  # score a checkpoint on a cohort
+arcasleep bidoze publish   # build a safetensors release bundle, optionally upload it
+arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
+```
 
 ## BiDoze
 
-Published on Hugging Face as [`arcascope/arcasleep-bidoze-pediatric`](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric); the package lives in [`bidoze/`](bidoze/).
+Published on Hugging Face as [`arcascope/arcasleep-bidoze-pediatric`](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric); the model lives in [`bidoze/`](bidoze/).
 
 Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in accelerometer. 
 
@@ -22,3 +60,21 @@ Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in acceler
 3. The current production training is based on a clinical pediatric pool with varying levels of sleep apnea.
     1. We are grateful to Glenn Weaver and his group for sharing their data with us.  
         These data is described in [Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/).
+
+## Releasing the package
+
+The distribution is published to PyPI from CI with
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC): no API
+token is stored. `.github/workflows/release.yml` builds sdist + wheel from the
+repository root, tests the built wheel, and publishes when a GitHub Release is
+published for an `arcasleep-vX.Y.Z` tag.
+
+The tag is the source of truth for the version: `setuptools-scm` reads the
+nearest `arcasleep-vX.Y.Z` tag (configured in `pyproject.toml`), so the
+distribution version and the release tag cannot drift. To release, push an
+`arcasleep-vX.Y.Z` tag and publish a GitHub Release for it -- there is no
+version literal to edit. The workflow fails if the tag and the built version
+disagree. A manual `workflow_dispatch` runs the build and wheel tests without
+publishing; commits past a tag build as the next patch dev version
+(`X.Y.(Z+1).devN`), which is what `.github/workflows/dry-run-testpypi.yml`
+rehearses against TestPyPI.

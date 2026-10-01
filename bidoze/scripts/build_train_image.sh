@@ -8,8 +8,9 @@
 # override it with PISCES_LITE_VERSION when validating a new release.
 set -euo pipefail
 
-REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DOCKERFILE="$REPO_ROOT/docker/train.Dockerfile"
+MODEL_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd -- "$MODEL_ROOT/.." && pwd)
+DOCKERFILE="$MODEL_ROOT/docker/train.Dockerfile"
 IMAGE_NAME="${BIDOZE_TRAIN_IMAGE_NAME:-bidoze-train}"
 if [[ -z ${PISCES_LITE_VERSION:-} ]]; then
     PISCES_LITE_VERSION=$(python3 - "$REPO_ROOT/pyproject.toml" <<'EOF'

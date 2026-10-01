@@ -19,7 +19,7 @@ pytest.importorskip("safetensors")
 
 import numpy as np
 
-from bidoze.artifacts.publish import (
+from arcasleep.artifacts.publish import (
     BUNDLE_FILES,
     _glance_score,
     build_release_bundle,
@@ -27,7 +27,7 @@ from bidoze.artifacts.publish import (
     load_release_info,
     verify_bundle,
 )
-from bidoze.model import BiDozeNetConfig, BiDozeNetModel
+from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
 
 SMALL_CONFIG = {
     "num_classes": 4,
@@ -261,7 +261,7 @@ def test_card_images_are_bundled_checksummed_and_uploaded(tmp_path: Path) -> Non
     assert not any("example.com" in name for name in bundle.files)
     verify_bundle(tmp_path / "release")
 
-    from bidoze.artifacts.publish import publish_to_hub
+    from arcasleep.artifacts.publish import publish_to_hub
 
     hub = _FakeHub()
     publish_to_hub(tmp_path / "release", "arcascope/arcasleep-bidoze-pediatric", client=hub)
@@ -283,7 +283,7 @@ def test_card_with_a_missing_image_is_refused(tmp_path: Path) -> None:
 
 def test_preview_renders_card_to_standalone_html(tmp_path: Path) -> None:
     pytest.importorskip("markdown_it")
-    from bidoze.artifacts.publish import render_card_html
+    from arcasleep.artifacts.publish import render_card_html
 
     phase = _phase(tmp_path)
     figure = tmp_path / "figure.png"
@@ -303,7 +303,7 @@ def test_evaluation_defaults_to_the_phase_dir_not_a_validation_sibling(
     tmp_path: Path,
 ) -> None:
     """A phase's evaluation.json sits in the phase, not under a run-level sibling."""
-    from bidoze.artifacts.publish import _evaluation_for
+    from arcasleep.artifacts.publish import _evaluation_for
 
     phase = _phase(tmp_path)
     # A run-level validation/evaluation.json must be ignored: there is no
@@ -319,7 +319,7 @@ def test_evaluation_defaults_to_the_phase_dir_not_a_validation_sibling(
 
 def test_checkpoint_is_found_when_model_outputs_is_missing(tmp_path: Path) -> None:
     """A copied phase may not keep its .pisces in model_outputs/."""
-    from bidoze.artifacts.publish import _resolve_checkpoint
+    from arcasleep.artifacts.publish import _resolve_checkpoint
 
     phase = _phase(tmp_path)
     nested = phase / "checkpoints"
@@ -332,7 +332,7 @@ def test_checkpoint_is_found_when_model_outputs_is_missing(tmp_path: Path) -> No
 
 
 def test_missing_checkpoint_names_the_problem(tmp_path: Path) -> None:
-    from bidoze.artifacts.publish import _resolve_checkpoint
+    from arcasleep.artifacts.publish import _resolve_checkpoint
 
     phase = _phase(tmp_path)
     next((phase / "model_outputs").glob("*.pisces")).unlink()
@@ -363,14 +363,14 @@ def test_tampering_is_caught(tmp_path: Path) -> None:
 def test_upload_gate_blocks_an_unreviewed_card(tmp_path: Path, monkeypatch) -> None:
     import argparse
 
-    from bidoze.cli import _publish
+    from arcasleep.cli import _publish
 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
         checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
         repo="arcascope/bidoze", revision=None, private=False, dry_run=True,
-        allow_unreviewed=False, overwrite=False,
+        allow_unreviewed=False, overwrite=False, family="bidoze",
     )
 
     with pytest.raises(SystemExit):
@@ -380,14 +380,14 @@ def test_upload_gate_blocks_an_unreviewed_card(tmp_path: Path, monkeypatch) -> N
 def test_dry_run_upload_does_not_need_huggingface_hub(tmp_path: Path) -> None:
     import argparse
 
-    from bidoze.cli import _publish
+    from arcasleep.cli import _publish
 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
         training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
         checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
         repo="arcascope/bidoze", revision=None, private=False, dry_run=True,
-        allow_unreviewed=True, overwrite=False,
+        allow_unreviewed=True, overwrite=False, family="bidoze",
     )
 
     assert _publish(args) == 0
@@ -397,11 +397,11 @@ def test_preview_skips_the_upload_even_with_a_repo(tmp_path: Path, monkeypatch) 
     pytest.importorskip("markdown_it")
     import argparse
 
-    from bidoze import cli
+    from arcasleep import cli
 
     calls: list[dict] = []
     monkeypatch.setattr(
-        "bidoze.artifacts.publish.publish_to_hub",
+        "arcasleep.artifacts.publish.publish_to_hub",
         lambda *a, **k: calls.append(k),
     )
 
@@ -411,7 +411,7 @@ def test_preview_skips_the_upload_even_with_a_repo(tmp_path: Path, monkeypatch) 
         checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
         preview=str(tmp_path / "card.html"),
         repo="arcascope/bidoze", revision=None, private=False, dry_run=False,
-        allow_unreviewed=False, overwrite=False,
+        allow_unreviewed=False, overwrite=False, family="bidoze",
     )
 
     assert cli._publish(args) == 0
@@ -423,7 +423,7 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
     pytest.importorskip("markdown_it")
     import argparse
 
-    from bidoze.cli import _publish, build_parser
+    from arcasleep.cli import _publish, build_parser
 
     phase = _phase(tmp_path)
     target = tmp_path / "release"
@@ -431,7 +431,7 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
         training_dir=str(phase), output_dir=str(target), version="v1.0.0",
         checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
         preview=str(target), repo=None, revision=None, private=False, dry_run=False,
-        allow_unreviewed=False, overwrite=False,
+        allow_unreviewed=False, overwrite=False, family="bidoze",
     )
 
     assert _publish(args) == 0
@@ -439,7 +439,7 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
 
     # A bare --preview is accepted and defaults to the bundle directory.
     parsed = build_parser().parse_args(
-        ["publish", "-t", str(phase), "-o", str(target), "--version", "v1.0.0",
+        ["bidoze", "publish", "-t", str(phase), "-o", str(target), "--version", "v1.0.0",
          "--overwrite", "--preview"]
     )
     assert parsed.preview == ""
@@ -479,7 +479,7 @@ class _FakeHub:
 
 
 def test_upload_is_one_atomic_folder_commit(tmp_path: Path) -> None:
-    from bidoze.artifacts.publish import publish_to_hub
+    from arcasleep.artifacts.publish import publish_to_hub
 
     phase = _phase(tmp_path)
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0")
@@ -495,7 +495,7 @@ def test_upload_is_one_atomic_folder_commit(tmp_path: Path) -> None:
 
 
 def test_upload_refuses_a_tampered_bundle(tmp_path: Path) -> None:
-    from bidoze.artifacts.publish import publish_to_hub
+    from arcasleep.artifacts.publish import publish_to_hub
 
     phase = _phase(tmp_path)
     build_release_bundle(phase, tmp_path / "release", version="v1.0.0")

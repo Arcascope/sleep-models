@@ -1,4 +1,4 @@
-# Release info for the pediatric variant: `bidoze publish --info cards/bidoze-pediatric.toml`
+# Release info for the pediatric variant: `arcasleep bidoze publish --info cards/bidoze-pediatric.toml`
 repo = "arcascope/arcasleep-bidoze-pediatric"
 card = "bidoze-pediatric.md"   # authored Markdown, relative to this file
 audience = "Children and adolescents aged 5 to 18"
