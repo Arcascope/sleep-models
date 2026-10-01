@@ -64,8 +64,13 @@ PANELS = [
     ("sleep_sensitivity", "Sleep sensitivity", "%", True),
     ("wake_specificity", "Wake specificity", "%", True),
     ("kappa_sleep_wake", "Cohen's κ", "sleep/wake", True),
+    ("f1_sleep", "Sleep F1", "%", True),
+    ("f1_wake", "Wake F1", "%", True),
+    ("f1_macro", "Macro F1", "sleep/wake mean · %", True),
     ("kappa_4stage", "Cohen's κ", "4-stage", True),
     ("tst_error_minutes", "TST error", "min, pred − true", None),
+    ("waso_error_minutes", "WASO error", "min, pred − true", None),
+    ("balanced_accuracy", "Balanced accuracy", "sleep/wake · %", True),
     ("tst_mape", "TST error", "%", False),
     ("waso_mape", "WASO error", "%", False),
     ("light_mape", "Light-sleep error", "%", False),
@@ -195,7 +200,7 @@ def _darken(hexcode: str, factor: float = 0.62) -> str:
 def _fmt(value: float, metric: str) -> str:
     if metric.startswith("kappa"):
         return f"{value:.2f}"
-    if metric == "tst_error_minutes":
+    if metric in ("tst_error_minutes", "waso_error_minutes"):
         return f"{value:+.1f}"
     return f"{value:.1f}"
 
@@ -304,7 +309,9 @@ def draw_comparison(
     fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.7 * nrows),
                              dpi=DPI, squeeze=False)
     fig.patch.set_facecolor(SURFACE)
-    fig.subplots_adjust(left=0.045, right=0.988, top=0.800, bottom=0.110,
+    # A single run has no texture legend row to leave room for.
+    fig.subplots_adjust(left=0.045, right=0.988, top=0.800 if n_runs > 1 else 0.835,
+                        bottom=0.110,
                         wspace=0.42, hspace=0.62)
 
     for ax, (metric, label, unit, hib) in zip(axes.ravel(), panels):
@@ -403,7 +410,7 @@ def draw_comparison(
     for ax in axes.ravel()[len(panels):]:
         ax.set_visible(False)
 
-    # Two legend rows: hue carries the cohort, texture carries the run.
+    # Hue carries the cohort; with several runs, a second row keys the texture.
     cohort_handles = [
         Line2D([], [], marker="s", linestyle="none", markersize=9,
                markerfacecolor=colors[c], markeredgecolor="none",
@@ -413,14 +420,15 @@ def draw_comparison(
                fontsize=9.0, labelcolor=INK_2, ncol=min(len(cohorts), 4),
                handletextpad=0.6, columnspacing=2.0)
 
-    run_handles = [
-        PathPatch(MPath([(0, 0)], [MPath.MOVETO]), facecolor=BASELINE,
-                  edgecolor=INK_2, hatch=hatch, linewidth=0, label=run.label)
-        for run, hatch in zip(runs, RUN_HATCHES)]
-    fig.legend(handles=run_handles, loc="upper left",
-               bbox_to_anchor=(0.026, 0.882), frameon=False, fontsize=9.0,
-               labelcolor=MUTED, ncol=min(len(runs), 4), handletextpad=0.6,
-               columnspacing=2.4)
+    if n_runs > 1:
+        run_handles = [
+            PathPatch(MPath([(0, 0)], [MPath.MOVETO]), facecolor=BASELINE,
+                      edgecolor=INK_2, hatch=hatch, linewidth=0, label=run.label)
+            for run, hatch in zip(runs, RUN_HATCHES)]
+        fig.legend(handles=run_handles, loc="upper left",
+                   bbox_to_anchor=(0.026, 0.882), frameon=False, fontsize=9.0,
+                   labelcolor=MUTED, ncol=min(len(runs), 4), handletextpad=0.6,
+                   columnspacing=2.4)
 
     default_title = "Macro average over subjects, with 95% CI of the mean"
     if agg == "median":
@@ -429,10 +437,12 @@ def draw_comparison(
         default_title += ": " + " vs ".join(run.label for run in runs)
     fig.text(0.024, 0.972, title or default_title,
              fontsize=12.4, color=INK, ha="left", va="bottom")
-    fig.text(0.024, 0.014,
-             "Each panel has its own y-scale.  MAPE panels are heavily right-"
-             "skewed; medians and IQRs are the robust read, and every value "
-             "is in the summary tables.",
+    footnote = "Each panel has its own y-scale."
+    if any(metric.endswith("_mape") for metric, *_ in panels):
+        footnote += ("  MAPE panels are heavily right-skewed; medians and IQRs "
+                     "are the robust read, and every value is in the summary "
+                     "tables.")
+    fig.text(0.024, 0.014, footnote,
              fontsize=7.8, color=MUTED, ha="left", va="bottom")
 
     output_dir = Path(output_dir)

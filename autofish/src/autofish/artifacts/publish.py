@@ -63,14 +63,18 @@ _FRONTMATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 _HTML_IMG_SRC = re.compile(r'(?P<pre><img\b[^>]*?\bsrc=")(?P<src>[^"]+)(?P<post>")')
 
 #: The card's metrics-grid panels, in reading order, three to a row: the
-#: sleep/wake agreement metrics, then the total-sleep and WASO errors.
+#: sleep/wake agreement metrics, the total-sleep and WASO errors with balanced
+#: accuracy, then the F1 scores.
 CARD_GRID_METRICS = (
     "sleep_sensitivity",
     "wake_specificity",
     "kappa_sleep_wake",
     "tst_error_minutes",
-    "tst_mape",
-    "waso_mape",
+    "waso_error_minutes",
+    "balanced_accuracy",
+    "f1_sleep",
+    "f1_wake",
+    "f1_macro",
 )
 CARD_GRID_COLUMNS = 3
 #: Bounded scores drawn on their full range, so bar heights compare honestly.
@@ -78,6 +82,10 @@ CARD_GRID_YLIMS = {
     "sleep_sensitivity": (0.0, 100.0),
     "wake_specificity": (0.0, 100.0),
     "kappa_sleep_wake": (0.0, 1.0),
+    "balanced_accuracy": (0.0, 100.0),
+    "f1_sleep": (0.0, 100.0),
+    "f1_wake": (0.0, 100.0),
+    "f1_macro": (0.0, 100.0),
 }
 
 #: The config snapshots a phase writes, and what each becomes in the bundle.
@@ -450,7 +458,12 @@ _METRIC_LABELS: dict[str, tuple[str, str, bool | None]] = {
     "kappa_sleep_wake": ("Cohen's κ, sleep/wake", "", True),
     "sleep_sensitivity": ("Sleep sensitivity", "%", True),
     "wake_specificity": ("Wake specificity", "%", True),
+    "balanced_accuracy": ("Balanced accuracy, sleep/wake", "%", True),
+    "f1_sleep": ("Sleep F1", "%", True),
+    "f1_wake": ("Wake F1", "%", True),
+    "f1_macro": ("Macro F1, sleep/wake mean", "%", True),
     "tst_error_minutes": ("TST error", "min", None),
+    "waso_error_minutes": ("WASO error", "min", None),
     "tst_mape": ("TST error", "%", False),
     "waso_mape": ("WASO error", "%", False),
     "kappa_4stage": ("Cohen's κ, 4-stage", "", True),
@@ -508,7 +521,7 @@ def _fmt_metric(metric: str, value: Any) -> str:
     value = float(value)
     if metric.startswith("kappa"):
         return f"{value:.2f}"
-    if metric == "tst_error_minutes":
+    if metric in ("tst_error_minutes", "waso_error_minutes"):
         return f"{value:+.1f}".replace("-", "−")
     if metric.endswith("_count"):
         return f"{value:.0f}" if abs(value) >= 10 or value == 0 else f"{value:.2f}"
