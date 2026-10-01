@@ -52,4 +52,4 @@ jobs:
       # Gate on fatal errors only (syntax, undefined names); the full rule set
       # in that config is advisory.
       - name: Check syntax and undefined names
-        run: ruff check --select E9,F63,F7,F82 core bidoze/src bidoze/tests
+        run: ruff check --select E9,F63,F7,F82 core bidoze/src bidoze/tests unet/src unet/tests

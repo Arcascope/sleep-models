@@ -84,6 +84,48 @@ def pad_pooled(pooled: np.ndarray, target_length: int) -> np.ndarray:
     return np.concatenate([pooled, epoch_padding(pooled, target_length - pooled.shape[0])])
 
 
+def pad_frames(frames: np.ndarray, target_length: int) -> np.ndarray:
+    """Pad one recording's frames with absent frames, or truncate it, to length.
+
+    An absent frame is :data:`SPECTROGRAM_PADDING_VALUE` in every bin and
+    channel, which is how the cache records a frame with no data.
+    """
+    if frames.shape[0] >= target_length:
+        return frames[:target_length]
+    fill = np.full(
+        (target_length - frames.shape[0], *frames.shape[1:]),
+        SPECTROGRAM_PADDING_VALUE,
+        dtype=frames.dtype,
+    )
+    return np.concatenate([frames, fill])
+
+
+def recording_input(X: np.ndarray, n_epochs: int, frames_per_epoch: int) -> np.ndarray:
+    """One recording's model input, ``X`` being its cached ``(frames, F, C)``.
+
+    A model that reads one row per epoch (``frames_per_epoch == 1``) gets the
+    pooled surface with its gap row, ``(epochs, F + 1, C)``. A model that reads
+    raw frames gets them unpooled, ``(epochs * frames_per_epoch, F, C)``; its
+    ``frames_per_epoch`` must then match the cache's frames per label.
+    """
+    if frames_per_epoch == 1:
+        return pool_frames_to_epochs(X[None], np.zeros((1, n_epochs)))[0]
+    cached = X.shape[0] // max(n_epochs, 1)
+    if cached != frames_per_epoch:
+        raise ValueError(
+            f"the model reads {frames_per_epoch} frames per epoch but the cache "
+            f"holds {cached}"
+        )
+    return X[: n_epochs * frames_per_epoch]
+
+
+def pad_recording_input(inputs: np.ndarray, n_epochs: int, frames_per_epoch: int) -> np.ndarray:
+    """Pad or truncate a :func:`recording_input` to ``n_epochs`` epochs."""
+    if frames_per_epoch == 1:
+        return pad_pooled(inputs, n_epochs)
+    return pad_frames(inputs, n_epochs * frames_per_epoch)
+
+
 def split_gap_row(pooled: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """``(spectrum, missing_fraction)`` from a pooled ``(T, F + 1[, C])`` surface."""
     gap = pooled[:, GAP_ROW]
@@ -95,13 +137,25 @@ def stack_bundles(
     target_x_length: int,
     target_y_length: int,
     y_padding: int = GAP_LABEL,
+    frames_per_epoch: int = 1,
 ) -> ModelIOBundle:
-    """Pool and pad each subject to the target length, then concatenate."""
+    """Build each subject's model input, pad it to the target length, then concatenate."""
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     for bundle in bundles:
-        pooled = pool_frames_to_epochs(bundle.X, bundle.y)
-        Xs.append(np.stack([pad_pooled(row, target_x_length) for row in pooled]))
+        n_epochs = bundle.y.shape[1]
+        Xs.append(
+            np.stack(
+                [
+                    pad_recording_input(
+                        recording_input(row, n_epochs, frames_per_epoch),
+                        target_x_length,
+                        frames_per_epoch,
+                    )
+                    for row in bundle.X
+                ]
+            )
+        )
         ys.append(
             pad_or_truncate(bundle.y, target_length=target_y_length, pad_value=y_padding, axis=1)
         )
@@ -120,6 +174,7 @@ def assemble_batch(
     target_y_length: int,
     num_classes: int,
     *,
+    frames_per_epoch: int = 1,
     with_dataset_labels: bool = False,
 ) -> Tuple[np.ndarray, ...]:
     """Pad, stack, and stage-remap one set of subjects into ``(X, y)``.
@@ -134,6 +189,7 @@ def assemble_batch(
         [features_by_ref[ref] for ref in refs],
         target_x_length=target_x_length,
         target_y_length=target_y_length,
+        frames_per_epoch=frames_per_epoch,
     )
     y = bundle.y_for_n_classes(num_classes=num_classes)
     if with_dataset_labels:

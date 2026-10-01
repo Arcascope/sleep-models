@@ -6,6 +6,7 @@ prune bidoze/config
 prune bidoze/deploy
 prune bidoze/docker
 prune bidoze/scripts
+prune unet/config
 prune .github
 prune .claude
 prune plans
