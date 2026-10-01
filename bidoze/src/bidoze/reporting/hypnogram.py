@@ -1,20 +1,11 @@
 """Per-subject hypnogram rendering for an evaluation cohort.
 
-This is a precise lift of ``render_subject_hypnogram`` and only the helpers it
-draws with, out of ``autofish-jax/analysis/reporting.py``. The figure is the
-same one the research repository writes during training -- stage-probability
-stacked area, argmax confidence, predicted stages in the "apple" lanes, PSG
-truth, then one panel per spectral channel -- so a hypnogram produced here is
-directly comparable with one produced there.
-
-The only things re-derived rather than copied are the two things this package
-already owns:
-
-* ``normalized_log_spectrogram`` comes from the same transform the research
-  plotter uses (``analysis/spectrogram_plotting.py``), so already-log features
-  are min-maxed instead of logged twice.
-* the stage summary in the title is the same ``subject_stage_summary`` shape
-  ``analysis/stage_summary.py`` computes, ported here so the title fields match.
+The figure is, top to bottom: 
+- the stage probabilities as a stacked area, 
+- the argmax confidence, 
+- the predicted stages,
+- the PSG truth as one lane per stage,
+- one panel per spectral channel.
 
 Nothing here reads a config or loads a model; the caller hands over the pooled,
 padded inputs, the class probabilities, and the rendered labels.
@@ -41,18 +32,10 @@ _CLASS_COLORS = {
     "REM": "#24bfd0",
     "Gap": "#8f96a3",
 }
-_CLASS_HEIGHTS = {
-    0: 1.2,
-    1: 0.66,
-    2: 0.33,
-    3: 1.0,
-    4: 1.35,
-}
 #: Stacking order for the probability area -- gap first, then the stages.
 _ORDERED_STAGE_INDICES = [4, 0, 3, 1, 2]
-#: Top-to-bottom lane order for the "apple" hypnogram.
-_APPLE_STAGE_ORDER = [0, 3, 1, 2, 4]
-_VALID_STAGE_STYLES = {"apple", "pisces"}
+#: Top-to-bottom lane order for the stage panels.
+_LANE_ORDER = [0, 3, 1, 2, 4]
 _VALID_FEATURE_KINDS = {"spectrogram", "embedding"}
 
 #: Gap class index in the rendered labels, and the epoch sentinel the plotter
@@ -81,11 +64,10 @@ def normalized_log_spectrogram(
 ) -> np.ndarray:
     """The dB surface the spectrogram panel draws.
 
-    Lifted from ``analysis/spectrogram_plotting.py``. Already-log features
-    (``spectrogram_kind: log_psd``) are negative, so they are min-maxed
-    directly; linear-magnitude features are clamped at zero and logged.
-    ``missing`` flags epochs with no data (gap row at 1); they are drawn at the
-    floor so absent data reads as dark silence.
+    Already-log features (``spectrogram_kind: log_psd``) are negative, so they
+    are min-maxed directly; linear-magnitude features are clamped at zero and
+    logged. ``missing`` flags epochs with no data (gap row at 1); they are drawn
+    at the floor so absent data reads as dark silence.
     """
     spec_plot = np.asarray(spec, dtype=float).T.copy()
     if spec_plot.size and spec_plot.min() < 0.0:
@@ -132,36 +114,6 @@ def _spectrogram_panels(
 # ------------------------------------------------------------------- stages --
 
 
-def _draw_blocks(ax, labels: np.ndarray, title: str) -> None:
-    """Variable-height stage plot (the "pisces" lane style)."""
-    seen: set[str] = set()
-    for class_idx in _ORDERED_STAGE_INDICES:
-        class_name = _CLASS_NAMES[class_idx]
-        indices = np.where(labels == class_idx)[0]
-        if len(indices) == 0:
-            continue
-        gaps = np.where(np.diff(indices) > 1)[0]
-        blocks = np.split(indices, gaps + 1)
-        for block in blocks:
-            label = class_name if class_name not in seen else None
-            if label is not None:
-                seen.add(class_name)
-            ax.axvspan(
-                int(block[0]),
-                int(block[-1]) + 1,
-                ymin=0,
-                ymax=_CLASS_HEIGHTS[class_idx] / 1.5,
-                facecolor=_CLASS_COLORS[class_name],
-                edgecolor="tab:blue" if class_name == "Gap" else "none",
-                linewidth=1.6 if class_name == "Gap" else 0.0,
-                alpha=0.7,
-                label=label,
-            )
-    ax.set_ylim(0, 1.5)
-    ax.set_ylabel(title)
-    ax.legend(loc="upper left")
-
-
 def _stage_runs(labels: np.ndarray, class_idx: int) -> list[tuple[int, int]]:
     indices = np.where(labels == class_idx)[0]
     if len(indices) == 0:
@@ -170,11 +122,11 @@ def _stage_runs(labels: np.ndarray, class_idx: int) -> list[tuple[int, int]]:
     return [(int(block[0]), int(block[-1]) + 1) for block in np.split(indices, gaps + 1)]
 
 
-def _draw_apple_stage_lanes(ax, labels: np.ndarray, title: str, class_count: int) -> None:
+def _draw_stage_panel(ax, labels: np.ndarray, title: str, *, class_count: int) -> None:
     valid_labels = labels[labels >= 0]
     if valid_labels.size:
         class_count = max(class_count, int(valid_labels.max()) + 1)
-    stage_indices = [idx for idx in _APPLE_STAGE_ORDER if idx < class_count]
+    stage_indices = [idx for idx in _LANE_ORDER if idx < class_count]
     if len(stage_indices) == 0:
         ax.set_ylabel(title)
         return
@@ -213,22 +165,6 @@ def _draw_apple_stage_lanes(ax, labels: np.ndarray, title: str, class_count: int
     ax.spines["left"].set_visible(False)
     if seen:
         ax.legend(loc="upper left", ncol=min(len(seen), 5), frameon=False)
-
-
-def _draw_stage_panel(
-    ax,
-    labels: np.ndarray,
-    title: str,
-    *,
-    stage_style: str,
-    class_count: int,
-) -> None:
-    if stage_style == "apple":
-        _draw_apple_stage_lanes(ax, labels, title, class_count)
-    elif stage_style == "pisces":
-        _draw_blocks(ax, labels, title)
-    else:
-        raise ValueError(f"stage_style must be one of {sorted(_VALID_STAGE_STYLES)}, got {stage_style!r}")
 
 
 def _add_masked_epoch_overlay(axes: list[plt.Axes], labels: np.ndarray) -> None:
@@ -331,7 +267,6 @@ def render_subject_hypnogram(
     labels: np.ndarray,
     title_prefix: str,
     channel_names: list[str] | None = None,
-    stage_style: str = "apple",
     epoch_seconds: float | None = None,
     feature_kind: str = "spectrogram",
 ) -> dict[str, float]:
@@ -345,8 +280,6 @@ def render_subject_hypnogram(
         raise ValueError(
             f"feature_kind must be one of {sorted(_VALID_FEATURE_KINDS)}, got {feature_kind!r}"
         )
-    if stage_style not in _VALID_STAGE_STYLES:
-        raise ValueError(f"stage_style must be one of {sorted(_VALID_STAGE_STYLES)}, got {stage_style!r}")
     time_indices = np.arange(probs.shape[0])
     pred_stage = np.argmax(probs, axis=-1)
     pred_conf = np.max(probs, axis=-1)
@@ -391,14 +324,12 @@ def render_subject_hypnogram(
         axes_list[2],
         pred_stage,
         "Pred",
-        stage_style=stage_style,
         class_count=probs.shape[1],
     )
     _draw_stage_panel(
         axes_list[3],
         labels,
         "PSG",
-        stage_style=stage_style,
         class_count=probs.shape[1],
     )
 

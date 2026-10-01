@@ -220,7 +220,7 @@ def _write_json(path: Path, payload: object) -> None:
 HYPNOGRAM_DIRNAME = "hypnograms"
 
 
-def _hypnogram_renderer(config: RunConfig, stage_style: str = "apple"):
+def _hypnogram_renderer(config: RunConfig):
     """The per-subject hypnogram call, or ``None`` when matplotlib is absent.
 
     Imported here rather than at module scope so a local inference install --
@@ -253,7 +253,6 @@ def _hypnogram_renderer(config: RunConfig, stage_style: str = "apple"):
             labels=labels,
             title_prefix=title_prefix,
             channel_names=channel_names,
-            stage_style=stage_style,
             feature_kind=feature_kind,
         )
 
@@ -270,7 +269,6 @@ def run_evaluation(
     provenance: Mapping[str, object] | None = None,
     overwrite: bool = False,
     render_hypnograms: bool = False,
-    stage_style: str = "apple",
     ggir_sib_filter: bool = False,
 ) -> Path:
     """Score every subject and return the directory the results landed in.
@@ -281,8 +279,7 @@ def run_evaluation(
 
     ``render_hypnograms`` additionally draws one per-subject PNG into
     ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were scored, using
-    :mod:`bidoze.reporting.hypnogram` -- the same figure the research
-    repository renders during training.
+    :mod:`bidoze.reporting.hypnogram`.
 
     ``ggir_sib_filter`` demotes predicted sleep that is not a sustained
     inactivity bout to wake (:func:`apply_sib_filter`) before anything is scored
@@ -306,7 +303,7 @@ def run_evaluation(
             )
     # Resolve the renderer before touching the CSV: a missing matplotlib must
     # fail before an existing results file is deleted.
-    renderer = _hypnogram_renderer(config, stage_style) if render_hypnograms else None
+    renderer = _hypnogram_renderer(config) if render_hypnograms else None
     csv_path = results_csv_path(output_dir, config)
     if csv_path.exists():
         if not overwrite:

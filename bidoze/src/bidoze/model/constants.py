@@ -1,7 +1,4 @@
-"""Stable model semantics extracted from the research repository.
-
-These are part of the BiDoze label contract, not dataset-specific policy.
-"""
+"""Stage maps of the BiDoze label contract: model semantics, not dataset-specific policy."""
 
 STAGE_1_MAP = {0: [0], 1: [1, 2, 3], 2: [-2]}
 STAGE_2_MAP = {0: [0], 1: [1, 2], 2: [3], 3: [-2]}
