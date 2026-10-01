@@ -1,0 +1,20 @@
+# Release info for the pediatric variant: `bidoze publish --info cards/bidoze-pediatric.toml`
+repo = "arcascope/arcasleep-bidoze-pediatric"
+card = "bidoze-pediatric.md"   # authored Markdown, relative to this file
+audience = "Children and adolescents aged 5 to 18"
+# The glance score must come from the pooled cross-validation, never an adult holdout.
+require_cv = true
+
+protocol = """\
+The pediatric dataset from Weaver _et al_ was split into \
+five fixed, participant-level folds, balanced such that training \
+pools contained representative proportions of no-diagnosis, mild, \
+moderate, and severe obstructive sleep apnea. The cross-validation column \
+pools five models, each scoring the fold it did not train on; the \
+released model was then trained on all Weaver data and scored on the two \
+adult cohorts."""
+
+[cohorts]
+cv = "held-out folds of the pediatric training data; the closest estimate for the intended population"
+SleepAccel = "healthy adults"
+SleepAccel-Clinical = "adults with sleep apnea of varying severity"

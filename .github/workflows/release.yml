@@ -1,6 +1,6 @@
 name: release
 
-# Builds and publishes arcascope-autofish to PyPI when a GitHub Release is
+# Builds and publishes arcasleep-bidoze to PyPI when a GitHub Release is
 # published.
 #
 # Authentication uses PyPI Trusted Publishing (OIDC): no API token or secret is
@@ -9,7 +9,7 @@ name: release
 # See https://docs.pypi.org/trusted-publishers/.
 #
 # This is a monorepo: the release tag is namespaced per distribution
-# (`autofish-v1.0.0`). Only autofish/ is built here; other model families get
+# (`bidoze-v0.1.0`). Only bidoze/ is built here; other model families get
 # their own workflow and their own PyPI publisher.
 #
 # For a TestPyPI dry run, use the separate "dry-run-testpypi" workflow.
@@ -29,14 +29,14 @@ jobs:
   build:
     name: Build distributions
     # Monorepo guard: only react to this distribution's namespaced tags
-    # (`autofish-v*`), or to a manual dispatch.
+    # (`bidoze-v*`), or to a manual dispatch.
     if: >-
       github.event_name == 'workflow_dispatch'
-      || startsWith(github.event.release.tag_name, 'autofish-v')
+      || startsWith(github.event.release.tag_name, 'bidoze-v')
     runs-on: ubuntu-latest
     steps:
       # Full history and tags: setuptools-scm derives the version from the
-      # nearest `autofish-v*` tag, which a shallow clone would not contain.
+      # nearest `bidoze-v*` tag, which a shallow clone would not contain.
       - name: Check out source
         uses: actions/checkout@v7
         with:
@@ -50,8 +50,8 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip build twine
-      - name: Build the autofish sdist and wheel
-        run: python -m build --outdir dist autofish
+      - name: Build the bidoze sdist and wheel
+        run: python -m build --outdir dist bidoze
       - name: Check distribution metadata
         run: twine check dist/*
       # setuptools-scm derives the version from the tag, so this is a sanity
@@ -63,9 +63,9 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           python -m pip install --no-deps dist/*.whl
-          version=$(python -c "import autofish; print(autofish.__version__)")
+          version=$(python -c "import bidoze; print(bidoze.__version__)")
           if [ -n "$TAG" ]; then
-            tag_version="${TAG#autofish-v}"
+            tag_version="${TAG#bidoze-v}"
             if [ "$tag_version" != "$version" ]; then
               echo "::error::tag '$TAG' != built version $version"
               exit 1
@@ -102,8 +102,8 @@ jobs:
       - name: Install the built wheel and run the test suite against it
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "dist/"*.whl pytest "jax" "flax" "pisces-lite>=4.1.0" safetensors pandas matplotlib
-          python -m pytest autofish/tests -q
+          python -m pip install "$(ls dist/*.whl)[dev,all,report]"
+          python -m pytest bidoze/tests -q
 
   pypi-publish:
     name: Publish to PyPI
@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/arcascope-autofish
+      url: https://pypi.org/p/arcasleep-bidoze
     permissions:
       id-token: write
     steps:

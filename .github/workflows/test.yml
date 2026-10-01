@@ -1,7 +1,7 @@
 name: test
 
-# CI for the autofish distribution. The workspace root pyproject.toml carries no
-# package; every build and install below is scoped to autofish/.
+# CI for the bidoze distribution. The workspace root pyproject.toml carries no
+# package; every build and install below is scoped to bidoze/.
 
 on:
   push:
@@ -18,8 +18,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      # Full history and tags: the local install below builds autofish with
-      # setuptools-scm, which reads the version from the nearest `autofish-v*`
+      # Full history and tags: the local install below builds bidoze with
+      # setuptools-scm, which reads the version from the nearest `bidoze-v*`
       # tag and fails on a shallow clone without it.
       - uses: actions/checkout@v7
         with:
@@ -35,9 +35,9 @@ jobs:
       - name: Install with dev, all and report extras
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./autofish[dev,all,report]"
+          python -m pip install "./bidoze[dev,all,report]"
       - name: Run tests
-        run: python -m pytest autofish/tests -q
+        run: python -m pytest bidoze/tests -q
 
   lint:
     name: Lint
@@ -50,8 +50,7 @@ jobs:
       - name: Install ruff
         run: python -m pip install "ruff>=0.8"
       # The root pyproject.toml holds the workspace ruff configuration.
-      # Gate on fatal errors only (syntax, undefined names): the full rule set
-      # in that config still reports pre-existing style findings. Tighten this
-      # selector as those are cleaned up.
+      # Gate on fatal errors only (syntax, undefined names); the full rule set
+      # in that config is advisory.
       - name: Check syntax and undefined names
-        run: ruff check --select E9,F63,F7,F82 autofish/src autofish/tests
+        run: ruff check --select E9,F63,F7,F82 bidoze/src bidoze/tests

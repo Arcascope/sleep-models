@@ -9,12 +9,12 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-# The packages live under `autofish/src/`, which ruff does not discover as the
-# source root from the workspace root, so `autofish` imports are otherwise
+# The packages live under `bidoze/src/`, which ruff does not discover as the
+# source root from the workspace root, so `bidoze` imports are otherwise
 # treated as third-party. Naming it preserves the existing convention -- a
 # third-party block, a blank line, then the first-party block -- under
 # `ruff check --fix`.
-known-first-party = ["autofish"]
+known-first-party = ["bidoze"]
 
 [tool.pytest.ini_options]
-testpaths = ["autofish/tests"]
+testpaths = ["bidoze/tests"]
