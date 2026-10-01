@@ -6,7 +6,7 @@ usage: scripts/run_training_task.sh IMAGE_URI
 
 Run one training job on the stack's GPU capacity using IMAGE_URI, e.g.
 
-  scripts/run_training_task.sh 904277341831.dkr.ecr.us-east-1.amazonaws.com/bidoze/train:12Hz_log_PSD-bcbb92714773-2d5cd52-dirty
+  scripts/run_training_task.sh <account number>.dkr.ecr.us-east-1.amazonaws.com/bidoze/train:<tag>
 
 Everything else comes from the CloudFormation stack's outputs.
 
