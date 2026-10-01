@@ -4,6 +4,7 @@ This module must import nothing outside the standard library: the CLI entry
 point reads it before any optional dependency is installed, so a base install
 can answer ``--help`` and run the manifest commands with no extras present.
 """
+
 from __future__ import annotations
 
 # Raw 5C PSG labels: 0=Wake, 1..4=N1..N4, 5=REM. Anything negative is

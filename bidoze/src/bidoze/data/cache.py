@@ -12,6 +12,7 @@ and ``y`` of shape ``(1, T // frames_per_epoch)``.
 Reading the cache is all training does, so a training host needs neither senpy
 nor a NUFFT backend. Building the cache is a separate concern.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

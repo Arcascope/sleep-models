@@ -1,4 +1,5 @@
 """Command line entry points for training, processing and manifests."""
+
 from __future__ import annotations
 
 import argparse
@@ -34,8 +35,7 @@ def _manifest_s3(args: argparse.Namespace) -> int:
     except ModuleNotFoundError as exc:
         if exc.name == "boto3":
             raise SystemExit(
-                "S3 manifests need the optional dependency: "
-                "pip install 'arcasleep-bidoze[aws]'"
+                "S3 manifests need the optional dependency: pip install 'arcasleep-bidoze[aws]'"
             ) from exc
         raise
     digest = write_manifest(entries, Path(args.output))
@@ -111,8 +111,7 @@ def _process(args: argparse.Namespace) -> int:
         raise SystemExit(str(exc)) from exc
 
     cache_root = Path(
-        args.output_dir
-        or os.environ.get("FEATURE_CACHE_DIR", DEFAULT_FEATURE_CACHE_DIR)
+        args.output_dir or os.environ.get("FEATURE_CACHE_DIR", DEFAULT_FEATURE_CACHE_DIR)
     )
     cache_dir = resolve_feature_cache_dir(cache_root, cache_prefix)
 
@@ -258,9 +257,7 @@ def _upload_results(args: argparse.Namespace) -> int:
         destination = f"{destination}/{args.run_id}"
 
     try:
-        written = upload_run(
-            run_dir, destination, overwrite=args.overwrite, dry_run=args.dry_run
-        )
+        written = upload_run(run_dir, destination, overwrite=args.overwrite, dry_run=args.dry_run)
     except ModuleNotFoundError as exc:
         if exc.name == "boto3":
             raise SystemExit(
@@ -279,6 +276,7 @@ def _upload_results(args: argparse.Namespace) -> int:
 
 #: The configs a finished training phase left behind, read back by `evaluate`.
 EVALUATION_CONFIGS = ("inputs.json", "model.json", "cv.json", "training.json", "metrics.json")
+
 
 def _expand_inputs(patterns: list[str]) -> list[Path]:
     """Resolve ``-i`` values to cache files, quoted or already shell-expanded.
@@ -308,8 +306,7 @@ def _training_phase_configs(training_dir: Path) -> dict[str, Path]:
     missing = [str(path) for path in paths.values() if not path.is_file()]
     if missing:
         raise SystemExit(
-            f"{training_dir} is not a training phase directory; missing:\n  "
-            + "\n  ".join(missing)
+            f"{training_dir} is not a training phase directory; missing:\n  " + "\n  ".join(missing)
         )
     return paths
 
@@ -443,11 +440,11 @@ def _evaluate_folds(args: argparse.Namespace) -> int:
                 f"fold in {args.fold_config} ({sorted(plan.folds)})"
             )
         held_out = {sid for name in plan_folds for sid in plan.folds[name]}
-        subjects = {ref: bundle for ref, bundle in all_subjects.items() if ref.subject_id in held_out}
+        subjects = {
+            ref: bundle for ref, bundle in all_subjects.items() if ref.subject_id in held_out
+        }
         if not subjects:
-            raise SystemExit(
-                f"{fold_dir.name}: none of the -i subjects are in {plan_folds}"
-            )
+            raise SystemExit(f"{fold_dir.name}: none of the -i subjects are in {plan_folds}")
         missing = sorted(held_out - {ref.subject_id for ref in subjects})
         if missing:
             print(
@@ -658,6 +655,7 @@ def _summarize(args: argparse.Namespace) -> int:
         raise SystemExit(str(exc)) from exc
     return 0
 
+
 def _pair_summaries(entries: list[list[str]]) -> tuple[list[Path], list[str] | None]:
     """Turn ``-s PATH [NAME]`` groups into parallel paths and names.
 
@@ -668,9 +666,7 @@ def _pair_summaries(entries: list[list[str]]) -> tuple[list[Path], list[str] | N
     names: list[str | None] = []
     for entry in entries:
         if len(entry) > 2:
-            raise SystemExit(
-                f"-s takes a path and at most one name; got {len(entry)}: {entry}"
-            )
+            raise SystemExit(f"-s takes a path and at most one name; got {len(entry)}: {entry}")
         paths.append(Path(entry[0]))
         names.append(entry[1] if len(entry) == 2 else None)
     if all(name is None for name in names):
@@ -782,11 +778,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--sib-only",
         action="store_true",
         help="add the GGIR anglez_5s array to existing cache files without "
-             "re-running the NUFFT; with --overwrite, replace one already there",
+        "re-running the NUFFT; with --overwrite, replace one already there",
     )
-    process.add_argument(
-        "--overwrite", action="store_true", help="rebuild subjects already cached"
-    )
+    process.add_argument("--overwrite", action="store_true", help="rebuild subjects already cached")
     process.set_defaults(handler=_process)
 
     evaluate = commands.add_parser(
@@ -809,13 +803,13 @@ def build_parser() -> argparse.ArgumentParser:
         "-fc",
         "--fold-config",
         help="split plan (e.g. config/splits/weaver_5fold.json); with -ft scores "
-             "each fold's model on the subjects that fold held out",
+        "each fold's model on the subjects that fold held out",
     )
     evaluate.add_argument(
         "-ft",
         "--fold-training",
         help="training root holding fold<i>/ phase directories; each is scored on "
-             "its held-out fold into <output-dir>/fold<i>/",
+        "its held-out fold into <output-dir>/fold<i>/",
     )
     evaluate.add_argument(
         "-o",
@@ -837,8 +831,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--ggir-sib-filter",
         action="store_true",
         help="demote predicted sleep that is not a GGIR (vanHees2015) sustained "
-             "inactivity bout to wake before scoring; needs anglez_5s in the "
-             "cache (built by `process`, or added with `process --sib-only`)",
+        "inactivity bout to wake before scoring; needs anglez_5s in the "
+        "cache (built by `process`, or added with `process --sib-only`)",
     )
     evaluate.add_argument(
         "--overwrite",
@@ -867,7 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish = commands.add_parser(
         "publish",
         help="build a safetensors release bundle from a training phase, optionally "
-             "upload it to the Hugging Face Hub",
+        "upload it to the Hugging Face Hub",
     )
     publish.add_argument(
         "-t",
@@ -893,7 +887,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument(
         "--evaluation",
         help="an evaluation.json to fold into provenance and the card; defaults "
-             "to <training-dir>/evaluation.json when present",
+        "to <training-dir>/evaluation.json when present",
     )
     publish.add_argument(
         "--metrics-summary",
@@ -902,16 +896,16 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument(
         "--info",
         help="release-info TOML for this model variant: repo, audience, protocol, "
-             "cohort descriptions and the authored card Markdown (see "
-             "cards/bidoze-pediatric.toml)",
+        "cohort descriptions and the authored card Markdown (see "
+        "cards/bidoze-pediatric.toml)",
     )
     publish.add_argument(
         "--card",
         help="authored Markdown for the card (intended use, limitations, how to "
-             "apply, metrics, figures); placed after the title with the generated "
-             "facts following. Relative images are bundled into assets/. Overrides "
-             "the card named by --info; with neither, the card carries a PENDING "
-             "review marker",
+        "apply, metrics, figures); placed after the title with the generated "
+        "facts following. Relative images are bundled into assets/. Overrides "
+        "the card named by --info; with neither, the card carries a PENDING "
+        "review marker",
     )
     publish.add_argument(
         "--preview",
@@ -919,13 +913,13 @@ def build_parser() -> argparse.ArgumentParser:
         const="",
         metavar="PATH",
         help="render the card to this standalone HTML file ('-' for stdout) and "
-             "stop; nothing is uploaded, even with --repo. Omit PATH to write "
-             "card.html into the bundle, or give a directory to write it there",
+        "stop; nothing is uploaded, even with --repo. Omit PATH to write "
+        "card.html into the bundle, or give a directory to write it there",
     )
     publish.add_argument(
         "--repo",
         help="Hub model repo to upload to, e.g. org/bidoze-variant; omit to only build "
-             "(also titles the card, overriding the repo in --info)",
+        "(also titles the card, overriding the repo in --info)",
     )
     publish.add_argument("--revision", help="Hub branch/revision to commit to")
     publish.add_argument("--private", action="store_true", help="create the Hub repo private")
@@ -958,27 +952,27 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument(
         "--origin",
         help="where epoch 0 starts, in seconds on the input clock, or 'unix'; "
-             "defaults to the first sample",
+        "defaults to the first sample",
     )
     predict.add_argument(
         "--return-gap-head",
         action="store_true",
         help="add a gap_head column with the network's gap probability; the stage "
-             "columns still sum to 1",
+        "columns still sum to 1",
     )
     predict.add_argument(
         "--ggir-sleep-filter",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="demote quiet wakefulness to wake and flag sleep outside the main "
-             "sleep window as naps, GGIR-style (default: on; use "
-             "--no-ggir-sleep-filter for the raw BiDoze stage)",
+        "sleep window as naps, GGIR-style (default: on; use "
+        "--no-ggir-sleep-filter for the raw BiDoze stage)",
     )
     predict.add_argument(
         "--ggir-error-fails",
         action="store_true",
         help="abort if the GGIR sleep filter raises, instead of warning and "
-             "writing the raw BiDoze stages",
+        "writing the raw BiDoze stages",
     )
     predict.add_argument(
         "--hypnogram",
@@ -1027,7 +1021,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="PATH [NAME]",
         help="a metrics_summary.csv and an optional legend name (at most one), "
-             "e.g. -s path/summary.csv 'v1 run'; repeatable, in legend order",
+        "e.g. -s path/summary.csv 'v1 run'; repeatable, in legend order",
     )
     compare.add_argument(
         "-o",
@@ -1041,7 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mean", "median"),
         default="mean",
         help="center each bar on the mean (95%% CI whisker) or the median "
-             "(IQR whisker); default: mean",
+        "(IQR whisker); default: mean",
     )
     compare.add_argument(
         "--name",
@@ -1079,9 +1073,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RESULTS_S3_PREFIX,
         help=f"s3:// prefix to upload under (default {DEFAULT_RESULTS_S3_PREFIX})",
     )
-    upload.add_argument(
-        "--run-id", help="appended to --destination; usually the run fingerprint"
-    )
+    upload.add_argument("--run-id", help="appended to --destination; usually the run fingerprint")
     upload.add_argument(
         "--overwrite",
         action="store_true",

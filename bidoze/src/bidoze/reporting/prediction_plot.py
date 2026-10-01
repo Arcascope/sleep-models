@@ -14,6 +14,7 @@ Without the filter only the raw row is drawn. With PSG, removed sleep is
 shaded by whether PSG called it wake or sleep; without PSG it is one neutral
 shade, since nothing says whether a removal was right.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -89,8 +90,12 @@ def plot_prediction(
         panels += ["filtered", "track"]
     ratios = [1.4 if name == "track" else 3 for name in panels]
     fig, axes = plt.subplots(
-        len(panels), 1, figsize=(16, 1.2 + 1.8 * sum(ratios) / 3), sharex=True,
-        gridspec_kw={"height_ratios": ratios, "hspace": 0.32}, squeeze=False,
+        len(panels),
+        1,
+        figsize=(16, 1.2 + 1.8 * sum(ratios) / 3),
+        sharex=True,
+        gridspec_kw={"height_ratios": ratios, "hspace": 0.32},
+        squeeze=False,
     )
     axes = dict(zip(panels, axes[:, 0], strict=True))
 
@@ -112,9 +117,7 @@ def plot_prediction(
     _stages(axes["raw"], hours, _levels(raw), RAW, raw_title)
 
     if filter_ran:
-        _stages(
-            axes["filtered"], hours, _levels(filtered), FILTERED, "BiDoze after the SIB filter"
-        )
+        _stages(axes["filtered"], hours, _levels(filtered), FILTERED, "BiDoze after the SIB filter")
         track = axes["track"]
         _shade(track, hours, is_sib, SIB, 0.8, 0.55, 0.95)
         spt_found = is_spt is not None and bool(is_spt.any())
@@ -135,19 +138,33 @@ def plot_prediction(
             ax.spines[side].set_visible(False)
         for side in ("left", "bottom"):
             ax.spines[side].set_color(GRID)
-    legend.append(
-        Patch(facecolor="none", edgecolor=NO_DATA, hatch="////", lw=0, label="No data")
-    )
+    legend.append(Patch(facecolor="none", edgecolor=NO_DATA, hatch="////", lw=0, label="No data"))
     bottom.set_xlim(hours[0], hours[-1] + EPOCH_HOURS)
     bottom.set_xlabel(_time_label(start_s[0]), color=MUTED)
 
     fig.suptitle(
-        _headline(title or path.stem, raw_sleep, filtered_sleep, removed, prediction, filter_ran,
-                  psg_levels is not None and (psg_sleep, psg_wake)),
-        x=0.01, ha="left", fontsize=11, color=TEXT,
+        _headline(
+            title or path.stem,
+            raw_sleep,
+            filtered_sleep,
+            removed,
+            prediction,
+            filter_ran,
+            psg_levels is not None and (psg_sleep, psg_wake),
+        ),
+        x=0.01,
+        ha="left",
+        fontsize=11,
+        color=TEXT,
     )
-    fig.legend(handles=legend, loc="upper right", ncol=len(legend), fontsize=8, frameon=False,
-               bbox_to_anchor=(0.99, 0.965))
+    fig.legend(
+        handles=legend,
+        loc="upper right",
+        ncol=len(legend),
+        fontsize=8,
+        frameon=False,
+        bbox_to_anchor=(0.99, 0.965),
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=110, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)
@@ -213,8 +230,10 @@ def _headline(name, raw_sleep, filtered_sleep, removed, prediction, filter_ran, 
         parts.append(f"sleep {raw_sleep.sum() * minutes:.0f} min")
     if psg:
         psg_sleep, psg_wake = psg
+
         def rates(sleep):
             return sleep[psg_sleep].mean(), (~sleep[psg_wake]).mean()
+
         s0, p0 = rates(raw_sleep)
         if filter_ran:
             s1, p1 = rates(filtered_sleep)

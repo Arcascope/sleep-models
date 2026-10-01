@@ -1,4 +1,5 @@
 """The raw-accelerometer inference helper: file reading, epoch timing, output shape."""
+
 from __future__ import annotations
 
 import csv
@@ -55,8 +56,19 @@ def test_gap_head_column_follows_the_stage_probabilities(tmp_path) -> None:
     rows = list(csv.DictReader(result.to_csv(tmp_path / "night.csv").open()))
 
     assert list(rows[0]) == [
-        "epoch", "start_s", "wake", "light", "deep", "rem", "gap_head", "stage",
-        "stage_raw", "is_nap", "is_sib", "is_spt", "is_gap",
+        "epoch",
+        "start_s",
+        "wake",
+        "light",
+        "deep",
+        "rem",
+        "gap_head",
+        "stage",
+        "stage_raw",
+        "is_nap",
+        "is_sib",
+        "is_spt",
+        "is_gap",
     ]
     assert [float(r["gap_head"]) for r in rows] == pytest.approx([0.01, 0.9, 0.0])
     assert [r["stage"] for r in rows] == ["wake", "gap", "rem"]
@@ -81,12 +93,11 @@ def test_a_model_without_a_gap_head_has_no_gap_probability() -> None:
     assert gap is None
     np.testing.assert_allclose(stages.sum(-1), 1.0)
 
+
 def test_filtered_prediction_reports_stage_and_nap_separately(tmp_path) -> None:
     prediction = Prediction(
         epoch_start_s=np.array([0.0, 30.0, 60.0]),
-        probabilities=np.array(
-            [[0.1, 0.6, 0.2, 0.1], [0.1, 0.6, 0.2, 0.1], [0.1, 0.1, 0.1, 0.7]]
-        ),
+        probabilities=np.array([[0.1, 0.6, 0.2, 0.1], [0.1, 0.6, 0.2, 0.1], [0.1, 0.1, 0.1, 0.7]]),
         stage_names=("wake", "light", "deep", "rem"),
         is_gap=np.zeros(3, dtype=bool),
         stage=np.array(["light", "wake", "wake"], dtype=object),

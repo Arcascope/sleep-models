@@ -3,6 +3,7 @@
 The manifest hash identifies an ordered set of byte-addressed inputs.  S3 ETags
 are deliberately excluded: multipart ETags are not portable content hashes.
 """
+
 from __future__ import annotations
 
 import base64
@@ -175,10 +176,17 @@ def code_digest() -> str | None:
 
 
 def run_provenance(
-    *, package_version: str, raw_manifest_sha256: str, split_manifest_sha256: str,
-    derived_manifest_sha256: str | None, processing_config_sha256: str,
-    training_config_sha256: str, model_config_sha256: str, seed: int,
-    git_commit: str | None = None, image_digest: str | None = None,
+    *,
+    package_version: str,
+    raw_manifest_sha256: str,
+    split_manifest_sha256: str,
+    derived_manifest_sha256: str | None,
+    processing_config_sha256: str,
+    training_config_sha256: str,
+    model_config_sha256: str,
+    seed: int,
+    git_commit: str | None = None,
+    image_digest: str | None = None,
 ) -> dict[str, object]:
     """Structured provenance shared by training, evaluation, and publishing."""
     return {

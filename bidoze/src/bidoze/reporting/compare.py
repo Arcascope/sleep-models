@@ -11,6 +11,7 @@ with the tables it was drawn from. A (metric, cohort, run) that a summary does
 not carry is simply left out, which lets a run that only scored some cohorts
 share the figure with one that scored more.
 """
+
 from __future__ import annotations
 
 import math
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -44,9 +46,9 @@ COHORT_HUES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 RUN_HATCHES = ["", "...", "///", "xxx", "\\\\\\", "++"]
 
 DPI = 200
-BAR_W = 0.20          # bar thickness, in x data units
-PAIR_GAP = 0.085      # air between the bars within one cohort group
-ROUND_PX = 4.0        # rounded data-end radius, CSS px
+BAR_W = 0.20  # bar thickness, in x data units
+PAIR_GAP = 0.085  # air between the bars within one cohort group
+ROUND_PX = 4.0  # rounded data-end radius, CSS px
 FIXED_HEADROOM = 0.14  # label room above a fixed y-range, as a share of it
 
 #: Required columns of a summary table.
@@ -109,9 +111,7 @@ def _agg_columns(agg: str) -> tuple[str, str, str]:
 
 def required_columns(agg: str = "mean") -> tuple[str, ...]:
     """The columns a summary must carry to be read at this aggregation."""
-    return SUMMARY_COLUMNS + tuple(
-        c for c in _agg_columns(agg) if c not in SUMMARY_COLUMNS
-    )
+    return SUMMARY_COLUMNS + tuple(c for c in _agg_columns(agg) if c not in SUMMARY_COLUMNS)
 
 
 def load_summaries(
@@ -145,9 +145,7 @@ def load_summaries(
         table = pd.read_csv(path)
         missing = [c for c in required if c not in table.columns]
         if missing:
-            raise ValueError(
-                f"{path} is not a metrics summary; missing columns: {missing}"
-            )
+            raise ValueError(f"{path} is not a metrics summary; missing columns: {missing}")
         runs.append(RunSummary(path=path, label=label, table=table))
     return runs
 
@@ -171,8 +169,7 @@ def available_panels(runs: Sequence[RunSummary]) -> list[tuple]:
 
 
 def _lookup(run: RunSummary, metric: str, cohort: str):
-    rows = run.table[(run.table["metric"] == metric)
-                     & (run.table["cohort"] == cohort)]
+    rows = run.table[(run.table["metric"] == metric) & (run.table["cohort"] == cohort)]
     return rows.iloc[0] if len(rows) else None
 
 
@@ -193,7 +190,7 @@ def cohort_sizes(runs: Sequence[RunSummary], cohort: str) -> str:
 
 def _darken(hexcode: str, factor: float = 0.62) -> str:
     """A darker step of a fill's own hue, for the tone-on-tone hatch ink."""
-    channels = [int(hexcode[i:i + 2], 16) for i in (1, 3, 5)]
+    channels = [int(hexcode[i : i + 2], 16) for i in (1, 3, 5)]
     return "#" + "".join(f"{max(0, round(c * factor)):02x}" for c in channels)
 
 
@@ -232,17 +229,26 @@ def rounded_bar(ax, xc, height, width, r_px, color, base=0.0):
     verts = [
         (x0, y0),
         (x0, junction),
-        (x0, y1), (x0 + rx, y1),
+        (x0, y1),
+        (x0 + rx, y1),
         (x1 - rx, y1),
-        (x1, y1), (x1, junction),
+        (x1, y1),
+        (x1, junction),
         (x1, y0),
         (x0, y0),
     ]
-    codes = [MPath.MOVETO, MPath.LINETO, MPath.CURVE3, MPath.CURVE3,
-             MPath.LINETO, MPath.CURVE3, MPath.CURVE3, MPath.LINETO,
-             MPath.CLOSEPOLY]
-    ax.add_patch(PathPatch(MPath(verts, codes), facecolor=color,
-                           edgecolor="none", zorder=3))
+    codes = [
+        MPath.MOVETO,
+        MPath.LINETO,
+        MPath.CURVE3,
+        MPath.CURVE3,
+        MPath.LINETO,
+        MPath.CURVE3,
+        MPath.CURVE3,
+        MPath.LINETO,
+        MPath.CLOSEPOLY,
+    ]
+    ax.add_patch(PathPatch(MPath(verts, codes), facecolor=color, edgecolor="none", zorder=3))
 
 
 def _textured_bar(ax, xc, height, color, hatch):
@@ -251,8 +257,11 @@ def _textured_bar(ax, xc, height, color, hatch):
     if not hatch:
         return
     path = ax.patches[-1].get_path()
-    ax.add_patch(PathPatch(path, facecolor="none", edgecolor=_darken(color),
-                           hatch=hatch, linewidth=0, zorder=3.5))
+    ax.add_patch(
+        PathPatch(
+            path, facecolor="none", edgecolor=_darken(color), hatch=hatch, linewidth=0, zorder=3.5
+        )
+    )
 
 
 def _layout(cohorts: Sequence[str], n_runs: int):
@@ -306,13 +315,19 @@ def draw_comparison(
 
     ncols = min(ncols or 5, len(panels))
     nrows = math.ceil(len(panels) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.7 * nrows),
-                             dpi=DPI, squeeze=False)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(3.6 * ncols, 3.7 * nrows), dpi=DPI, squeeze=False
+    )
     fig.patch.set_facecolor(SURFACE)
     # A single run has no texture legend row to leave room for.
-    fig.subplots_adjust(left=0.045, right=0.988, top=0.800 if n_runs > 1 else 0.835,
-                        bottom=0.110,
-                        wspace=0.42, hspace=0.62)
+    fig.subplots_adjust(
+        left=0.045,
+        right=0.988,
+        top=0.800 if n_runs > 1 else 0.835,
+        bottom=0.110,
+        wspace=0.42,
+        hspace=0.62,
+    )
 
     for ax, (metric, label, unit, hib) in zip(axes.ravel(), panels):
         ax.set_facecolor(SURFACE)
@@ -359,22 +374,44 @@ def draw_comparison(
                 lo, hi = float(row[lo_col]), float(row[hi_col])
                 xc = centers[cohort] + offsets[i]
                 _textured_bar(ax, xc, value, colors[cohort], RUN_HATCHES[i])
-                ax.errorbar(xc, value, yerr=[[value - lo], [hi - value]], fmt="none",
-                            ecolor=INK_2, elinewidth=1.1, capsize=3.4,
-                            capthick=1.1, zorder=4)
+                ax.errorbar(
+                    xc,
+                    value,
+                    yerr=[[value - lo], [hi - value]],
+                    fmt="none",
+                    ecolor=INK_2,
+                    elinewidth=1.1,
+                    capsize=3.4,
+                    capthick=1.1,
+                    zorder=4,
+                )
                 # The label sits past the whisker on the data side, so a
                 # bar hanging below zero is labelled under its whisker.
                 below = value < 0 or (not pd.isna(lo) and hi <= 0)
-                y_label, va = ((lo, "top") if below else (hi, "bottom"))
+                y_label, va = (lo, "top") if below else (hi, "bottom")
                 offset = 0.035 * (ax.get_ylim()[1] - ax.get_ylim()[0])
-                ax.text(xc, y_label - offset if below else y_label + offset,
-                        _fmt(value, metric),
-                        ha="center", va=va,
-                        fontsize=6.8 if n_runs > 1 else 8.2, color=INK, zorder=5)
+                ax.text(
+                    xc,
+                    y_label - offset if below else y_label + offset,
+                    _fmt(value, metric),
+                    ha="center",
+                    va=va,
+                    fontsize=6.8 if n_runs > 1 else 8.2,
+                    color=INK,
+                    zorder=5,
+                )
 
-            ax.text(centers[cohort], -0.075, cohort, ha="center", va="top",
-                    fontsize=7.4 if len(cohort) > 6 else 7.6, color=MUTED,
-                    clip_on=False, transform=ax.get_xaxis_transform())
+            ax.text(
+                centers[cohort],
+                -0.075,
+                cohort,
+                ha="center",
+                va="top",
+                fontsize=7.4 if len(cohort) > 6 else 7.6,
+                color=MUTED,
+                clip_on=False,
+                transform=ax.get_xaxis_transform(),
+            )
 
         ax.set_xticks([])
         ax.set_title(label, fontsize=10.2, color=INK, pad=15)
@@ -383,17 +420,28 @@ def draw_comparison(
             sub += "signed"
         else:
             sub += f"{'higher' if hib else 'lower'} is better"
-        ax.text(0.5, 1.018, sub, transform=ax.transAxes, ha="center",
-                va="bottom", fontsize=7.4, color=MUTED)
+        ax.text(
+            0.5,
+            1.018,
+            sub,
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=7.4,
+            color=MUTED,
+        )
 
         if fixed is not None:
-            ax.yaxis.set_major_locator(matplotlib.ticker.FixedLocator(
-                [lo_fixed + (hi_fixed - lo_fixed) * k / 4 for k in range(1, 5)]))
+            ax.yaxis.set_major_locator(
+                matplotlib.ticker.FixedLocator(
+                    [lo_fixed + (hi_fixed - lo_fixed) * k / 4 for k in range(1, 5)]
+                )
+            )
             ax.spines["left"].set_bounds(lo_fixed, hi_fixed)
         else:
             ax.yaxis.set_major_locator(
-                matplotlib.ticker.MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10],
-                                              prune="lower"))
+                matplotlib.ticker.MaxNLocator(nbins=4, steps=[1, 2, 2.5, 5, 10], prune="lower")
+            )
         ax.grid(axis="y", color=GRID, linewidth=0.7, zorder=0)
         ax.set_axisbelow(True)
         for side in ("top", "right"):
@@ -407,43 +455,73 @@ def draw_comparison(
             ax.spines["bottom"].set_visible(False)
         ax.tick_params(axis="y", labelsize=8, colors=MUTED, length=3)
 
-    for ax in axes.ravel()[len(panels):]:
+    for ax in axes.ravel()[len(panels) :]:
         ax.set_visible(False)
 
     # Hue carries the cohort; with several runs, a second row keys the texture.
     cohort_handles = [
-        Line2D([], [], marker="s", linestyle="none", markersize=9,
-               markerfacecolor=colors[c], markeredgecolor="none",
-               label=f"{c} ({cohort_sizes(runs, c)})") for c in cohorts]
-    fig.legend(handles=cohort_handles, loc="upper left",
-               bbox_to_anchor=(0.026, 0.925), frameon=False,
-               fontsize=9.0, labelcolor=INK_2, ncol=min(len(cohorts), 4),
-               handletextpad=0.6, columnspacing=2.0)
+        Line2D(
+            [],
+            [],
+            marker="s",
+            linestyle="none",
+            markersize=9,
+            markerfacecolor=colors[c],
+            markeredgecolor="none",
+            label=f"{c} ({cohort_sizes(runs, c)})",
+        )
+        for c in cohorts
+    ]
+    fig.legend(
+        handles=cohort_handles,
+        loc="upper left",
+        bbox_to_anchor=(0.026, 0.925),
+        frameon=False,
+        fontsize=9.0,
+        labelcolor=INK_2,
+        ncol=min(len(cohorts), 4),
+        handletextpad=0.6,
+        columnspacing=2.0,
+    )
 
     if n_runs > 1:
         run_handles = [
-            PathPatch(MPath([(0, 0)], [MPath.MOVETO]), facecolor=BASELINE,
-                      edgecolor=INK_2, hatch=hatch, linewidth=0, label=run.label)
-            for run, hatch in zip(runs, RUN_HATCHES)]
-        fig.legend(handles=run_handles, loc="upper left",
-                   bbox_to_anchor=(0.026, 0.882), frameon=False, fontsize=9.0,
-                   labelcolor=MUTED, ncol=min(len(runs), 4), handletextpad=0.6,
-                   columnspacing=2.4)
+            PathPatch(
+                MPath([(0, 0)], [MPath.MOVETO]),
+                facecolor=BASELINE,
+                edgecolor=INK_2,
+                hatch=hatch,
+                linewidth=0,
+                label=run.label,
+            )
+            for run, hatch in zip(runs, RUN_HATCHES)
+        ]
+        fig.legend(
+            handles=run_handles,
+            loc="upper left",
+            bbox_to_anchor=(0.026, 0.882),
+            frameon=False,
+            fontsize=9.0,
+            labelcolor=MUTED,
+            ncol=min(len(runs), 4),
+            handletextpad=0.6,
+            columnspacing=2.4,
+        )
 
     default_title = "Macro average over subjects, with 95% CI of the mean"
     if agg == "median":
         default_title = "Macro median over subjects, with the interquartile range"
     if len(runs) > 1:
         default_title += ": " + " vs ".join(run.label for run in runs)
-    fig.text(0.024, 0.972, title or default_title,
-             fontsize=12.4, color=INK, ha="left", va="bottom")
+    fig.text(0.024, 0.972, title or default_title, fontsize=12.4, color=INK, ha="left", va="bottom")
     footnote = "Each panel has its own y-scale."
     if any(metric.endswith("_mape") for metric, *_ in panels):
-        footnote += ("  MAPE panels are heavily right-skewed; medians and IQRs "
-                     "are the robust read, and every value is in the summary "
-                     "tables.")
-    fig.text(0.024, 0.014, footnote,
-             fontsize=7.8, color=MUTED, ha="left", va="bottom")
+        footnote += (
+            "  MAPE panels are heavily right-skewed; medians and IQRs "
+            "are the robust read, and every value is in the summary "
+            "tables."
+        )
+    fig.text(0.024, 0.014, footnote, fontsize=7.8, color=MUTED, ha="left", va="bottom")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -469,5 +547,4 @@ def compare(
     runs = load_summaries(paths, labels, agg=agg)
     for run in runs:
         print(f"  {run.label:<16} {run.path}")
-    return draw_comparison(runs, output_dir=output_dir, name=name, title=title,
-                           agg=agg)
+    return draw_comparison(runs, output_dir=output_dir, name=name, title=title, agg=agg)

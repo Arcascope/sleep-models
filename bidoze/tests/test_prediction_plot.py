@@ -1,4 +1,5 @@
 """Prediction hypnograms: CSV round trip, the three layouts, and the CLI."""
+
 from __future__ import annotations
 
 import sys

@@ -1,4 +1,5 @@
 """Turn per-subject feature bundles into padded, stage-remapped batches."""
+
 from __future__ import annotations
 
 from typing import Dict, List, Sequence, Tuple

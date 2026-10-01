@@ -13,6 +13,7 @@ approved offline.
 The ``.pisces`` format stays the training/checkpoint container; the public
 release format is ``model.safetensors`` with a flat, slash-separated tensor map.
 """
+
 from __future__ import annotations
 
 import base64
@@ -97,7 +98,6 @@ _CONFIG_TO_BUNDLE = {
 #: Human-review fields the card must carry before a release is approved. A
 #: generated card that still says PENDING is a bundle that must not ship.
 CARD_REVIEW_PENDING = "PENDING"
-
 
 
 @dataclass(frozen=True)
@@ -195,8 +195,7 @@ def _resolve_checkpoint(training_dir: Path, checkpoint: Path | str | None) -> Pa
         # A relative -t resolved against another working directory is a likely
         # cause of the phase appearing empty, so report where it looked.
         raise FileNotFoundError(
-            f"training phase not found: {training_dir} "
-            f"(resolved to {training_dir.resolve()})"
+            f"training phase not found: {training_dir} (resolved to {training_dir.resolve()})"
         )
     model_outputs = training_dir / "model_outputs"
     found = sorted(model_outputs.glob("*.pisces"))
@@ -208,8 +207,7 @@ def _resolve_checkpoint(training_dir: Path, checkpoint: Path | str | None) -> Pa
         where = model_outputs if model_outputs.is_dir() else training_dir
         detail = "none" if not found else f"{len(found)}"
         raise FileNotFoundError(
-            f"expected one .pisces under {where}, found {detail}; "
-            "name one with --checkpoint"
+            f"expected one .pisces under {where}, found {detail}; name one with --checkpoint"
         )
     return found[0]
 
@@ -338,9 +336,7 @@ def _discovered_metrics(
     parent = training_dir.parent
     if parent.is_dir() and parent != training_dir:
         roots += [
-            path
-            for path in sorted(parent.iterdir())
-            if path.is_dir() and FOLD_DIR.match(path.name)
+            path for path in sorted(parent.iterdir()) if path.is_dir() and FOLD_DIR.match(path.name)
         ]
     try:
         phases = discover_phases(roots)
@@ -566,9 +562,13 @@ def _headline_table(summary: Mapping[str, Mapping[str, Any]]) -> list[str]:
     ]
     if not metrics:
         return []
-    header = "| Metric | " + " | ".join(
-        f"{_cohort_title(c)}<br><sub>n = {_cohort_n(summary[c])}</sub>" for c in cohorts
-    ) + " |"
+    header = (
+        "| Metric | "
+        + " | ".join(
+            f"{_cohort_title(c)}<br><sub>n = {_cohort_n(summary[c])}</sub>" for c in cohorts
+        )
+        + " |"
+    )
     lines = [header, "|:---|" + "---:|" * len(cohorts)]
     for metric in metrics:
         cells = []
@@ -674,8 +674,7 @@ def _outputs(stage_names: Sequence[str]) -> list[str]:
     ]
     lines += [
         "",
-        "`is_gap` is not a model output: it marks epochs with no accelerometer "
-        "samples.",
+        "`is_gap` is not a model output: it marks epochs with no accelerometer samples.",
         "",
     ]
     return lines
@@ -808,7 +807,7 @@ def _model_card(
         "",
         "**Sleep stages from triaxial accelerometer recordings.**  ",
         "4-class sleep stage prediction, metric reports, and hypnograms. ",
-        "Built with a focus on sleep-wake."
+        "Built with a focus on sleep-wake.",
     ]
 
     fs = preprocessing.get("fs")
@@ -953,8 +952,7 @@ def _collect_assets(
         source = (card_dir / src).resolve()
         if not source.is_file():
             raise FileNotFoundError(
-                f"card image {src!r} not found; expected it next to the card at "
-                f"{(card_dir / src)}"
+                f"card image {src!r} not found; expected it next to the card at {(card_dir / src)}"
             )
         name = source.name
         if name in used and used[name] != source:
@@ -981,11 +979,7 @@ def _bundle_relpaths(directory: Path) -> list[str]:
     user happened to leave in the bundle directory.
     """
     checksums = directory / "checksums.sha256"
-    names = [
-        line.partition("  ")[2]
-        for line in checksums.read_text().splitlines()
-        if line.strip()
-    ]
+    names = [line.partition("  ")[2] for line in checksums.read_text().splitlines() if line.strip()]
     # checksums.sha256 does not list itself, but it ships with the release.
     names.append("checksums.sha256")
     return sorted(names)

@@ -7,6 +7,7 @@ built-ins. The trainer relies on that registration happening before any
 ``MetricsLogger`` builds its specs, so it is done here rather than left to
 whichever module happens to import the metrics first.
 """
+
 from bidoze.evaluation import staging_metrics  # noqa: F401
 
 __all__ = ["staging_metrics"]

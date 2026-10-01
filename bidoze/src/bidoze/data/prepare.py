@@ -13,6 +13,7 @@ A dataset directory is either a tree of ``cleaned_*`` feature directories that
 :meth:`DataSetObject.find_data_sets` understands, or one carrying its own
 :data:`ADAPTER_FILENAME`.
 """
+
 from __future__ import annotations
 
 import multiprocessing
@@ -98,15 +99,11 @@ def frames_per_label(processing_config: ProcessingConfig) -> int:
     step = float(processing_config.window_step_seconds)
     ratio = float(PSG_DT) / step
     if abs(ratio - round(ratio)) > 1e-9 or ratio < 1.0:
-        raise ValueError(
-            f"window_step_seconds={step} must evenly divide the {PSG_DT}s PSG epoch"
-        )
+        raise ValueError(f"window_step_seconds={step} must evenly divide the {PSG_DT}s PSG epoch")
     return int(round(ratio))
 
 
-def _match_dataset(
-    found: dict, name: str | None, source: Path | str
-) -> DataSetObject:
+def _match_dataset(found: dict, name: str | None, source: Path | str) -> DataSetObject:
     """Pick one dataset out of what a loader discovered.
 
     ``name`` selects either a discovered key (the directory basename, or an
@@ -126,9 +123,7 @@ def _match_dataset(
             f"no dataset under {source}; expected cleaned_* feature "
             f"directories or {ADAPTER_FILENAME}"
         )
-    raise RuntimeError(
-        f"{source} exposed {sorted(found)}, not {name!r}; pass --name to pick one"
-    )
+    raise RuntimeError(f"{source} exposed {sorted(found)}, not {name!r}; pass --name to pick one")
 
 
 def load_dataset(dataset_dir: Path | str, name: str | None = None) -> DataSetObject:
@@ -213,8 +208,7 @@ def bundle_subject(
         subject_ids=np.array([prepared.subject_id]),
         # Stashing the axes means plotting can read them off the cache instead
         # of re-deriving them from a processing config that may not be at hand.
-        time=np.arange(n_frames, dtype=np.float64)
-        * float(processing_config.window_step_seconds),
+        time=np.arange(n_frames, dtype=np.float64) * float(processing_config.window_step_seconds),
         freq=np.asarray(processing_config.get_frequencies(), dtype=np.float64),
         anglez_5s=anglez_5s,
     )
@@ -243,8 +237,7 @@ def transform_subjects(
         )
         if len(transformed) != len(prepared):
             raise RuntimeError(
-                f"apply_many returned {len(transformed)} outputs "
-                f"for {len(prepared)} recordings"
+                f"apply_many returned {len(transformed)} outputs for {len(prepared)} recordings"
             )
         return list(transformed)
 
@@ -456,9 +449,7 @@ def process_dataset(
                         data_set.name, item.subject_id
                     )
                     saving.add(
-                        savers.submit(
-                            _save_one, item, features, processing_config, destination
-                        )
+                        savers.submit(_save_one, item, features, processing_config, destination)
                     )
                 collect_saves(block=False)
                 # Back-pressure: never hold more than a few batches of
@@ -470,9 +461,7 @@ def process_dataset(
         collect_saves(block=True)
 
     if excluded:
-        print(
-            f"\n{len(excluded)} subject(s) below {min_scored_minutes:.0f} min scored PSG:"
-        )
+        print(f"\n{len(excluded)} subject(s) below {min_scored_minutes:.0f} min scored PSG:")
         for entry in excluded:
             print(f"  {entry}")
 

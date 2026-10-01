@@ -47,6 +47,7 @@ each judged on its own; only shorter dropouts are seen this way. SPT instead
 keeps a dropout's real length and bridges it (up to 59 minutes) when SIB-style
 stillness is on both sides.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -295,9 +296,7 @@ def _spt_windows(anglez_5s: np.ndarray, bin_start_s: np.ndarray) -> list[tuple[f
         if block is None:
             continue
         lo, hi = day_start + block[0], day_start + block[1]
-        windows.append(
-            (float(grid_start_s[lo]), float(grid_start_s[hi - 1]) + GGIR_EPOCH_SECONDS)
-        )
+        windows.append((float(grid_start_s[lo]), float(grid_start_s[hi - 1]) + GGIR_EPOCH_SECONDS))
     return windows
 
 

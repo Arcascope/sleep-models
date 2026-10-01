@@ -14,6 +14,7 @@ uses. Unknown keys in ``cv.json`` and ``training.json`` are an error rather
 than a warning, so a config written against a different trainer fails loudly
 instead of quietly training something else.
 """
+
 from __future__ import annotations
 
 import json
@@ -116,9 +117,7 @@ class BiDozeCVConfig:
     # fold_id is 0 in every one of them; without a label, results from six
     # different models would all record fold 0.
     fold_label: str | None = None
-    train_batch_sampling: TrainBatchSamplingConfig = field(
-        default_factory=TrainBatchSamplingConfig
-    )
+    train_batch_sampling: TrainBatchSamplingConfig = field(default_factory=TrainBatchSamplingConfig)
     subsample_to_smallest: bool = False
 
     @classmethod
@@ -332,9 +331,7 @@ def load_metrics_config(
     data = _read_json(path)
     if num_classes is not None:
         data.setdefault("num_classes", num_classes)
-    data.setdefault(
-        "waso_bout_max_wake_gap_minutes", DEFAULT_WASO_BOUT_MAX_WAKE_GAP_MINUTES
-    )
+    data.setdefault("waso_bout_max_wake_gap_minutes", DEFAULT_WASO_BOUT_MAX_WAKE_GAP_MINUTES)
     return MetricsConfig.from_dict(data), data
 
 

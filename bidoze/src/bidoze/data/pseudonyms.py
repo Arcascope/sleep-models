@@ -4,6 +4,7 @@ A dataset directory holding :data:`PSEUDONYM_KEY_FILENAME` is cached under an
 HMAC-SHA256 of each subject id rather than the id itself. The key is kept with
 the raw data; a dataset without one keeps its ids.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,9 +29,7 @@ def load_pseudonym_key(dataset_dir: Path | str) -> bytes | None:
 
 
 def pseudonym(key: bytes, subject_id: str) -> str:
-    return hmac.new(key, subject_id.encode("utf-8"), hashlib.sha256).hexdigest()[
-        :PSEUDONYM_LENGTH
-    ]
+    return hmac.new(key, subject_id.encode("utf-8"), hashlib.sha256).hexdigest()[:PSEUDONYM_LENGTH]
 
 
 def cache_ids(key: bytes | None, subject_ids: Iterable[str]) -> Dict[str, str]:

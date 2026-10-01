@@ -5,6 +5,7 @@ the grid is built from -- how summaries and labels pair up, which cohorts and
 panels are discovered, and the arithmetic that places the bars -- plus one
 end-to-end smoke test that the files are written.
 """
+
 from __future__ import annotations
 
 import csv
@@ -58,8 +59,17 @@ def _row(metric: str, cohort: str, n: int, mean: float, lo: float, hi: float):
     return (metric, cohort, n, mean, lo, hi)
 
 
-def _full_row(metric: str, cohort: str, n: int, mean: float, lo: float, hi: float,
-              median: float, iqr_lo: float, iqr_hi: float):
+def _full_row(
+    metric: str,
+    cohort: str,
+    n: int,
+    mean: float,
+    lo: float,
+    hi: float,
+    median: float,
+    iqr_lo: float,
+    iqr_hi: float,
+):
     return (metric, cohort, n, mean, lo, hi, median, iqr_lo, iqr_hi)
 
 
@@ -67,12 +77,8 @@ def _full_row(metric: str, cohort: str, n: int, mean: float, lo: float, hi: floa
 
 
 def test_load_summaries_pairs_labels_in_order(tmp_path: Path) -> None:
-    a = _write_summary(
-        tmp_path / "run_a" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)]
-    )
-    b = _write_summary(
-        tmp_path / "run_b" / "analysis", [_row("tst_mape", "cv", 9, 6.0, 5.0, 7.0)]
-    )
+    a = _write_summary(tmp_path / "run_a" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)])
+    b = _write_summary(tmp_path / "run_b" / "analysis", [_row("tst_mape", "cv", 9, 6.0, 5.0, 7.0)])
 
     runs = load_summaries([a, b], ["200 epochs", "30 epochs"])
 
@@ -93,9 +99,7 @@ def test_load_summaries_defaults_to_the_run_directory_name(tmp_path: Path) -> No
 
 
 def test_load_summaries_refuses_a_label_count_mismatch(tmp_path: Path) -> None:
-    path = _write_summary(
-        tmp_path / "run" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)]
-    )
+    path = _write_summary(tmp_path / "run" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)])
 
     with pytest.raises(ValueError):
         load_summaries([path], ["a", "b"])
@@ -142,8 +146,10 @@ def test_cohort_order_is_first_appearance_across_runs() -> None:
 
 def test_available_panels_keeps_reading_order_and_allows_gaps() -> None:
     runs = _runs(
-        [_row("sleep_sensitivity", "cv", 9, 90.0, 88.0, 92.0),
-         _row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)],
+        [
+            _row("sleep_sensitivity", "cv", 9, 90.0, 88.0, 92.0),
+            _row("tst_mape", "cv", 9, 5.0, 4.0, 6.0),
+        ],
     )
 
     order = [p[0] for p in available_panels(runs)]
@@ -173,8 +179,10 @@ def test_cohort_sizes_single_value(tmp_path: Path) -> None:
 def test_compare_writes_both_formats(tmp_path: Path) -> None:
     a = _write_summary(
         tmp_path / "a" / "analysis",
-        [_row("sleep_sensitivity", "cv", 202, 97.0, 96.0, 98.0),
-         _row("sleep_sensitivity", "SleepAccel", 30, 97.5, 96.5, 98.5)],
+        [
+            _row("sleep_sensitivity", "cv", 202, 97.0, 96.0, 98.0),
+            _row("sleep_sensitivity", "SleepAccel", 30, 97.5, 96.5, 98.5),
+        ],
     )
     b = _write_summary(
         tmp_path / "b" / "analysis",
@@ -200,8 +208,10 @@ def test_draw_comparison_writes_a_custom_name(tmp_path: Path) -> None:
     )
 
     written = draw_comparison(
-        load_summaries([a]), output_dir=tmp_path / "out",
-        name="grid_30_vs_200", title="My title",
+        load_summaries([a]),
+        output_dir=tmp_path / "out",
+        name="grid_30_vs_200",
+        title="My title",
     )
 
     assert written[0].name == "grid_30_vs_200.png"
@@ -217,9 +227,7 @@ def test_draw_comparison_draws_only_the_requested_metrics(tmp_path: Path) -> Non
     )
     runs = load_summaries([a])
 
-    written = draw_comparison(
-        runs, output_dir=tmp_path / "out", metrics=["tst_mape"], ncols=3
-    )
+    written = draw_comparison(runs, output_dir=tmp_path / "out", metrics=["tst_mape"], ncols=3)
     assert written[0].is_file()
     # A selection none of the summaries carries has nothing to draw.
     with pytest.raises(ValueError):
@@ -262,9 +270,7 @@ def test_required_columns_adds_the_agg_columns() -> None:
 
 
 def test_load_summaries_refuses_a_table_missing_the_agg_columns(tmp_path: Path) -> None:
-    path = _write_summary(
-        tmp_path / "run" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)]
-    )
+    path = _write_summary(tmp_path / "run" / "analysis", [_row("tst_mape", "cv", 9, 5.0, 4.0, 6.0)])
 
     with pytest.raises(ValueError):
         load_summaries([path], agg="median")
@@ -290,10 +296,8 @@ def test_compare_draws_with_medians(tmp_path: Path) -> None:
     path = _write_full_summary(
         tmp_path / "a" / "analysis",
         [
-            _full_row("sleep_sensitivity", "cv", 202,
-                      97.0, 96.0, 98.0, 98.0, 97.0, 99.0),
-            _full_row("sleep_sensitivity", "SleepAccel", 30,
-                      97.5, 96.5, 98.5, 98.8, 97.5, 99.5),
+            _full_row("sleep_sensitivity", "cv", 202, 97.0, 96.0, 98.0, 98.0, 97.0, 99.0),
+            _full_row("sleep_sensitivity", "SleepAccel", 30, 97.5, 96.5, 98.5, 98.8, 97.5, 99.5),
         ],
     )
     out = tmp_path / "figures"

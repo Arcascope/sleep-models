@@ -5,6 +5,7 @@ tests pin down is the wiring that decides *what* gets scored and *what the rows
 say* -- the identity lifted from the training run, the fixed input shape, the
 cohort loader, and the truncation report.
 """
+
 from __future__ import annotations
 
 import csv
@@ -31,8 +32,14 @@ from bidoze.evaluation.run import (
 from bidoze.training.config import RunConfig
 
 CVS_HEADER = [
-    "run_id", "fold", "epoch", "subject_id",
-    "dataset", "training_dataset", "metric", "value",
+    "run_id",
+    "fold",
+    "epoch",
+    "subject_id",
+    "dataset",
+    "training_dataset",
+    "metric",
+    "value",
 ]
 
 
@@ -319,7 +326,10 @@ def test_evaluate_draws_hypnograms_into_a_subdirectory(tmp_path: Path, monkeypat
     output_dir = tmp_path / "hypno"
 
     run_evaluation(
-        config, subjects=subjects, checkpoint=checkpoint, output_dir=output_dir,
+        config,
+        subjects=subjects,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
         identity=RunIdentity("id", "final_seed_0", 200, "CohortA"),
         render_hypnograms=True,
     )
@@ -341,19 +351,29 @@ def test_evaluate_refuses_to_reuse_a_csv_unless_overwritten(tmp_path: Path, monk
     identity = RunIdentity("id", "final_seed_0", 200, "CohortA")
 
     run_evaluation(
-        config, subjects=subjects, checkpoint=checkpoint, output_dir=output_dir,
+        config,
+        subjects=subjects,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
         identity=identity,
     )
     with pytest.raises(FileExistsError):
         run_evaluation(
-            config, subjects=subjects, checkpoint=checkpoint, output_dir=output_dir,
+            config,
+            subjects=subjects,
+            checkpoint=checkpoint,
+            output_dir=output_dir,
             identity=identity,
         )
 
     # Overwriting replaces the file rather than appending to it.
     run_evaluation(
-        config, subjects=subjects, checkpoint=checkpoint, output_dir=output_dir,
-        identity=identity, overwrite=True,
+        config,
+        subjects=subjects,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
+        identity=identity,
+        overwrite=True,
     )
     with (output_dir / "cv_results_4_stages.csv").open(newline="") as handle:
         assert len(list(csv.DictReader(handle))) == 2
@@ -455,9 +475,14 @@ def test_evaluate_folds_needs_both_fold_flags(tmp_path: Path, monkeypatch) -> No
     from bidoze.cli import _evaluate
 
     args = argparse.Namespace(
-        input=[], training_dir=None, fold_config=str(tmp_path / "plan.json"),
-        fold_training=None, output_dir=str(tmp_path / "out"),
-        checkpoint=None, overwrite=False, hypnograms=False,
+        input=[],
+        training_dir=None,
+        fold_config=str(tmp_path / "plan.json"),
+        fold_training=None,
+        output_dir=str(tmp_path / "out"),
+        checkpoint=None,
+        overwrite=False,
+        hypnograms=False,
     )
     with pytest.raises(SystemExit):
         _evaluate(args)
@@ -469,9 +494,14 @@ def test_evaluate_folds_refuses_a_checkpoint_override(tmp_path: Path, monkeypatc
     from bidoze.cli import _evaluate
 
     args = argparse.Namespace(
-        input=[], training_dir=None, fold_config=str(tmp_path / "plan.json"),
-        fold_training=str(tmp_path / "training"), output_dir=str(tmp_path / "out"),
-        checkpoint="model.pisces", overwrite=False, hypnograms=False,
+        input=[],
+        training_dir=None,
+        fold_config=str(tmp_path / "plan.json"),
+        fold_training=str(tmp_path / "training"),
+        output_dir=str(tmp_path / "out"),
+        checkpoint="model.pisces",
+        overwrite=False,
+        hypnograms=False,
     )
     with pytest.raises(SystemExit):
         _evaluate(args)
@@ -504,8 +534,8 @@ def _night_with_dropout_and_lapse() -> np.ndarray:
         return np.column_stack([t, xyz])
 
     parts = [stretch(0, 3600, False), stretch(3600, 1800, True)]
-    parts.append(stretch(5400 + 300, 1800, False))          # 5 min dropout
-    parts.append(stretch(7500 + 4200, 3600, False))         # 70 min lapse
+    parts.append(stretch(5400 + 300, 1800, False))  # 5 min dropout
+    parts.append(stretch(7500 + 4200, 3600, False))  # 70 min lapse
     return np.concatenate(parts)
 
 
@@ -518,8 +548,10 @@ def test_epoch_bins_place_each_5s_mean_in_its_epoch():
     grid = ggir.epoch_bins(bin_start, anglez, n_epochs)
 
     assert grid.shape == (n_epochs, 6)
-    k, j = 130, 2                                   # inside the 5 min dropout
-    assert np.isnan(grid[k, j]) == (not np.any(np.rint((bin_start - bin_start[0]) / 5) == 6 * k + j))
+    k, j = 130, 2  # inside the 5 min dropout
+    assert np.isnan(grid[k, j]) == (
+        not np.any(np.rint((bin_start - bin_start[0]) / 5) == 6 * k + j)
+    )
     assert np.isnan(grid[(5400 + 60) // 30]).all()  # mid-dropout epoch is empty
     probe = 40
     in_bin = (accel[:, 0] >= 30 * probe + 5 * 3) & (accel[:, 0] < 30 * probe + 5 * 4)
@@ -554,18 +586,18 @@ def test_apply_sib_filter_demotes_sleep_outside_sustained_inactivity():
     grid = ggir.epoch_bins(bin_start, anglez, n_epochs)
 
     proba = np.zeros((n_epochs + 4, 5))
-    proba[:n_epochs, 2] = 1.0          # every real epoch predicted sleep
+    proba[:n_epochs, 2] = 1.0  # every real epoch predicted sleep
     proba[10, :] = 0.0
-    proba[10, 4] = 1.0                 # ... except one gap epoch
-    proba[n_epochs:, 4] = 1.0          # and the padding
+    proba[10, 4] = 1.0  # ... except one gap epoch
+    proba[n_epochs:, 4] = 1.0  # and the padding
 
     filtered, demoted = apply_sib_filter(proba, grid, n_epochs)
 
     assert demoted > 0
-    assert np.all(filtered[125:175].argmax(axis=1) == 0)     # thrashing hour: wake
-    assert np.all(filtered[20:100].argmax(axis=1) == 2)      # still hour: sleep
+    assert np.all(filtered[125:175].argmax(axis=1) == 0)  # thrashing hour: wake
+    assert np.all(filtered[20:100].argmax(axis=1) == 2)  # still hour: sleep
     assert filtered[10].argmax() == 4 and np.all(filtered[n_epochs:].argmax(axis=1) == 4)
-    assert proba[150].argmax() == 2                          # input untouched
+    assert proba[150].argmax() == 2  # input untouched
 
 
 def test_bundle_round_trips_anglez_and_the_base_reader_still_loads_it(tmp_path):
@@ -574,8 +606,11 @@ def test_bundle_round_trips_anglez_and_the_base_reader_still_loads_it(tmp_path):
     grid = np.arange(12, dtype=float).reshape(1, 2, 6)
     grid[0, 1, 3] = np.nan
     bundle = BiDozeBundle(
-        X=np.zeros((1, 30, 3, 2)), y=np.zeros((1, 2)),
-        datasets=np.array(["d"]), subject_ids=np.array(["s"]), anglez_5s=grid,
+        X=np.zeros((1, 30, 3, 2)),
+        y=np.zeros((1, 2)),
+        datasets=np.array(["d"]),
+        subject_ids=np.array(["s"]),
+        anglez_5s=grid,
     )
     path = tmp_path / "d_subject_s_features.npz"
     bundle.save_npz(path)
@@ -595,12 +630,18 @@ def test_sib_filter_without_anglez_in_the_cache_is_refused_before_scoring(tmp_pa
 
     config = _configs(tmp_path / "cfg")
     bundle = BiDozeBundle(
-        X=np.zeros((1, 30, 3, 2)), y=np.zeros((1, 2)),
-        datasets=np.array(["d"]), subject_ids=np.array(["s"]),
+        X=np.zeros((1, 30, 3, 2)),
+        y=np.zeros((1, 2)),
+        datasets=np.array(["d"]),
+        subject_ids=np.array(["s"]),
     )
     identity = RunIdentity("run", "fold", 1, "d")
     with pytest.raises(ValueError):
         run_evaluation(
-            config, subjects={SubjectRef("d", "s"): bundle}, checkpoint=tmp_path / "x.pisces",
-            output_dir=tmp_path / "out", identity=identity, ggir_sib_filter=True,
+            config,
+            subjects={SubjectRef("d", "s"): bundle},
+            checkpoint=tmp_path / "x.pisces",
+            output_dir=tmp_path / "out",
+            identity=identity,
+            ggir_sib_filter=True,
         )

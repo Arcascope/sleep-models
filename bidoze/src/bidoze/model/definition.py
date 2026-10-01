@@ -16,6 +16,7 @@ from bidoze.model.constants import (
     STAGE_2_MAP,
     STAGE_3_MAP,
 )
+
 # Keep XLA/absl compiler noise out of normal training runs unless the caller overrides it.
 os.environ.setdefault("ABSL_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("GLOG_minloglevel", "3")
@@ -30,10 +31,10 @@ import numpy as np
 import optax
 
 
-
 class CVModel:
     def __init__(self, *args, **kwargs) -> None:
         pass
+
 
 @dataclass
 class ModelConfig:  # type: ignore[no-redef]
@@ -41,6 +42,7 @@ class ModelConfig:  # type: ignore[no-redef]
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
+
         return asdict(self)
 
     @classmethod
@@ -126,16 +128,19 @@ class BiDozeNetConfig(ModelConfig):
         stage_focal_gammas_supplied = "stage_focal_gammas" in config_data
 
         if stage_focal_alphas_supplied:
-            config_data["stage_focal_alphas"] = cls._normalize_stage_focal_alphas(config_data["stage_focal_alphas"])
+            config_data["stage_focal_alphas"] = cls._normalize_stage_focal_alphas(
+                config_data["stage_focal_alphas"]
+            )
         if stage_focal_gammas_supplied:
-            config_data["stage_focal_gammas"] = cls._normalize_stage_focal_gammas(config_data["stage_focal_gammas"])
+            config_data["stage_focal_gammas"] = cls._normalize_stage_focal_gammas(
+                config_data["stage_focal_gammas"]
+            )
 
         config = cls(**config_data)
 
         if config.num_classes not in (2, 3, 4):
             raise ValueError(
-                "BiDozeNetConfig.num_classes is the sleep-stage interface size; "
-                "expected 2, 3, or 4"
+                "BiDozeNetConfig.num_classes is the sleep-stage interface size; expected 2, 3, or 4"
             )
 
         if config.frames_per_epoch < 1:
@@ -275,9 +280,7 @@ def gap_group_index(stage_map: dict[int, list[int]]) -> int | None:
 def stage_map_without_gap(stage_map: dict[int, list[int]]) -> dict[int, list[int]]:
     """The same map minus its gap group (which is always the last index)."""
     return {
-        group_idx: members
-        for group_idx, members in stage_map.items()
-        if GAP_LABEL not in members
+        group_idx: members for group_idx, members in stage_map.items() if GAP_LABEL not in members
     }
 
 
@@ -438,9 +441,7 @@ def feedback_adjustment_loss(
     """
     normalized_labels = normalize_gap_labels_jnp(labels)
     feedback_labels = jnp.where(
-        (normalized_labels == 0)
-        | (normalized_labels == 1)
-        | (normalized_labels == GAP_LABEL),
+        (normalized_labels == 0) | (normalized_labels == 1) | (normalized_labels == GAP_LABEL),
         normalized_labels,
         -1,
     )
@@ -488,12 +489,16 @@ def masked_raw_logit_pairing_loss(
     return jnp.where(valid_count > 0, jnp.sum(per_token) / valid_count, 0.0)
 
 
-def masked_class_accuracies(logits: np.ndarray, labels: np.ndarray, num_classes: int) -> dict[str, float]:
+def masked_class_accuracies(
+    logits: np.ndarray, labels: np.ndarray, num_classes: int
+) -> dict[str, float]:
     pred = logits.argmax(axis=-1)
     metrics: dict[str, float] = {}
     for class_idx in range(num_classes):
         mask = labels == class_idx
-        metrics[f"class_{class_idx}_accuracy"] = float((pred[mask] == labels[mask]).mean()) if np.any(mask) else float("nan")
+        metrics[f"class_{class_idx}_accuracy"] = (
+            float((pred[mask] == labels[mask]).mean()) if np.any(mask) else float("nan")
+        )
     return metrics
 
 
@@ -627,8 +632,7 @@ def _save_training_history_plot(history: dict[str, list[float]], output_path: Pa
         return
 
     class_metric_keys = sorted(
-        key for key in history
-        if key.startswith("val_class_") and key.endswith("_accuracy")
+        key for key in history if key.startswith("val_class_") and key.endswith("_accuracy")
     )
     nrows = 2 if class_metric_keys else 1
     fig, axes = plt.subplots(nrows, 1, figsize=(10, 4 * nrows), squeeze=False)
@@ -755,10 +759,7 @@ def _make_balanced_dataset_batches(
         raise ValueError("balanced_by_dataset requires at least one training row")
 
     quotas = _balanced_dataset_quotas(labels, batch_size, rng)
-    groups = {
-        name: np.flatnonzero(labels == name).astype(np.int32)
-        for name in sorted(quotas)
-    }
+    groups = {name: np.flatnonzero(labels == name).astype(np.int32) for name in sorted(quotas)}
     counts = {name: int(indices.size) for name, indices in groups.items()}
     if any(count <= 0 for count in counts.values()):
         raise ValueError(f"balanced_by_dataset received empty dataset groups: {counts}")
@@ -771,8 +772,7 @@ def _make_balanced_dataset_batches(
     )
     large_datasets = {name for name, count in counts.items() if count == largest_count}
     large_permutations = {
-        name: rng.permutation(groups[name]).astype(np.int32)
-        for name in large_datasets
+        name: rng.permutation(groups[name]).astype(np.int32) for name in large_datasets
     }
 
     batches: list[np.ndarray] = []
@@ -949,11 +949,13 @@ class ALiBiAttentionModule(nn.Module):
 
     def setup(self) -> None:
         self.d_head = self.d_model // self.n_heads
-        self.scale = self.d_head ** -0.5
+        self.scale = self.d_head**-0.5
         self.slopes = jnp.asarray(_alibi_slopes(self.n_heads))
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False) -> jnp.ndarray:
+    def __call__(
+        self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False
+    ) -> jnp.ndarray:
         batch_size, time_steps, _ = x.shape
         qkv = nn.Dense(3 * self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="qkv")(x)
         qkv = qkv.reshape((batch_size, time_steps, 3, self.n_heads, self.d_head))
@@ -975,7 +977,9 @@ class ALiBiAttentionModule(nn.Module):
 
         out = jnp.matmul(attn, v)
         out = jnp.transpose(out, (0, 2, 1, 3)).reshape((batch_size, time_steps, self.d_model))
-        return nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="out_proj")(out)
+        return nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="out_proj")(
+            out
+        )
 
 
 class TransformerBlockModule(nn.Module):
@@ -986,16 +990,22 @@ class TransformerBlockModule(nn.Module):
     attn_dropout: float
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False) -> jnp.ndarray:
+    def __call__(
+        self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False
+    ) -> jnp.ndarray:
         h = nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm1")(x)
-        h = ALiBiAttentionModule(self.d_model, self.n_heads, self.dropout, self.attn_dropout, name="attn")(h, causal_mask=causal_mask, train=train)
+        h = ALiBiAttentionModule(
+            self.d_model, self.n_heads, self.dropout, self.attn_dropout, name="attn"
+        )(h, causal_mask=causal_mask, train=train)
         x = x + h
 
         h = nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm2")(x)
         h = nn.Dense(self.d_ff, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="ff_dense_0")(h)
         h = _gelu(h)
         h = nn.Dropout(rate=self.dropout, name="ff_drop_0")(h, deterministic=not train)
-        h = nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="ff_dense_1")(h)
+        h = nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="ff_dense_1")(
+            h
+        )
         h = nn.Dropout(rate=self.dropout, name="ff_drop_1")(h, deterministic=not train)
         return x + h
 
@@ -1021,13 +1031,31 @@ class BidirectionalCausalTransformerModule(nn.Module):
             fwd_mask = None
             rev_mask = None
 
-        h_fwd = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_fwd")(x)
-        h_rev = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_rev")(x)
+        h_fwd = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_fwd")(
+            x
+        )
+        h_rev = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_rev")(
+            x
+        )
 
         for layer_idx in range(self.n_layers):
-            h_fwd = TransformerBlockModule(d_stream, heads_per_direction, self.d_ff // 2, self.dropout, self.attn_dropout, name=f"fwd_{layer_idx}")(h_fwd, causal_mask=fwd_mask, train=train)
+            h_fwd = TransformerBlockModule(
+                d_stream,
+                heads_per_direction,
+                self.d_ff // 2,
+                self.dropout,
+                self.attn_dropout,
+                name=f"fwd_{layer_idx}",
+            )(h_fwd, causal_mask=fwd_mask, train=train)
         for layer_idx in range(self.n_layers):
-            h_rev = TransformerBlockModule(d_stream, heads_per_direction, self.d_ff // 2, self.dropout, self.attn_dropout, name=f"rev_{layer_idx}")(h_rev, causal_mask=rev_mask, train=train)
+            h_rev = TransformerBlockModule(
+                d_stream,
+                heads_per_direction,
+                self.d_ff // 2,
+                self.dropout,
+                self.attn_dropout,
+                name=f"rev_{layer_idx}",
+            )(h_rev, causal_mask=rev_mask, train=train)
 
         h = jnp.concatenate([h_fwd, h_rev], axis=-1)
         h = nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="out_proj")(h)
@@ -1039,8 +1067,12 @@ class GatedFusionModule(nn.Module):
 
     @nn.compact
     def __call__(self, h_local: jnp.ndarray, h_global: jnp.ndarray) -> jnp.ndarray:
-        gate_local = nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="gate_local")(h_local)
-        gate_global = nn.Dense(self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="gate_global")(h_global)
+        gate_local = nn.Dense(
+            self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="gate_local"
+        )(h_local)
+        gate_global = nn.Dense(
+            self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="gate_global"
+        )(h_global)
         gate = nn.sigmoid(gate_local + gate_global)
         fused = gate * h_local + (1.0 - gate) * h_global
         return nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm")(fused)
@@ -1259,7 +1291,9 @@ class RuntimeLearningRate:
 
     def describe(self) -> str:
         if self.exponential_on:
-            return f"exponential (base_lr={self.base_lr:.3g}, decay_rate={self.decay_rate:.4g}/epoch)"
+            return (
+                f"exponential (base_lr={self.base_lr:.3g}, decay_rate={self.decay_rate:.4g}/epoch)"
+            )
         if self.cosine_on:
             return f"cosine (base_lr={self.base_lr:.3g}, cycle {int(self.cycle_steps)} steps)"
         return f"constant (base_lr={self.base_lr:.3g})"
@@ -1332,7 +1366,9 @@ def _make_train_step(
     trainable_scope: str = "all",
     anchor_params: FrozenDict[str, Any] | None = None,
     anchor_l2_weight: float = 0.0,
-) -> Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]]:
+) -> Callable[
+    [TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]
+]:
     if trainable_scope not in TRAINABLE_SCOPES:
         raise ValueError(f"Unknown trainable scope: {trainable_scope}")
     anchor_weight = float(anchor_l2_weight)
@@ -1382,7 +1418,10 @@ def _make_weighted_curriculum_train_step(
     anchor_params: FrozenDict[str, Any] | None = None,
     anchor_l2_weight: float = 0.0,
     stage_maps: tuple[dict[int, list[int]], ...] = CURRICULUM_STAGE_MAPS,
-) -> Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]]:
+) -> Callable[
+    [TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[TrainState, jax.Array],
+]:
     """One compiled main-step for all curriculum stages.
 
     Unlike :func:`_make_train_step`, the active stage is selected by the
@@ -1440,7 +1479,9 @@ def _make_adjustment_train_step(
     focal_alpha: tuple[float, float] | None,
     focal_gamma: float,
     trainable_scope: str = "all",
-) -> Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]]:
+) -> Callable[
+    [TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]
+]:
     if trainable_scope not in TRAINABLE_SCOPES:
         raise ValueError(f"Unknown adjustment trainable scope: {trainable_scope}")
 
@@ -1496,7 +1537,9 @@ def _make_adjustment_target_train_step(
         target_logits: jax.Array,
         rng_key: jax.Array,
     ) -> tuple[TrainState, jax.Array, jax.Array, jax.Array]:
-        def loss_fn(params: FrozenDict[str, Any]) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
+        def loss_fn(
+            params: FrozenDict[str, Any],
+        ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, jnp.ndarray]]:
             feedback_key, target_key = jax.random.split(rng_key)
             feedback_logits = module.apply(
                 {"params": params},
@@ -1537,8 +1580,13 @@ def _make_adjustment_target_train_step(
 
 
 def _make_run_full_batches(
-    train_step: Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]],
-) -> Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array, jax.Array]]:
+    train_step: Callable[
+        [TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]
+    ],
+) -> Callable[
+    [TrainState, jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[TrainState, jax.Array, jax.Array],
+]:
     @jax.jit
     def run_full_batches(
         local_state: TrainState,
@@ -1563,15 +1611,23 @@ def _make_run_full_batches(
             )
             return (scan_state, next_key), loss
 
-        (local_state, rng_key), losses = jax.lax.scan(scan_step, (local_state, rng_key), batch_indices)
+        (local_state, rng_key), losses = jax.lax.scan(
+            scan_step, (local_state, rng_key), batch_indices
+        )
         return local_state, rng_key, losses
 
     return run_full_batches
 
 
 def _make_run_weighted_curriculum_full_batches(
-    train_step: Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]],
-) -> Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array, jax.Array]]:
+    train_step: Callable[
+        [TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+        tuple[TrainState, jax.Array],
+    ],
+) -> Callable[
+    [TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[TrainState, jax.Array, jax.Array],
+]:
     @jax.jit
     def run_full_batches(
         local_state: TrainState,
@@ -1598,7 +1654,9 @@ def _make_run_weighted_curriculum_full_batches(
             )
             return (scan_state, next_key), loss
 
-        (local_state, rng_key), losses = jax.lax.scan(scan_step, (local_state, rng_key), batch_indices)
+        (local_state, rng_key), losses = jax.lax.scan(
+            scan_step, (local_state, rng_key), batch_indices
+        )
         return local_state, rng_key, losses
 
     return run_full_batches
@@ -1609,7 +1667,9 @@ def _make_eval_step(
     stage_map: dict[int, list[int]],
     focal_alpha: tuple[float, ...] | None,
     focal_gamma: float,
-) -> Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]]:
+) -> Callable[
+    [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]
+]:
     @jax.jit
     def eval_step(
         params: FrozenDict[str, Any],
@@ -1631,7 +1691,10 @@ def _make_weighted_curriculum_eval_step(
     stage_focal_alphas: tuple[tuple[float, ...] | None, ...],
     stage_focal_gammas: tuple[float, ...],
     stage_maps: tuple[dict[int, list[int]], ...] = CURRICULUM_STAGE_MAPS,
-) -> Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]]:
+) -> Callable[
+    [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[jax.Array, jax.Array, jax.Array],
+]:
     @jax.jit
     def eval_step(
         params: FrozenDict[str, Any],
@@ -1655,8 +1718,14 @@ def _make_weighted_curriculum_eval_step(
 
 
 def _make_run_weighted_curriculum_eval_batches(
-    eval_step: Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]],
-) -> Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array, jax.Array], tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+    eval_step: Callable[
+        [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array],
+        tuple[jax.Array, jax.Array, jax.Array],
+    ],
+) -> Callable[
+    [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+]:
     @jax.jit
     def run_eval_batches(
         params: FrozenDict[str, Any],
@@ -1686,8 +1755,14 @@ def _make_run_weighted_curriculum_eval_batches(
 
 
 def _make_run_eval_batches(
-    eval_step: Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]],
-) -> Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array], tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
+    eval_step: Callable[
+        [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array],
+        tuple[jax.Array, jax.Array, jax.Array],
+    ],
+) -> Callable[
+    [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array],
+    tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+]:
     @jax.jit
     def run_eval_batches(
         params: FrozenDict[str, Any],
@@ -1771,7 +1846,9 @@ class BiDozeNetModel(CVModel):
 
         batch_size, target_t = input_x.shape[:2]
         if mask.shape[0] != batch_size:
-            raise ValueError(f"Expected valid_mask batch dimension {batch_size}, got {mask.shape[0]}")
+            raise ValueError(
+                f"Expected valid_mask batch dimension {batch_size}, got {mask.shape[0]}"
+            )
         if mask.shape[1] < target_t:
             pad = np.zeros((batch_size, target_t - mask.shape[1]), dtype=np.float32)
             mask = np.concatenate([mask, pad], axis=1)
@@ -1885,7 +1962,9 @@ class BiDozeNetModel(CVModel):
 
         init_key = jax.random.PRNGKey(self._build_seed)
         params_key, dropout_key, augment_key = jax.random.split(init_key, 3)
-        summary_shape = input_shape if input_shape is not None else (self.input_shape or (time_steps, n_freq))
+        summary_shape = (
+            input_shape if input_shape is not None else (self.input_shape or (time_steps, n_freq))
+        )
         dummy_x = jnp.zeros((batch_size, *summary_shape), dtype=jnp.float32)
         dummy_mask = jnp.ones((batch_size, time_steps), dtype=jnp.float32)
         return self.module.tabulate(
@@ -1911,7 +1990,9 @@ class BiDozeNetModel(CVModel):
                 valid_mask = _numpy_feature_activity_mask(input_x)
         else:
             valid_mask = self._coerce_valid_mask(input_x, valid_mask)
-        logits = self.module.apply({"params": self.params}, jnp.asarray(input_x), jnp.asarray(valid_mask), train=False)
+        logits = self.module.apply(
+            {"params": self.params}, jnp.asarray(input_x), jnp.asarray(valid_mask), train=False
+        )
         return np.asarray(logits, dtype=np.float32)
 
     def soft_deblipped_target_logits(
@@ -1937,9 +2018,13 @@ class BiDozeNetModel(CVModel):
                 self.infer(input_x[start : start + batch_size])
                 for start in range(0, input_x.shape[0], batch_size)
             ]
-            logits = np.concatenate(chunks, axis=0) if chunks else np.empty(
-                (0, input_x.shape[1], self.config.output_classes),
-                dtype=np.float32,
+            logits = (
+                np.concatenate(chunks, axis=0)
+                if chunks
+                else np.empty(
+                    (0, input_x.shape[1], self.config.output_classes),
+                    dtype=np.float32,
+                )
             )
         return soft_deblipped_logits_from_logits(
             logits,
@@ -1949,7 +2034,9 @@ class BiDozeNetModel(CVModel):
             epsilon=epsilon,
         )
 
-    def intermediates(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> list[dict[str, np.ndarray]]:
+    def intermediates(
+        self, input_x: np.ndarray, valid_mask: np.ndarray | None = None
+    ) -> list[dict[str, np.ndarray]]:
         input_x = np.asarray(input_x, dtype=np.float32)
         if input_x.ndim < 3:
             raise ValueError(f"Expected input shape (B, T, ...), got {input_x.shape}")
@@ -1986,7 +2073,9 @@ class BiDozeNetModel(CVModel):
         arrays = [np.asarray(flat[name]) for name in names]
         return names, arrays
 
-    def _restore_from_manifest(self, names: Iterable[str], arrays: Iterable[np.ndarray]) -> FrozenDict[str, Any]:
+    def _restore_from_manifest(
+        self, names: Iterable[str], arrays: Iterable[np.ndarray]
+    ) -> FrozenDict[str, Any]:
         flat = {tuple(name.split("/")): jnp.asarray(array) for name, array in zip(names, arrays)}
         return freeze(traverse_util.unflatten_dict(flat))
 
@@ -2020,7 +2109,9 @@ class BiDozeNetModel(CVModel):
         tensors = {name: np.ascontiguousarray(array) for name, array in zip(names, arrays)}
         save_file(tensors, str(path), metadata={"input_shape": json.dumps(list(self.input_shape))})
 
-    def load_weights_safetensors(self, path: Path, input_shape: tuple[int, ...] | None = None) -> None:
+    def load_weights_safetensors(
+        self, path: Path, input_shape: tuple[int, ...] | None = None
+    ) -> None:
         """Restore parameters from `safetensors`, rebuilding the module first."""
         try:
             from safetensors import safe_open
@@ -2057,7 +2148,9 @@ class BiDozeNetModel(CVModel):
         if not weights_path.exists() and not shape_path.exists():
             return
         if not weights_path.exists() or not shape_path.exists():
-            raise ValueError(f"Expected both model_weights.npz and input_shape.json in {weights_dir}")
+            raise ValueError(
+                f"Expected both model_weights.npz and input_shape.json in {weights_dir}"
+            )
         if not manifest_path.exists():
             raise ValueError(
                 f"Missing weight_manifest.json in {weights_dir}; a weights directory "
@@ -2087,7 +2180,11 @@ class BiDozeNetModel(CVModel):
             for name, value in source.items():
                 if name in target and target[name].shape == value.shape:
                     target[name] = jnp.asarray(value)
-            self.params = freeze(traverse_util.unflatten_dict({tuple(name.split("/")): value for name, value in target.items()}))
+            self.params = freeze(
+                traverse_util.unflatten_dict(
+                    {tuple(name.split("/")): value for name, value in target.items()}
+                )
+            )
         self.model = {"params": self.params}
         self.input_shape = tuple(input_shape)
 
@@ -2097,8 +2194,13 @@ class BiDozeNetModel(CVModel):
         train_x: jax.Array,
         train_mask: jax.Array,
         train_y: jax.Array,
-        train_step: Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]],
-        run_full_batches: Callable[[TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array, jnp.ndarray]],
+        train_step: Callable[
+            [TrainState, jax.Array, jax.Array, jax.Array, jax.Array], tuple[TrainState, jax.Array]
+        ],
+        run_full_batches: Callable[
+            [TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+            tuple[TrainState, jax.Array, jnp.ndarray],
+        ],
         batch_size: int,
         rng: np.random.Generator,
         train_rng_key: jax.Array,
@@ -2109,7 +2211,11 @@ class BiDozeNetModel(CVModel):
             indices = rng.permutation(num_examples)
             num_full_batches = len(indices) // batch_size
             full_size = num_full_batches * batch_size
-            full_batches = indices[:full_size].reshape(num_full_batches, batch_size) if num_full_batches else None
+            full_batches = (
+                indices[:full_size].reshape(num_full_batches, batch_size)
+                if num_full_batches
+                else None
+            )
             tail_indices = indices[full_size:]
         else:
             full_batches = np.asarray(planned_batches, dtype=np.int32)
@@ -2227,7 +2333,16 @@ class BiDozeNetModel(CVModel):
         target_mask: np.ndarray,
         target_logits: np.ndarray,
         train_step: Callable[
-            [TrainState, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+            [
+                TrainState,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+            ],
             tuple[TrainState, jax.Array, jax.Array, jax.Array],
         ],
         batch_size: int,
@@ -2253,14 +2368,14 @@ class BiDozeNetModel(CVModel):
         for step_idx in range(num_steps):
             start = step_idx * batch_size
             stop = start + batch_size
-            feedback_batch = feedback_indices[start: min(stop, num_feedback)]
+            feedback_batch = feedback_indices[start : min(stop, num_feedback)]
             if len(feedback_batch) == 0:
                 feedback_batch = rng.choice(
                     num_feedback,
                     size=min(batch_size, num_feedback),
                     replace=num_feedback < batch_size,
                 )
-            target_batch = target_indices[start: min(stop, num_target)]
+            target_batch = target_indices[start : min(stop, num_target)]
             if len(target_batch) == 0:
                 target_batch = rng.choice(
                     num_target,
@@ -2308,15 +2423,25 @@ class BiDozeNetModel(CVModel):
         eval_x: jax.Array,
         eval_mask: jax.Array,
         eval_y: jax.Array,
-        eval_step: Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]],
-        run_eval_batches: Callable[[FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array], tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]],
+        eval_step: Callable[
+            [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array],
+            tuple[jax.Array, jax.Array, jax.Array],
+        ],
+        run_eval_batches: Callable[
+            [FrozenDict[str, Any], jax.Array, jax.Array, jax.Array, jax.Array],
+            tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+        ],
         eval_batch_size: int = 16,
     ) -> tuple[float, np.ndarray]:
         num_examples = int(eval_x.shape[0])
         indices = np.arange(num_examples, dtype=np.int32)
         num_full_batches = len(indices) // eval_batch_size
         full_size = num_full_batches * eval_batch_size
-        full_batches = indices[:full_size].reshape(num_full_batches, eval_batch_size) if num_full_batches else None
+        full_batches = (
+            indices[:full_size].reshape(num_full_batches, eval_batch_size)
+            if num_full_batches
+            else None
+        )
         tail_indices = indices[full_size:]
 
         loss_sum_total = jnp.array(0.0, dtype=jnp.float32)
@@ -2488,18 +2613,17 @@ class BiDozeNetModel(CVModel):
         deblip_schedule = str(deblip_schedule)
         if deblip_schedule not in {"interleaved", "final"}:
             raise ValueError(
-                "deblip_schedule must be 'interleaved' or 'final', got "
-                f"{deblip_schedule!r}"
+                f"deblip_schedule must be 'interleaved' or 'final', got {deblip_schedule!r}"
             )
 
         train_x = np.asarray(train_x, dtype=np.float32)
         train_y = np.asarray(train_y, dtype=np.int32)
         train_dataset_labels = (
-            None
-            if train_dataset_labels is None
-            else np.asarray(train_dataset_labels).astype(str)
+            None if train_dataset_labels is None else np.asarray(train_dataset_labels).astype(str)
         )
-        train_batch_sampling = "disabled" if train_batch_sampling is None else str(train_batch_sampling)
+        train_batch_sampling = (
+            "disabled" if train_batch_sampling is None else str(train_batch_sampling)
+        )
         if train_batch_sampling not in {"disabled", "balanced_by_dataset"}:
             raise ValueError(f"Unsupported train_batch_sampling mode: {train_batch_sampling!r}")
         subsample_to_smallest = bool(subsample_to_smallest)
@@ -2510,9 +2634,7 @@ class BiDozeNetModel(CVModel):
             )
         if train_batch_sampling == "balanced_by_dataset" or subsample_to_smallest:
             requirement = (
-                "subsample_to_smallest"
-                if subsample_to_smallest
-                else "balanced_by_dataset sampling"
+                "subsample_to_smallest" if subsample_to_smallest else "balanced_by_dataset sampling"
             )
             if train_dataset_labels is None:
                 raise ValueError(f"train_dataset_labels are required for {requirement}")
@@ -2646,8 +2768,7 @@ class BiDozeNetModel(CVModel):
         weighted_run_eval_batches = None
         if weighted_curriculum:
             curriculum_alphas = tuple(
-                None if alpha is None else tuple(alpha)
-                for alpha in self.config.stage_focal_alphas
+                None if alpha is None else tuple(alpha) for alpha in self.config.stage_focal_alphas
             )
             curriculum_gammas = tuple(float(gamma) for gamma in self.config.stage_focal_gammas)
             weighted_train_step = _make_weighted_curriculum_train_step(
@@ -2738,16 +2859,19 @@ class BiDozeNetModel(CVModel):
                         preview_rng,
                     )
                 else:
-                    balanced_batches, balanced_quotas, balanced_counts = _make_balanced_dataset_batches(
-                        balanced_dataset_labels,
-                        batch_size,
-                        preview_rng,
+                    balanced_batches, balanced_quotas, balanced_counts = (
+                        _make_balanced_dataset_batches(
+                            balanced_dataset_labels,
+                            batch_size,
+                            preview_rng,
+                        )
                     )
             train_examples_per_epoch = sliding_copies
             optimizer_examples_per_epoch = (
                 int(balanced_batches.size)
                 if balanced_batches is not None
-                else train_examples_per_epoch)
+                else train_examples_per_epoch
+            )
             steps_per_epoch = max(math.ceil(optimizer_examples_per_epoch / batch_size), 1)
             if stage_idx == final_stage_idx:
                 if lr_schedule == "cosine":
@@ -2785,12 +2909,18 @@ class BiDozeNetModel(CVModel):
             best_val_loss = float("inf") if stage_idx == final_stage_idx else None
 
             if train_verbose:
-                class_count = f"{len(stage_map)-1}+1" if self.config.score_gap else str(len(stage_map))
-                print(f"\nStage {stage_idx + 1}/{len(stage_maps)}: {class_count} grouped classes for {stage_epochs} epochs")
+                class_count = (
+                    f"{len(stage_map) - 1}+1" if self.config.score_gap else str(len(stage_map))
+                )
+                print(
+                    f"\nStage {stage_idx + 1}/{len(stage_maps)}: {class_count} grouped classes for {stage_epochs} epochs"
+                )
                 if weighted_curriculum:
                     print("  curriculum loss: dynamic one-hot weights (shared compiled objective)")
                 elif sliding_copies > 1:
-                    print(f"  sliding copies: {sliding_copies} ({train_examples_per_epoch} examples per epoch)")
+                    print(
+                        f"  sliding copies: {sliding_copies} ({train_examples_per_epoch} examples per epoch)"
+                    )
                 if train_batch_sampling == "balanced_by_dataset":
                     assert balanced_quotas is not None
                     assert balanced_counts is not None
@@ -2810,10 +2940,14 @@ class BiDozeNetModel(CVModel):
                 print(f"  LR (runtime hyperparams): {stage_lr.describe()}")
                 if stage_idx == final_stage_idx:
                     if lr_schedule == "cosine":
-                        print(f"  final-stage LR schedule: cosine (cycle {sgdr_cycle_epochs} epochs)")
+                        print(
+                            f"  final-stage LR schedule: cosine (cycle {sgdr_cycle_epochs} epochs)"
+                        )
                         print(f"  SWA accumulation starts at epoch {swa_start_epoch}")
                     elif lr_schedule == "exponential":
-                        print(f"  final-stage LR schedule: exponential (decay_rate={lr_decay_rate} per epoch)")
+                        print(
+                            f"  final-stage LR schedule: exponential (decay_rate={lr_decay_rate} per epoch)"
+                        )
                     else:
                         print(f"  final-stage LR schedule: constant")
                 if anchor_l2_weight > 0.0:
@@ -2974,7 +3108,9 @@ class BiDozeNetModel(CVModel):
                     history["val_loss"].append(val_loss)
                     message += f" val_loss={val_loss:.4f}"
                     if stage_idx == len(stage_maps) - 1:
-                        class_metrics = masked_class_accuracies(val_logits, val_y_ep.reshape(-1), self.config.num_classes)
+                        class_metrics = masked_class_accuracies(
+                            val_logits, val_y_ep.reshape(-1), self.config.num_classes
+                        )
                         for key, value in class_metrics.items():
                             history.setdefault(f"val_{key}", []).append(value)
                         message += " " + _format_class_accuracy_metrics(class_metrics, prefix="val")
@@ -2986,7 +3122,9 @@ class BiDozeNetModel(CVModel):
                             checkpoint_npz.parent.mkdir(parents=True, exist_ok=True)
                             names, arrays = self._flatten_params(best_params)
                             np.savez(checkpoint_npz, *arrays)
-                            checkpoint_npz.with_suffix(".manifest.json").write_text(json.dumps(names, indent=2))
+                            checkpoint_npz.with_suffix(".manifest.json").write_text(
+                                json.dumps(names, indent=2)
+                            )
                 else:
                     val_elapsed = 0.0
                     if stage_idx == final_stage_idx:
@@ -3003,7 +3141,11 @@ class BiDozeNetModel(CVModel):
                     self.params = _saved_params
                     self.model = {"params": self.params}
 
-                if stage_idx == final_stage_idx and swa_start_epoch is not None and epoch_idx >= swa_start_epoch:
+                if (
+                    stage_idx == final_stage_idx
+                    and swa_start_epoch is not None
+                    and epoch_idx >= swa_start_epoch
+                ):
                     swa_params_accum.append(params)
                     # val_loss above scores `params`, the live SGD iterate -- but the
                     # model that ships is the SWA average (see `self.params =
@@ -3058,18 +3200,22 @@ class BiDozeNetModel(CVModel):
                     try:
                         self.params = params
                         self.model = {"params": params}
-                        epoch_observer(self, {
-                            "epoch": len(history["loss"]),
-                            "stage": stage_idx + 1,
-                            "stage_epoch": epoch_idx + 1,
-                            "final_stage": stage_idx == final_stage_idx,
-                            "weight_state": "live",
-                            "stage_optimizer_step": int(state.step),
-                            "steps_per_epoch": steps_per_epoch,
-                            "lr_schedule": vars(stage_lr),
-                            "val_logits": val_logits if has_validation else None,
-                            "validation_fraction": validation_fraction,
-                        }, history)
+                        epoch_observer(
+                            self,
+                            {
+                                "epoch": len(history["loss"]),
+                                "stage": stage_idx + 1,
+                                "stage_epoch": epoch_idx + 1,
+                                "final_stage": stage_idx == final_stage_idx,
+                                "weight_state": "live",
+                                "stage_optimizer_step": int(state.step),
+                                "steps_per_epoch": steps_per_epoch,
+                                "lr_schedule": vars(stage_lr),
+                                "val_logits": val_logits if has_validation else None,
+                                "validation_fraction": validation_fraction,
+                            },
+                            history,
+                        )
                     finally:
                         self.params, self.model = saved_params, saved_model
 
@@ -3168,7 +3314,9 @@ class BiDozeNetModel(CVModel):
         train_x = np.asarray(train_x, dtype=np.float32)
         train_y = np.asarray(train_y, dtype=np.int32)
         target_x = None if target_x is None else np.asarray(target_x, dtype=np.float32)
-        target_logits = None if target_logits is None else np.asarray(target_logits, dtype=np.float32)
+        target_logits = (
+            None if target_logits is None else np.asarray(target_logits, dtype=np.float32)
+        )
         target_logit_pairing_weight = float(target_logit_pairing_weight)
         if target_logit_pairing_weight < 0.0:
             raise ValueError("target_logit_pairing_weight must be non-negative")
@@ -3203,11 +3351,7 @@ class BiDozeNetModel(CVModel):
         # accelerometer context.
         train_y_feedback = np.where(valid_feedback, train_y, -1).astype(np.int32)
         train_mask = (train_y != -1).astype(np.float32)
-        target_mask = (
-            _numpy_feature_activity_mask(target_x)
-            if target_x is not None
-            else None
-        )
+        target_mask = _numpy_feature_activity_mask(target_x) if target_x is not None else None
 
         seed_sequence = np.random.SeedSequence(resolved_seed)
         batch_seed, rng_seed = seed_sequence.spawn(2)
@@ -3295,18 +3439,20 @@ class BiDozeNetModel(CVModel):
                 assert target_x is not None
                 assert target_mask is not None
                 assert target_logits is not None
-                state, train_loss, feedback_loss, target_loss, train_rng_key = self._run_adjustment_target_epoch(
-                    state,
-                    train_x_device,
-                    train_mask_device,
-                    train_y_device,
-                    target_x,
-                    target_mask,
-                    target_logits,
-                    target_train_step,
-                    batch_size,
-                    batch_rng,
-                    train_rng_key,
+                state, train_loss, feedback_loss, target_loss, train_rng_key = (
+                    self._run_adjustment_target_epoch(
+                        state,
+                        train_x_device,
+                        train_mask_device,
+                        train_y_device,
+                        target_x,
+                        target_mask,
+                        target_logits,
+                        target_train_step,
+                        batch_size,
+                        batch_rng,
+                        train_rng_key,
+                    )
                 )
             else:
                 state, train_loss, train_rng_key = self._run_epoch(
@@ -3331,8 +3477,7 @@ class BiDozeNetModel(CVModel):
                 message = f"adjustment epoch {epoch_idx + 1}/{epochs} loss={train_loss:.4f}"
                 if target_enabled:
                     message += (
-                        f" feedback_loss={feedback_loss:.4f} "
-                        f"target_logit_loss={target_loss:.4f}"
+                        f" feedback_loss={feedback_loss:.4f} target_logit_loss={target_loss:.4f}"
                     )
                 message += f" epoch_time={elapsed:.3f}s"
                 print(message)
@@ -3388,8 +3533,10 @@ class BiDozeNetModel(CVModel):
             config = config_override or cls.config_class.from_dict(metadata["config"])
             model = cls(config=config)
             model.load_weights_from_directory(
-                tmpdir / "weights", input_shape=input_shape,
-                allow_partial=config_override is not None, init_seed=init_seed,
+                tmpdir / "weights",
+                input_shape=input_shape,
+                allow_partial=config_override is not None,
+                init_seed=init_seed,
             )
             return model
 
@@ -3399,6 +3546,8 @@ if __name__ == "__main__":
     wrapper = BiDozeNetModel(cfg)
     x = np.random.randn(2, 120, 64).astype(np.float32)
     y = np.random.randint(0, 4, size=(2, 120), dtype=np.int32)
-    wrapper.train_with_callbacks(x, y, x, y, initial_lr=1e-3, weight_decay=1e-4, epochs=1, batch_size=2, callbacks=[])
+    wrapper.train_with_callbacks(
+        x, y, x, y, initial_lr=1e-3, weight_decay=1e-4, epochs=1, batch_size=2, callbacks=[]
+    )
     logits = wrapper.infer(x)
     print(logits.shape)

@@ -17,6 +17,7 @@ is exactly what ``transfer`` already expresses.
 The links live in their own root rather than beside the real cache, so the
 content-addressed feature cache is never written to.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,9 +69,7 @@ class SplitPlan:
                 raise ValueError(f"split plan: fold {name} is empty")
             for sid in self.folds[name]:
                 if sid in seen:
-                    raise ValueError(
-                        f"split plan: subject {sid} is in both {seen[sid]} and {name}"
-                    )
+                    raise ValueError(f"split plan: subject {sid} is in both {seen[sid]} and {name}")
                 seen[sid] = name
 
     def to_dict(self) -> dict:
@@ -208,7 +207,9 @@ def materialise(
     written: List[Path] = []
     for fold_name in plan.fold_names:
         for sid in plan.folds[fold_name]:
-            written.append(_link(by_id[sid].path, link_dir / get_features_cache_name(fold_name, sid)))
+            written.append(
+                _link(by_id[sid].path, link_dir / get_features_cache_name(fold_name, sid))
+            )
     for name in passthrough:
         if not cached.get(name):
             raise FileNotFoundError(f"no cached subjects for dataset {name!r}")

@@ -11,6 +11,7 @@ array needs no resampling, whereas rows on the frame axis would change the
 model's input shape. pisces-lite's own reader ignores the extra key, so
 training and any pisces-lite reader read these files unchanged.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

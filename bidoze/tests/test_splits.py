@@ -142,9 +142,7 @@ def test_fold_label_reaches_the_id_used_for_checkpoints_and_results():
     assert _fold_label(_Run(final), _fold()) == "final"
 
     # Without a fold_label the id is pisces-lite's bare fold_id.
-    bare = BiDozeCVConfig.from_dict(
-        {"mode": "transfer", "train_sets": ["a"], "test_sets": ["b"]}
-    )
+    bare = BiDozeCVConfig.from_dict({"mode": "transfer", "train_sets": ["a"], "test_sets": ["b"]})
     assert _fold_label(_Run(bare), _fold()) == "0"
 
     # A multi-fold phase still needs the fold number to stay unique.

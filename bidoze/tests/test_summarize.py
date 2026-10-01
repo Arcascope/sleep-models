@@ -4,6 +4,7 @@ The summary is pure bookkeeping over the CSVs a run leaves behind, so these
 tests build small CSVs and pin down which directory joins which cohort and what
 the resulting table says -- no model, no JAX.
 """
+
 from __future__ import annotations
 
 import csv
@@ -22,8 +23,14 @@ from bidoze.reporting.summary import (
 )
 
 HEADER = [
-    "run_id", "fold", "epoch", "subject_id",
-    "dataset", "training_dataset", "metric", "value",
+    "run_id",
+    "fold",
+    "epoch",
+    "subject_id",
+    "dataset",
+    "training_dataset",
+    "metric",
+    "value",
 ]
 
 
@@ -40,9 +47,7 @@ def _write_csv(
         writer = csv.writer(handle)
         writer.writerow(HEADER)
         for subject, dataset, metric, value in rows:
-            writer.writerow(
-                ["run", "final_seed_0", 200, subject, dataset, "Train", metric, value]
-            )
+            writer.writerow(["run", "final_seed_0", 200, subject, dataset, "Train", metric, value])
     return path
 
 
@@ -144,10 +149,9 @@ def test_summary_macro_averages_each_metric_over_subjects(tmp_path: Path) -> Non
 
     table = summary_table(build_cohorts(discover_phases([tmp_path])))
 
-    row = table[(table.cohort == "SleepAccel")
-                & (table.metric == "sleep_sensitivity")].iloc[0]
+    row = table[(table.cohort == "SleepAccel") & (table.metric == "sleep_sensitivity")].iloc[0]
     assert row["n"] == 2
-    assert row["mean"] == pytest.approx(80.0)     # (60 + 100) / 2, scaled to %
+    assert row["mean"] == pytest.approx(80.0)  # (60 + 100) / 2, scaled to %
     assert row["min"] == pytest.approx(60.0)
     assert row["max"] == pytest.approx(100.0)
 
@@ -217,9 +221,7 @@ def test_summarize_accepts_the_phase_directories_directly(tmp_path: Path) -> Non
     )
     _write_csv(tmp_path / "validation", _subject("SleepAccel-Clinical", "b", 0.6, 0.2))
 
-    path = summarize(
-        [tmp_path / "training", tmp_path / "validation"], tmp_path / "out"
-    )
+    path = summarize([tmp_path / "training", tmp_path / "validation"], tmp_path / "out")
 
     written = pd.read_csv(path)
     assert set(written.cohort) == {CV_COHORT, "SleepAccel-Clinical"}

@@ -1,8 +1,8 @@
 """Per-subject hypnogram rendering for an evaluation cohort.
 
-The figure is, top to bottom: 
-- the stage probabilities as a stacked area, 
-- the argmax confidence, 
+The figure is, top to bottom:
+- the stage probabilities as a stacked area,
+- the argmax confidence,
 - the predicted stages,
 - the PSG truth as one lane per stage,
 - one panel per spectral channel.
@@ -10,11 +10,13 @@ The figure is, top to bottom:
 Nothing here reads a config or loads a model; the caller hands over the pooled,
 padded inputs, the class probabilities, and the rendered labels.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MultipleLocator
@@ -59,9 +61,7 @@ _TITLE_LABELS = {
 # --------------------------------------------------------------- spectrogram --
 
 
-def normalized_log_spectrogram(
-    spec: np.ndarray, missing: np.ndarray | None = None
-) -> np.ndarray:
+def normalized_log_spectrogram(spec: np.ndarray, missing: np.ndarray | None = None) -> np.ndarray:
     """The dB surface the spectrogram panel draws.
 
     Already-log features (``spectrogram_kind: log_psd``) are negative, so they
@@ -94,7 +94,11 @@ def _spectrogram_panels(
     """Split an ``(T, F)`` or ``(T, F, C)`` surface into one panel per channel."""
     arr = np.asarray(inputs)
     if arr.ndim == 2:
-        name = channel_names[0] if channel_names is not None and len(channel_names) == 1 else "Freq Bin"
+        name = (
+            channel_names[0]
+            if channel_names is not None and len(channel_names) == 1
+            else "Freq Bin"
+        )
         return [(arr, name)]
     if arr.ndim != 3:
         raise ValueError(f"Expected 2-D or 3-D spectrogram input, got shape {arr.shape}")
@@ -294,9 +298,7 @@ def render_subject_hypnogram(
     n_axes = 4 + n_spec
     fig, axes = plt.subplots(n_axes, 1, figsize=(40, 4 * n_axes), sharex=True)
     axes_list = list(axes)
-    ordered_stage_indices = [
-        idx for idx in _ORDERED_STAGE_INDICES if idx < probs.shape[1]
-    ]
+    ordered_stage_indices = [idx for idx in _ORDERED_STAGE_INDICES if idx < probs.shape[1]]
 
     cumulative = np.zeros(probs.shape[0])
     for class_idx in ordered_stage_indices:
@@ -376,9 +378,7 @@ def render_subject_hypnogram(
     _add_masked_epoch_overlay(axes_list, labels)
 
     fig.suptitle(
-        title_prefix
-        + " | "
-        + " | ".join(stage_summary_title_fields(summary)),
+        title_prefix + " | " + " | ".join(stage_summary_title_fields(summary)),
         fontsize=20,
         y=0.995,
     )

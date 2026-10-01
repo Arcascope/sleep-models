@@ -1,4 +1,5 @@
 """The GGIR-style sleep filter: z-angle, SIB, sub-recording splits, SPT, naps."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -143,9 +144,7 @@ def test_each_sub_recording_gets_its_own_window_and_the_lapse_gets_none() -> Non
 
 def test_a_dropout_does_not_shift_later_flags_in_time() -> None:
     # A 20-minute dropout (not a lapse) inside the quiet stretch.
-    accel = _recording(
-        [("quiet", 2.0), ("lapse", 1.0 / 3.0), ("quiet", 2.0), ("restless", 2.0)]
-    )
+    accel = _recording([("quiet", 2.0), ("lapse", 1.0 / 3.0), ("quiet", 2.0), ("restless", 2.0)])
     epoch_start_s = _epochs(accel)
 
     result = ggir.evaluate(accel, epoch_start_s, epoch_start_s.size)
@@ -380,12 +379,8 @@ def _break_filter(monkeypatch) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(ggir, "evaluate", boom)
-    monkeypatch.setattr(
-        "bidoze.data.batching.split_gap_row", lambda pooled: (None, np.zeros(5))
-    )
-    monkeypatch.setattr(
-        "bidoze.data.prepare.clean_accelerometer_rows", lambda a: a
-    )
+    monkeypatch.setattr("bidoze.data.batching.split_gap_row", lambda pooled: (None, np.zeros(5)))
+    monkeypatch.setattr("bidoze.data.prepare.clean_accelerometer_rows", lambda a: a)
 
 
 def test_a_failing_filter_falls_back_to_raw_with_a_warning(monkeypatch) -> None:

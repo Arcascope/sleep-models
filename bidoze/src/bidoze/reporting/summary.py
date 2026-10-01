@@ -17,6 +17,7 @@ Two kinds of directory are understood:
 The scan looks at each directory given and its immediate subdirectories, one
 level deep.
 """
+
 from __future__ import annotations
 
 import re
@@ -58,9 +59,20 @@ HEADLINE_METRICS = [
 ]
 
 SUMMARY_COLUMNS = [
-    "metric", "cohort", "n", "n_missing",
-    "mean", "sd", "sem", "ci95_lo", "ci95_hi",
-    "median", "iqr_lo", "iqr_hi", "min", "max",
+    "metric",
+    "cohort",
+    "n",
+    "n_missing",
+    "mean",
+    "sd",
+    "sem",
+    "ci95_lo",
+    "ci95_hi",
+    "median",
+    "iqr_lo",
+    "iqr_hi",
+    "min",
+    "max",
 ]
 
 
@@ -70,7 +82,7 @@ class Phase:
 
     directory: Path
     csv_path: Path
-    fold: str | None          # the fold's name when it pools into the CV cohort
+    fold: str | None  # the fold's name when it pools into the CV cohort
 
 
 def _results_csv(directory: Path) -> Path | None:
@@ -125,12 +137,17 @@ def add_f1(wide: pd.DataFrame) -> pd.DataFrame:
     confusion matrix exactly; wake F1 takes wake as positive. ``f1_macro`` is
     their unweighted mean. Subjects missing a needed column are left out.
     """
-    need = {"sleep_sensitivity", "wake_specificity", "true_wake_count",
-            "true_light_count", "true_deep_count", "true_rem_count"}
+    need = {
+        "sleep_sensitivity",
+        "wake_specificity",
+        "true_wake_count",
+        "true_light_count",
+        "true_deep_count",
+        "true_rem_count",
+    }
     if not need <= set(wide.columns):
         return wide
-    true_sleep = (wide["true_light_count"] + wide["true_deep_count"]
-                  + wide["true_rem_count"])
+    true_sleep = wide["true_light_count"] + wide["true_deep_count"] + wide["true_rem_count"]
     true_wake = wide["true_wake_count"]
     sleep_tp = wide["sleep_sensitivity"] * true_sleep
     wake_tp = wide["wake_specificity"] * true_wake
@@ -146,17 +163,13 @@ def add_f1(wide: pd.DataFrame) -> pd.DataFrame:
 
 def to_subjects(frame: pd.DataFrame) -> pd.DataFrame:
     """One row per subject, one column per metric, percentages where expected."""
-    wide = frame.pivot_table(
-        index="subject_id", columns="metric", values="value", aggfunc="first"
-    )
+    wide = frame.pivot_table(index="subject_id", columns="metric", values="value", aggfunc="first")
     wide = add_f1(wide)
     for metric in AS_PERCENT:
         if metric in wide.columns:
             wide[metric] = wide[metric] * 100.0
     if AS_PERCENT <= set(wide.columns):
-        wide["balanced_accuracy"] = (
-            wide["sleep_sensitivity"] + wide["wake_specificity"]
-        ) / 2.0
+        wide["balanced_accuracy"] = (wide["sleep_sensitivity"] + wide["wake_specificity"]) / 2.0
     return wide
 
 
@@ -226,8 +239,7 @@ def summary_table(cohorts: dict[str, pd.DataFrame]) -> pd.DataFrame:
         for cohort, subjects in cohorts.items():
             if metric not in subjects.columns:
                 continue
-            rows.append({"metric": metric, "cohort": cohort,
-                         **describe(subjects[metric])})
+            rows.append({"metric": metric, "cohort": cohort, **describe(subjects[metric])})
     return pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
 
 

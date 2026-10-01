@@ -18,17 +18,17 @@ Or from Python:
 ```python
 from bidoze.predict import Predictor, read_accelerometer
 
-predictor = Predictor("$local_dir")     # load once, reuse
+predictor = Predictor("$local_dir")  # load once, reuse
 accel = read_accelerometer("night.csv")  # (N, 4): t [s], x, y, z [g]
 result = predictor.predict(accel)
 
-result.probabilities   # (epochs, $n_stages): $columns
-result.labels          # corrected stage per 30-s epoch, "gap" where no data
-result.raw_labels      # raw BiDoze stage, before filtering
-result.summary         # subject_id, tst_minutes, missing_data_minutes, nap_minutes
-result.epoch_start_s   # epoch start times, on the input clock
+result.probabilities  # (epochs, $n_stages): $columns
+result.labels  # corrected stage per 30-s epoch, "gap" where no data
+result.raw_labels  # raw BiDoze stage, before filtering
+result.summary  # subject_id, tst_minutes, missing_data_minutes, nap_minutes
+result.epoch_start_s  # epoch start times, on the input clock
 result.to_csv("night_stages.csv")
-result.plot("night_stages.png")     # hypnogram; needs the [report] extra
+result.plot("night_stages.png")  # hypnogram; needs the [report] extra
 ```
 
 By default the corrected `stage` applies a GGIR-style sleep filter: sleep the

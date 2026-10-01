@@ -36,6 +36,7 @@ Conventions shared with the rest of the reporting stack:
 Importing this module is what registers the metrics; ``bidoze.evaluation``
 does that on import so a caller cannot forget.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -269,10 +270,7 @@ def pooled_confusion(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -
     y_true = np.asarray(y_true).reshape(-1)
     y_pred = np.asarray(y_pred).reshape(-1)
     valid = (
-        scored_epoch_mask(y_true)
-        & (y_true < num_classes)
-        & (y_pred >= 0)
-        & (y_pred < num_classes)
+        scored_epoch_mask(y_true) & (y_true < num_classes) & (y_pred >= 0) & (y_pred < num_classes)
     )
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     np.add.at(cm, (y_true[valid], y_pred[valid]), 1)
@@ -400,6 +398,7 @@ def _kappa_sleep_wake(ctx: EvalContext) -> float:
     # Rows and columns: wake=0, sleep=1, then the gap column. A predicted gap
     # misses both rows.
     return cohen_kappa_from_confusion(
-        np.bincount(y_true_bin * 3 + predicted_sleep * 1 + predicted_gap * 2,
-                    minlength=6).reshape(2, 3)
+        np.bincount(y_true_bin * 3 + predicted_sleep * 1 + predicted_gap * 2, minlength=6).reshape(
+            2, 3
+        )
     )

@@ -6,6 +6,7 @@ is the wiring: which config snapshot becomes which bundle file, that the card
 carries run-derived facts and a review marker, that checksums verify, and that
 the PENDING gate blocks an upload.
 """
+
 from __future__ import annotations
 
 import csv
@@ -71,8 +72,18 @@ def _phase(root: Path) -> Path:
         json.dumps({"num_classes": 4, "class_names": ["wake", "light", "deep", "rem", "gap"]})
     )
     (config_dir / "training.json").write_text(
-        json.dumps({"run_seed": 0, "seed_count": 1, "epochs": 30, "batch_size": 4,
-                    "lr": 0.0005, "weight_decay": 0.0005, "x_length": 8, "y_length": 8})
+        json.dumps(
+            {
+                "run_seed": 0,
+                "seed_count": 1,
+                "epochs": 30,
+                "batch_size": 4,
+                "lr": 0.0005,
+                "weight_decay": 0.0005,
+                "x_length": 8,
+                "y_length": 8,
+            }
+        )
     )
     (config_dir / "split-manifest.json").write_text(json.dumps({"enabled": False}))
     (phase / "model_outputs").mkdir()
@@ -88,15 +99,21 @@ def _results_csv(directory: Path, dataset: str, fold: str, n_subjects: int = 3) 
             ("wake_specificity", 0.5 + subject * 0.01),
             ("kappa_4stage", 0.4 + subject * 0.01),
         ):
-            rows.append(
-                [f"{fold}", fold, 30, subject, dataset, "Fold0", metric, value]
-            )
+            rows.append([f"{fold}", fold, 30, subject, dataset, "Fold0", metric, value])
     path = directory / "cv_results_4_stages.csv"
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["run_id", "fold", "epoch", "subject_id", "dataset",
-             "training_dataset", "metric", "value"]
+            [
+                "run_id",
+                "fold",
+                "epoch",
+                "subject_id",
+                "dataset",
+                "training_dataset",
+                "metric",
+                "value",
+            ]
         )
         writer.writerows(rows)
     return path
@@ -119,13 +136,59 @@ def _summary(path: Path) -> Path:
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["metric", "cohort", "n", "n_missing", "mean", "sd", "sem",
-             "ci95_lo", "ci95_hi", "median", "iqr_lo", "iqr_hi", "min", "max"]
+            [
+                "metric",
+                "cohort",
+                "n",
+                "n_missing",
+                "mean",
+                "sd",
+                "sem",
+                "ci95_lo",
+                "ci95_hi",
+                "median",
+                "iqr_lo",
+                "iqr_hi",
+                "min",
+                "max",
+            ]
         )
-        writer.writerow(["sleep_sensitivity", "cv", "202", "0", "96.5", "5.5",
-                         "0.4", "95.7", "97.3", "97.9", "96.4", "99.0", "41.0", "100.0"])
-        writer.writerow(["wake_specificity", "cv", "202", "0", "68.9", "21.0",
-                         "1.5", "66.0", "71.8", "72.4", "56.0", "85.4", "6.6", "100.0"])
+        writer.writerow(
+            [
+                "sleep_sensitivity",
+                "cv",
+                "202",
+                "0",
+                "96.5",
+                "5.5",
+                "0.4",
+                "95.7",
+                "97.3",
+                "97.9",
+                "96.4",
+                "99.0",
+                "41.0",
+                "100.0",
+            ]
+        )
+        writer.writerow(
+            [
+                "wake_specificity",
+                "cv",
+                "202",
+                "0",
+                "68.9",
+                "21.0",
+                "1.5",
+                "66.0",
+                "71.8",
+                "72.4",
+                "56.0",
+                "85.4",
+                "6.6",
+                "100.0",
+            ]
+        )
     return path
 
 
@@ -160,9 +223,10 @@ def test_provenance_records_the_checkpoint_and_phase_hashes(tmp_path: Path) -> N
 
     provenance = json.loads((tmp_path / "release" / "provenance.json").read_text())
     assert provenance["package_version"] == "v1.0.0"
-    assert provenance["checkpoint_sha256"] == build_release_bundle(
-        phase, tmp_path / "release2", version="v1.0.0"
-    ).checkpoint_sha256
+    assert (
+        provenance["checkpoint_sha256"]
+        == build_release_bundle(phase, tmp_path / "release2", version="v1.0.0").checkpoint_sha256
+    )
     assert provenance["split_manifest_sha256"]
     assert provenance["input_shape"] == [8, 3, 2]
 
@@ -233,9 +297,7 @@ def test_authored_card_replaces_the_pending_marker(tmp_path: Path) -> None:
         "## Intended use\n\nWrist-worn pediatric sleep staging. Not a medical device.\n"
     )
 
-    bundle = build_release_bundle(
-        phase, tmp_path / "release", version="v1.0.0", card=authored
-    )
+    bundle = build_release_bundle(phase, tmp_path / "release", version="v1.0.0", card=authored)
 
     verify_bundle(tmp_path / "release")
 
@@ -250,9 +312,7 @@ def test_card_images_are_bundled_checksummed_and_uploaded(tmp_path: Path) -> Non
         "External: ![x](https://example.com/x.png)\n"
     )
 
-    bundle = build_release_bundle(
-        phase, tmp_path / "release", version="v1.0.0", card=authored
-    )
+    bundle = build_release_bundle(phase, tmp_path / "release", version="v1.0.0", card=authored)
 
     bundled = tmp_path / "release" / "assets" / "figure.png"
     assert bundled.read_bytes() == figure.read_bytes()
@@ -276,9 +336,7 @@ def test_card_with_a_missing_image_is_refused(tmp_path: Path) -> None:
     authored.write_text("![missing](nope.png)\n")
 
     with pytest.raises(FileNotFoundError):
-        build_release_bundle(
-            phase, tmp_path / "release", version="v1.0.0", card=authored
-        )
+        build_release_bundle(phase, tmp_path / "release", version="v1.0.0", card=authored)
 
 
 def test_preview_renders_card_to_standalone_html(tmp_path: Path) -> None:
@@ -292,7 +350,11 @@ def test_preview_renders_card_to_standalone_html(tmp_path: Path) -> None:
     authored.write_text("# Custom\n\n![f](figure.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
 
     build_release_bundle(
-        phase, tmp_path / "release", version="v1.0.0", card=authored, repo_id="arcascope/arcasleep-bidoze-pediatric"
+        phase,
+        tmp_path / "release",
+        version="v1.0.0",
+        card=authored,
+        repo_id="arcascope/arcasleep-bidoze-pediatric",
     )
     html = render_card_html(tmp_path / "release")
 
@@ -367,10 +429,21 @@ def test_upload_gate_blocks_an_unreviewed_card(tmp_path: Path, monkeypatch) -> N
 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
-        training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
-        repo="arcascope/bidoze", revision=None, private=False, dry_run=True,
-        allow_unreviewed=False, overwrite=False,
+        training_dir=str(phase),
+        output_dir=str(tmp_path / "release"),
+        version="v1.0.0",
+        checkpoint=None,
+        evaluation=None,
+        metrics_summary=None,
+        card=None,
+        info=None,
+        preview=None,
+        repo="arcascope/bidoze",
+        revision=None,
+        private=False,
+        dry_run=True,
+        allow_unreviewed=False,
+        overwrite=False,
     )
 
     with pytest.raises(SystemExit):
@@ -384,10 +457,21 @@ def test_dry_run_upload_does_not_need_huggingface_hub(tmp_path: Path) -> None:
 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
-        training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None, preview=None,
-        repo="arcascope/bidoze", revision=None, private=False, dry_run=True,
-        allow_unreviewed=True, overwrite=False,
+        training_dir=str(phase),
+        output_dir=str(tmp_path / "release"),
+        version="v1.0.0",
+        checkpoint=None,
+        evaluation=None,
+        metrics_summary=None,
+        card=None,
+        info=None,
+        preview=None,
+        repo="arcascope/bidoze",
+        revision=None,
+        private=False,
+        dry_run=True,
+        allow_unreviewed=True,
+        overwrite=False,
     )
 
     assert _publish(args) == 0
@@ -407,11 +491,21 @@ def test_preview_skips_the_upload_even_with_a_repo(tmp_path: Path, monkeypatch) 
 
     phase = _phase(tmp_path)
     args = argparse.Namespace(
-        training_dir=str(phase), output_dir=str(tmp_path / "release"), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
+        training_dir=str(phase),
+        output_dir=str(tmp_path / "release"),
+        version="v1.0.0",
+        checkpoint=None,
+        evaluation=None,
+        metrics_summary=None,
+        card=None,
+        info=None,
         preview=str(tmp_path / "card.html"),
-        repo="arcascope/bidoze", revision=None, private=False, dry_run=False,
-        allow_unreviewed=False, overwrite=False,
+        repo="arcascope/bidoze",
+        revision=None,
+        private=False,
+        dry_run=False,
+        allow_unreviewed=False,
+        overwrite=False,
     )
 
     assert cli._publish(args) == 0
@@ -428,10 +522,21 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     target = tmp_path / "release"
     args = argparse.Namespace(
-        training_dir=str(phase), output_dir=str(target), version="v1.0.0",
-        checkpoint=None, evaluation=None, metrics_summary=None, card=None, info=None,
-        preview=str(target), repo=None, revision=None, private=False, dry_run=False,
-        allow_unreviewed=False, overwrite=False,
+        training_dir=str(phase),
+        output_dir=str(target),
+        version="v1.0.0",
+        checkpoint=None,
+        evaluation=None,
+        metrics_summary=None,
+        card=None,
+        info=None,
+        preview=str(target),
+        repo=None,
+        revision=None,
+        private=False,
+        dry_run=False,
+        allow_unreviewed=False,
+        overwrite=False,
     )
 
     assert _publish(args) == 0
@@ -439,8 +544,17 @@ def test_preview_into_a_directory_writes_card_html(tmp_path: Path) -> None:
 
     # A bare --preview is accepted and defaults to the bundle directory.
     parsed = build_parser().parse_args(
-        ["publish", "-t", str(phase), "-o", str(target), "--version", "v1.0.0",
-         "--overwrite", "--preview"]
+        [
+            "publish",
+            "-t",
+            str(phase),
+            "-o",
+            str(target),
+            "--version",
+            "v1.0.0",
+            "--overwrite",
+            "--preview",
+        ]
     )
     assert parsed.preview == ""
     assert _publish(parsed) == 0
@@ -491,7 +605,6 @@ def test_upload_is_one_atomic_folder_commit(tmp_path: Path) -> None:
     assert len(hub.folders) == 1
     assert set(hub.folders[0]["allow_patterns"]) == set(BUNDLE_FILES)
     assert hub.folders[0]["commit_message"] == "Release release"
-
 
 
 def test_upload_refuses_a_tampered_bundle(tmp_path: Path) -> None:

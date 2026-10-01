@@ -11,6 +11,7 @@ involved.
     result = predict("arcasleep-bidoze-pediatric", accel)   # accel: (N, 4) t [s], x, y, z [g]
     result.to_csv("night.csv")
 """
+
 from __future__ import annotations
 
 import csv
@@ -373,9 +374,7 @@ class Predictor:
                 clean = clean_accelerometer_rows(np.asarray(accel, dtype=np.float64))
                 clean = clean[clean[:, 0] >= origin_s]
                 ggir = ggir_evaluate(clean, epoch_start_s, n_epochs)
-                stage, is_nap = _apply_ggir_filter(
-                    probabilities, self.stage_names, is_gap, ggir
-                )
+                stage, is_nap = _apply_ggir_filter(probabilities, self.stage_names, is_gap, ggir)
                 nap_minutes = float(np.count_nonzero(is_nap)) * EPOCH_SECONDS / 60.0
             except Exception as exc:
                 if ggir_error_fails:
@@ -389,7 +388,9 @@ class Predictor:
                 stage = is_nap = ggir = nap_minutes = None
 
         stage_raw = _label_epochs(probabilities, self.stage_names, is_gap)
-        summary = _summarize(stage if stage is not None else stage_raw, is_gap, nap_minutes, subject_id)
+        summary = _summarize(
+            stage if stage is not None else stage_raw, is_gap, nap_minutes, subject_id
+        )
         return Prediction(
             epoch_start_s=epoch_start_s,
             probabilities=probabilities,
@@ -559,7 +560,7 @@ def predict_files(
     ggir_error_fails: bool = False,
     hypnogram: bool = False,
 ) -> list[Path]:
-    """Write ``<output_dir>/<input stem>.csv`` per input, one CSV containing per-subject 
+    """Write ``<output_dir>/<input stem>.csv`` per input, one CSV containing per-subject
     summary metrics, and one CSV that has macro statistics for all iputs.
 
     The summary has a row per input, in input order; the subject id

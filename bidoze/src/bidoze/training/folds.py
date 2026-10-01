@@ -3,6 +3,7 @@
 Splits are always taken at the subject level and recorded as an artifact, so a
 run's train/test assignment is reproducible from ``split_seed`` alone.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -58,9 +59,7 @@ def deblip_subjects_for_fold(
     The dataset-level overlap is allowed; the participant-level one is not.
     """
     held_out = set(fold.test_subjects) | set(fold.val_subjects)
-    return [
-        ref for ref in subjects_from_datasets(datasets, deblip_sets) if ref not in held_out
-    ]
+    return [ref for ref in subjects_from_datasets(datasets, deblip_sets) if ref not in held_out]
 
 
 def build_folds(
@@ -98,9 +97,7 @@ def build_folds(
     }
     for name in overlap_sets:
         candidates = [
-            ref
-            for sid in datasets[name].ids
-            if (ref := SubjectRef(name, sid)) not in excluded
+            ref for sid in datasets[name].ids if (ref := SubjectRef(name, sid)) not in excluded
         ]
         if len(candidates) < 2:
             raise ValueError(

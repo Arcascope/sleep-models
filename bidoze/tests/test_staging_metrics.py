@@ -5,6 +5,7 @@ never scored, a predicted gap is neither a sleep call nor a wake call, and a
 cohort with too little truth reports NaN. ``kappa_sleep_wake`` is tested
 against a hand-computed confusion matrix.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -64,9 +65,7 @@ def test_kappa_sleep_wake_matches_the_binary_case_without_gaps() -> None:
 
     binary = staging_metrics._kappa_sleep_wake(ctx)
     # Hand-built wake/sleep confusion for the same calls, gap column empty.
-    manual = cohen_kappa_from_confusion(
-        np.array([[2, 0], [2, 2]])
-    )
+    manual = cohen_kappa_from_confusion(np.array([[2, 0], [2, 2]]))
     assert binary == pytest.approx(manual)
 
 
@@ -108,6 +107,7 @@ def test_pooled_confusion_counts_only_scored_epochs() -> None:
     cm = pooled_confusion(np.asarray(y_true), np.asarray(y_pred), num_classes=4)
 
     assert cm.sum() == 2
+
 
 # --- waso_error_minutes ------------------------------------------------------
 

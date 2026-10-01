@@ -8,6 +8,7 @@ content-addressed exactly like its inputs.
 boto3 is imported lazily and is an optional dependency (``bidoze[aws]``), so
 importing this module never forces it on a training image that does not upload.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -97,9 +98,7 @@ def upload_run(
     written: List[str] = []
     for entry in entries:
         if not dry_run:
-            client.upload_file(
-                str(run_dir / entry.path), target.bucket, target.key_for(entry.path)
-            )
+            client.upload_file(str(run_dir / entry.path), target.bucket, target.key_for(entry.path))
         written.append(target.uri_for(entry.path))
 
     # Last, so its presence means the rest arrived.

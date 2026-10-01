@@ -5,6 +5,7 @@ snapshot the configs, discover cached subjects, build deterministic
 participant-level folds, fit one model per seed, and score every held-out
 subject into the run's metrics CSV.
 """
+
 from __future__ import annotations
 
 import json
@@ -150,9 +151,7 @@ def run_training(
     cached = discover_cached_subjects(config.cv.all_sets, cache_dir)
     for name, subjects in sorted(cached.items()):
         print(f"  {name}: {len(subjects)} cached subjects")
-    features = load_cached_features(
-        subject for subjects in cached.values() for subject in subjects
-    )
+    features = load_cached_features(subject for subjects in cached.values() for subject in subjects)
     datasets = build_dataset_index(cached)
 
     resolved_split_seed = split_seed if split_seed is not None else training.run_seed
@@ -227,7 +226,11 @@ def _run_fold(
     )
     if plans_by_dataset:
         X_train, y_train, train_dataset_labels = assemble_batch(
-            features, fold.train_subjects, target_x, target_y, num_classes,
+            features,
+            fold.train_subjects,
+            target_x,
+            target_y,
+            num_classes,
             with_dataset_labels=True,
         )
     else:
@@ -238,9 +241,7 @@ def _run_fold(
 
     X_val, y_val = (None, None)
     if fold.val_subjects:
-        X_val, y_val = assemble_batch(
-            features, fold.val_subjects, target_x, target_y, num_classes
-        )
+        X_val, y_val = assemble_batch(features, fold.val_subjects, target_x, target_y, num_classes)
 
     print(f"  train X: {X_train.shape}  y: {y_train.shape}")
     if X_val is not None:
@@ -257,9 +258,7 @@ def _run_fold(
         if training.deblips:
             deblip_refs = deblip_subjects_for_fold(datasets, config.cv.deblip_sets, fold)
             if deblip_refs:
-                deblip_x, _ = assemble_batch(
-                    features, deblip_refs, target_x, target_y, num_classes
-                )
+                deblip_x, _ = assemble_batch(features, deblip_refs, target_x, target_y, num_classes)
                 print(f"  deblip X: {deblip_x.shape}  ({len(deblip_refs)} subjects)")
             else:
                 print("  deblip: no subjects left after holding out test participants")

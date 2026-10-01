@@ -17,6 +17,7 @@ model was fitted at a fixed ``x_length`` and is scored at that same length,
 never resized per recording. Shorter recordings are padded, long ones truncated
 -- and since truncation is the case that loses data, it is reported.
 """
+
 from __future__ import annotations
 
 import csv
@@ -238,7 +239,9 @@ def _hypnogram_renderer(config: RunConfig):
         raise
 
     processing = config.processing
-    feature_kind = "embedding" if getattr(processing, "type", None) == "healthssl" else "spectrogram"
+    feature_kind = (
+        "embedding" if getattr(processing, "type", None) == "healthssl" else "spectrogram"
+    )
     channel_names = (
         ["HealthSSL dim"]
         if feature_kind == "embedding"
@@ -368,7 +371,9 @@ def run_evaluation(
                     y_pred_proba, bundle.anglez_5s[0], min(epochs, training.x_length)
                 )
             except Exception as exc:
-                raise ValueError(f"{name}: GGIR SIB filter failed: {type(exc).__name__}: {exc}") from exc
+                raise ValueError(
+                    f"{name}: GGIR SIB filter failed: {type(exc).__name__}: {exc}"
+                ) from exc
         if renderer is not None:
             output_path = hypnogram_dir / f"{ref.dataset_name}_{ref.subject_id}.png"
             renderer(

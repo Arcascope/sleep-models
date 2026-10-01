@@ -134,6 +134,7 @@ released bundle does not need `.pisces`:
 
 ```python
 from bidoze.artifacts.publish import load_bundle_model
+
 model = load_bundle_model("release/v0.1.0")
 ```
 
