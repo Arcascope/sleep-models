@@ -23,29 +23,35 @@ and REM per epoch, plus a gap class for epochs with no accelerometer data
 encoder and decoder blocks (`m_blocks`), 16 base filters (`c_u`) growing by
 the cube root of 2 per block, and 16×3 time×frequency kernels.
 
-Recordings are scored whole, padded to the longest in the cohort rounded up
-to a multiple of 1024 epochs, so the frame count divides by `2**m_blocks`.
+Recordings are scored whole. Each is padded to the length of the longest
+recording in the cohort, rounded up to a multiple of 1024 epochs, so the frame
+count is divisible by `2**m_blocks`.
 
 ## Training
 
-`config/training.json` follows the paper's procedure. Each epoch samples
-1024-epoch segments from the training nights, each segment drawn to contain a
-uniformly chosen sleep stage, and fits them with the effective-number
-class-balanced cross-entropy (`balance_beta`). Adam starts at `lr`; 30% of the
-training subjects (`eval_fraction`) are held out, the learning rate drops by
-√10 after `lr_drop_patience` epochs without an improvement in their Cohen's
-kappa, training stops after `early_stop_patience`, and the best epoch is kept.
+`config/training.json` follows the paper's procedure. Each training epoch
+samples 1024-epoch segments from the training nights; each segment is drawn to
+contain a sleep stage chosen uniformly at random. The loss is the
+effective-number class-balanced cross-entropy (`balance_beta`).
+
+- **Held-out subjects:** 30% of the training subjects (`eval_fraction`) are
+  held out and scored by Cohen's κ after every epoch.
+- **Learning rate:** Adam starts at `lr`; the rate drops by √10 after
+  `lr_drop_patience` epochs without an improvement in κ.
+- **Stopping:** training stops after `early_stop_patience` epochs without an
+  improvement in κ; the epoch with the best κ is kept.
 
 `scripts/harness.sh` runs the whole recipe: one model per fold of the
 committed split plan (`config/splits/weaver_5fold.json`), each scored on the
-fold it held out, then a final model on every fold, scored on the external
-test sets. Phases can be named to run a subset, in order:
+fold it held out, then a final model trained on every fold and scored on the
+external test sets. Name phases to run only those, in order:
 
 ```bash
 FEATURE_CACHE_DIR=<cache root> UNET_RUN_ID=<run> scripts/harness.sh [--dry-run] [final fold0 ...]
 ```
 
-Results land in `results/<run>/training/<phase>/`. One phase by hand:
+Results are written to `results/<run>/training/<phase>/`. To run one phase by
+hand:
 
 ```bash
 arcasleep unet train \

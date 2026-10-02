@@ -31,15 +31,21 @@ result.to_csv("night_stages.csv")
 result.plot("night_stages.png")     # hypnogram; needs the [report] extra
 ```
 
-By default the corrected `stage` applies a GGIR-style sleep filter: sleep the
-model called *outside* the estimated main sleep window where the wrist was not
-still for 5 minutes (`is_sib` is 0) is demoted to `wake`. Inside the window the
-model's sleep stands, and sleep outside it is kept and flagged in `is_nap`.
-A recording <= 9 h has no estimated window (all of it counts as one), so its
-sleep is never demoted. `stage_raw` always holds the model's own argmax.
-Pass `ggir_sleep_filter=False` (or `--no-ggir-sleep-filter`) for the unfiltered
-output. The hypnogram shows the raw and filtered stages, the sleep the filter
-removed, and the SIB and SPT tracks.
+By default the corrected `stage` applies a GGIR-style sleep filter; the
+definition depends on recording length:
+
+- **≤ 9 hours, such as a single night:** nothing; `stage` is the model's own
+  scoring, `stage_raw`.
+- **Longer, such as multi-day wear:** GGIR estimates the main sleep period
+  (`is_spt`). Inside this the model's scoring is unchanged. Outside it, sleep becomes
+  `wake` unless the wrist was still for at least 5 minutes (`is_sib`), and the
+  sleep that remains is flagged by `is_nap == 1`.
+
+A gap of 60 minutes or more without data splits a recording, and each part is
+judged on its own length. Pass `ggir_sleep_filter=False` (or
+`--no-ggir-sleep-filter`) for the unfiltered output. The hypnogram shows the
+raw and filtered stages, the sleep the filter removed, and the SIB and SPT
+tracks.
 
 Pass `origin=` (seconds on the input clock, or `"unix"`) to put epoch
 boundaries somewhere other than the first sample, for example at the start of a
