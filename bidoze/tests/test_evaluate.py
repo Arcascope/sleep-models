@@ -579,7 +579,7 @@ def test_apply_sib_filter_demotes_sleep_outside_spt_but_not_inside_it():
     assert demoted > 0
     restless = ~is_spt & (np.arange(n_epochs) < 200) & (np.arange(n_epochs) != 10)
     assert restless.any() and np.all(real[restless].argmax(axis=1) == 0)  # outside SPT: wake
-    assert np.all(real[is_spt].argmax(axis=1) == 2)        # inside SPT: sleep kept
+    assert is_spt.any() and np.all(real[is_spt].argmax(axis=1) == 2)  # inside SPT: sleep kept
     assert filtered[10].argmax() == 4 and np.all(filtered[n_epochs:].argmax(axis=1) == 4)
     assert proba[0].argmax() == 2                          # input untouched
 

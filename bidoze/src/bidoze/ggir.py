@@ -73,7 +73,7 @@ HDCZA_THRESHOLD_HI = 0.50
 #: in no-movement shorter than this.
 SPT_MIN_BLOCK_MIN = 30.0
 SPT_MAX_GAP_MIN = 60.0
-#: A sub-recording must span this long before SPT is worth estimating.
+#: A sub-recording must span longer than this before SPT is worth estimating.
 MIN_SPAN_HOURS = 9.0
 #: A lapse with no sample at least this long starts a new sub-recording.
 RECORDING_GAP_MINUTES = 60.0
@@ -85,7 +85,7 @@ class GGIRResult:
 
     ``is_sib`` is the vanHees2015 sustained-inactivity decision; ``is_spt``
     marks the main-sleep window(s). Both are length ``n_epochs`` and ``False``
-    for epochs with no data. A sub-recording shorter than ``MIN_SPAN_HOURS`` is
+    for epochs with no data. A sub-recording of at most ``MIN_SPAN_HOURS`` is
     taken to be a sleep bout the researcher chose to submit, so all of it is
     ``is_spt``; longer ones get the SPT estimate. Epochs in a lapse between
     sub-recordings are not ``is_spt``. ``spt_ran`` records whether any
@@ -385,7 +385,7 @@ def evaluate_bins(
         first_s = bin_start_s[lo]
         last_s = bin_start_s[hi - 1] + GGIR_EPOCH_SECONDS
         sib_5s[lo:hi] = van_hees_sib(anglez_5s[lo:hi])
-        if (last_s - first_s) / 3600.0 < MIN_SPAN_HOURS:
+        if (last_s - first_s) / 3600.0 <= MIN_SPAN_HOURS:
             # Too short to estimate SPT: treat the whole stretch as main sleep.
             is_spt |= (epoch_start_s + EPOCH_SECONDS > first_s) & (epoch_start_s < last_s)
             continue

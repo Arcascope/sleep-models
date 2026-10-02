@@ -491,8 +491,8 @@ def _apply_ggir_filter(
     Outside the main sleep window predicted sleep that is not a sustained
     inactivity bout is demoted to wake. Inside the window SIB never flips
     sleep to wake: the SPT window is a sleep period, so sleep the model found
-    there stands even when it is not a SIB. A sub-recording shorter than the
-    9 h minimum span has no estimated SPT, so all of it is treated as the main
+    there stands even when it is not a SIB. A sub-recording of at most
+    9 h has no estimated SPT, so all of it is treated as the main
     sleep window and no sleep inside it is demoted -- for a <= 9 h recording
     the SIB judgement changes nothing. Remaining sleep outside every main sleep
     window is flagged as a nap and kept. Sleep is never promoted, and gap

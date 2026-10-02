@@ -180,8 +180,8 @@ def apply_sib_filter(
     outside the main sleep window an epoch whose argmax is a sleep class but
     which vanHees2015 does not call a sustained inactivity bout becomes wake.
     Inside the main sleep window SIB never flips sleep to wake, and a
-    sub-recording shorter than the 9 h minimum span is treated as one long main
-    sleep window, so for a <= 9 h recording nothing is demoted. It is a hard
+    sub-recording of at most 9 h is treated as one long main sleep window, so
+    for a <= 9 h recording nothing is demoted. It is a hard
     decision, so the epoch's row is replaced by a one-hot wake row and every
     metric -- thresholded or argmax -- sees wake. Sleep is never promoted, gap
     epochs are untouched, and naps outside the main sleep window are kept, since

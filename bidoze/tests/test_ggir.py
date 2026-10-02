@@ -67,8 +67,9 @@ def test_spt_runs_and_covers_the_quiet_block_on_a_long_recording() -> None:
     assert not result.is_spt[~early].any()
 
 
-def test_a_recording_below_the_minimum_span_is_all_spt() -> None:
-    accel = _night_and_day(8 * 3600)
+@pytest.mark.parametrize("hours", [8, 9])
+def test_a_recording_of_at_most_the_minimum_span_is_all_spt(hours: int) -> None:
+    accel = _night_and_day(hours * 3600)
     epoch_start_s = accel[0, 0] + 30.0 * np.arange(accel.shape[0] // 30)
 
     result = ggir.evaluate(accel, epoch_start_s, epoch_start_s.size)
