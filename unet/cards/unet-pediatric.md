@@ -15,15 +15,16 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
 - **Wake is harder to detect than sleep.** In the pediatric cross-validation
   it finds 94% of PSG sleep epochs but 80% of wake epochs; the wake it
-  misses is usually quiet wakefulness. Total sleep time comes out about 8
-  minutes short on average.
+  misses is usually quiet wakefulness. Total sleep time is underestimated by
+  about 8 minutes on average.
 - **Stages are harder than sleep/wake.** Light, deep and REM durations carry
   much larger errors than total sleep time; REM is the least reliable.
 - **Adults are outside the intended population.** Wake specificity and κ are
-  lower in both adult cohorts, and adults with sleep apnea get about 27
-  minutes too much sleep. Deep sleep is overestimated: it is about twice the
-  PSG amount in healthy adults and close to four times in adults with sleep
-  apnea, with light sleep underestimated to match. The training data is
+  lower in both adult cohorts, and total sleep time is overestimated by about
+  27 minutes in adults with sleep apnea. Deep sleep is overestimated: it is
+  about twice the PSG amount in healthy adults and close to four times in
+  adults with sleep apnea, and light sleep is underestimated by a similar
+  amount. The training data is
   pediatric, and children spend far more of the night in deep sleep than
   adults do. Validate on your own data before using it with adults.
 - **Device and placement.** It was trained on wrist data from Apple Watch and
@@ -36,9 +37,9 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 nothing:** the output is the model's own scoring. For longer recordings it
 applies the rule in the Quickstart above.
 
-**Why the model's sleep stands inside the sleep period.** This was measured
+**Why the model's scoring is unchanged inside the sleep period.** This was measured
 with [arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric),
-which performs like this model at matched sensitivity (see below), and was not
+which performs comparably to this model at matched sensitivity (see below), and was not
 repeated for UNet. On BiDoze's pediatric cross-validation, also flipping sleep
 to wake inside the sleep period wherever GGIR saw no sustained inactivity
 moved sensitivity from 94% to 88% and specificity from 82% to 88%, and lowered
@@ -54,12 +55,12 @@ against PSG.
 
 [arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric)
 is a convolution-and-transformer model trained on the same pediatric data,
-with the same folds and the same class-balanced training scheme. At their default (argmax)
-settings the two make slightly different trades: UNet finds 94.4% of sleep
+with the same folds and the same class-balanced training scheme. At their
+default (argmax) settings the two differ slightly: UNet finds 94.4% of sleep
 and 79.8% of wake, and BiDoze finds 94.0% of sleep and 82.1% of wake.
 Calibrated to the same 93.3% sleep sensitivity across the five
-cross-validation folds, they perform alike, compared subject by subject
-(202 children):
+cross-validation folds, they perform comparably in a paired, per-subject
+comparison (202 children):
 
 | At 93.3% sleep sensitivity | UNet | BiDoze |
 |:---|---:|---:|
@@ -73,7 +74,8 @@ The specificity and κ differences are under 2 points and not significant
 
 - **Recording length:** UNet scores any recording whole; BiDoze scores up to
   25 hours in one pass and longer recordings in consecutive passes.
-- **Operating point:** UNet's default leans slightly further toward sleep.
+- **Operating point:** UNet's default has slightly higher sleep sensitivity
+  (94.4% vs 94.0%) and slightly lower wake specificity (79.8% vs 82.1%).
 
 ## Training data
 
