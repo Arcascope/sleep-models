@@ -53,7 +53,7 @@ arcasleep unet train | evaluate | publish | predict
 
 ## Models
 
-The current pediatric model variants are trained on the clinical pediatric pool described in[Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/). This set has subjects with no recorded diagnosis (n=), as well as mild (n=), moderate (n=), and severe (n=) obstructive sleep apnea (OSA). We are grateful to Glenn Weaver and his group for sharing their data with us.
+The current pediatric model variants are trained on the clinical pediatric pool described in [Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/). This set has subjects with no recorded diagnosis (n=37), as well as mild (n=94), moderate (n=33), and severe (n=38) obstructive sleep apnea (OSA). We are grateful to Glenn Weaver and his group for sharing their data with us.
 
 ### BiDoze
 
