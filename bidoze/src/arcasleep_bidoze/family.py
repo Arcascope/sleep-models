@@ -28,6 +28,15 @@ class BiDozeFamily(ModelFamily):
 
     def describe_training(self, config) -> str:
         training = config.training
+        if training.recipe == "balanced":
+            return (
+                f"recipe=balanced x_length={training.x_length} y_length={training.y_length} "
+                f"batch_size={training.batch_size} lr={training.lr} "
+                f"balance_beta={training.balance_beta}\n"
+                f"max epochs={training.epochs} lr_drop_patience={training.lr_drop_patience} "
+                f"early_stop_patience={training.early_stop_patience} "
+                f"eval_fraction={training.eval_fraction}"
+            )
         return (
             f"x_length={training.x_length} y_length={training.y_length} "
             f"sliding_copies={training.sliding_copies} "
@@ -40,7 +49,12 @@ class BiDozeFamily(ModelFamily):
         from arcasleep_bidoze.training import train_fold
 
         return train_fold(
-            config, fold=fold, fit_seed=fit_seed, features=features, datasets=datasets
+            config,
+            fold=fold,
+            fit_seed=fit_seed,
+            split_seed=split_seed,
+            features=features,
+            datasets=datasets,
         )
 
     def load_checkpoint(self, path: Path, input_shape: tuple[int, ...] | None = None):

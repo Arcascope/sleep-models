@@ -24,7 +24,7 @@ import json
 import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Sequence
 
 import numpy as np
 from pisces_lite.cv import SubjectRef
@@ -39,7 +39,12 @@ from arcasleep.artifacts.provenance import (
 )
 from arcasleep.data.batching import recording_input
 from arcasleep.evaluation import staging_metrics  # noqa: F401  (registers the metrics)
-from arcasleep.evaluation.staging_metrics import GAP_STAGE_INDEX
+from arcasleep.evaluation.staging_metrics import (
+    GAP_STAGE_INDEX,
+    ThresholdSearch,
+    search_sleep_threshold,
+    threshold_predictions,
+)
 from arcasleep.training.config import RunConfig
 from arcasleep.training.driver import RULE, evaluate_subject
 
@@ -264,31 +269,64 @@ def _hypnogram_renderer(config: RunConfig):
     return render
 
 
-def run_evaluation(
+@dataclass
+class ScoredSubject:
+    """One subject's scored truth and probabilities, ready to record."""
+
+    ref: SubjectRef
+    epochs: int
+    y_true: np.ndarray
+    y_pred_proba: np.ndarray
+
+
+@dataclass
+class ScoredCohort:
+    """Every subject one checkpoint scored, and what scoring them reported."""
+
+    config: RunConfig
+    checkpoint: Path
+    input_shape: tuple[int, ...]
+    subjects: list[ScoredSubject]
+    truncated: list[str]
+    hypnograms: Dict[str, str]
+    ggir_sib_filter: bool
+    sib_demoted: Dict[str, int]
+
+
+def prepare_output(config: RunConfig, output_dir: Path | str, overwrite: bool) -> Path:
+    """Refuse to reuse an existing results CSV unless ``overwrite``.
+
+    The metrics logger skips identity rows it has already written, so a second
+    run into the same file would quietly score nothing rather than duplicate
+    anything. Run before any scoring, so a refusal costs nothing.
+    """
+    csv_path = results_csv_path(output_dir, config)
+    if csv_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"{csv_path} already exists; pass --overwrite to replace it, or "
+            "point --output-dir somewhere else"
+        )
+    return csv_path
+
+
+def score_cohort(
     config: RunConfig,
     *,
     subjects: Mapping[SubjectRef, ModelIOBundle],
     checkpoint: Path | str,
     output_dir: Path | str,
-    identity: RunIdentity,
-    provenance: Mapping[str, object] | None = None,
-    overwrite: bool = False,
     render_hypnograms: bool = False,
     ggir_sib_filter: bool = False,
-) -> Path:
-    """Score every subject and return the directory the results landed in.
+) -> ScoredCohort:
+    """Score every subject with ``checkpoint``, without recording any metric.
 
-    Refuses to reuse an existing results CSV unless ``overwrite``: the metrics
-    logger skips identity rows it has already written, so a second run into the
-    same file would quietly score nothing rather than duplicate anything.
-
-    ``render_hypnograms`` additionally draws one per-subject PNG into
-    ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were scored, using
-    :mod:`arcasleep.reporting.hypnogram`.
+    ``render_hypnograms`` draws one per-subject PNG into
+    ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were
+    scored, using :mod:`arcasleep.reporting.hypnogram`.
 
     ``ggir_sib_filter`` demotes predicted sleep outside the main sleep window
     that is not a sustained inactivity bout to wake (:func:`apply_sib_filter`)
-    before anything is scored or drawn, using the ``anglez_5s`` each cached
+    before anything is drawn or recorded, using the ``anglez_5s`` each cached
     bundle carries. Inside the window sleep is left alone, and a <= 9 h
     recording is all one main sleep window, so nothing in it is demoted. A
     subject whose cache lacks ``anglez_5s`` is an error, raised before any
@@ -308,19 +346,7 @@ def run_evaluation(
                 f"{len(missing)} subject(s) lack (e.g. {missing[0]}); add it with "
                 "`arcasleep process --sib-only`"
             )
-    # Resolve the renderer before touching the CSV: a missing matplotlib must
-    # fail before an existing results file is deleted.
     renderer = _hypnogram_renderer(config) if render_hypnograms else None
-    csv_path = results_csv_path(output_dir, config)
-    if csv_path.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"{csv_path} already exists; pass --overwrite to replace it, or "
-                "point --output-dir somewhere else"
-            )
-        csv_path.unlink()
-
-    output_dir.mkdir(parents=True, exist_ok=True)
     input_shape = cohort_input_shape(config, subjects)
     x_length, y_length = config.family.scoring_lengths(
         config, [int(bundle.y.shape[1]) for bundle in subjects.values()]
@@ -330,31 +356,26 @@ def run_evaluation(
     hypnogram_dir = output_dir / HYPNOGRAM_DIRNAME
 
     _banner(
-        f"EVALUATE: {identity.run_id}\n"
-        f"checkpoint: {checkpoint}\n"
+        f"EVALUATE: {checkpoint}\n"
         f"subjects: {len(subjects)} from {datasets}\n"
         f"input_shape: {input_shape}\n"
-        f"identity: fold={identity.fold} epoch={identity.epoch}\n"
-        f"          training_dataset={identity.training_dataset}\n"
         f"hypnograms: {'yes -> ' + str(hypnogram_dir) if renderer else 'no'}\n"
         f"ggir sib filter: {'yes' if ggir_sib_filter else 'no'}"
     )
 
     model = config.family.load_checkpoint(checkpoint, input_shape=input_shape)
-    logger = MetricsLogger(config.metrics)
-
-    truncated: list[SubjectRef] = []
+    scored_subjects: list[ScoredSubject] = []
+    truncated: list[str] = []
     hypnograms: Dict[str, str] = {}
     sib_demoted: Dict[str, int] = {}
-    for ref in subjects:
-        bundle = subjects[ref]
+    for ref, bundle in subjects.items():
+        name = f"{ref.dataset_name}/{ref.subject_id}"
         epochs = int(bundle.y.shape[1])
         if epochs > x_length:
-            truncated.append(ref)
+            truncated.append(name)
             warnings.warn(
-                f"{ref.dataset_name}/{ref.subject_id}: {epochs} epochs exceeds the "
-                f"model's {x_length}-epoch context; scoring the first "
-                f"{x_length} and dropping {epochs - x_length}",
+                f"{name}: {epochs} epochs exceeds the model's {x_length}-epoch "
+                f"context; scoring the first {x_length} and dropping {epochs - x_length}",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -371,64 +392,178 @@ def run_evaluation(
         else:
             y_true, y_pred_proba = scored
         if ggir_sib_filter:
-            name = f"{ref.dataset_name}/{ref.subject_id}"
             try:
                 y_pred_proba, sib_demoted[name] = apply_sib_filter(
                     y_pred_proba, bundle.anglez_5s[0], min(epochs, x_length)
                 )
             except Exception as exc:
-                raise ValueError(f"{name}: GGIR SIB filter failed: {type(exc).__name__}: {exc}") from exc
+                raise ValueError(
+                    f"{name}: GGIR SIB filter failed: {type(exc).__name__}: {exc}"
+                ) from exc
         if renderer is not None:
             output_path = hypnogram_dir / f"{ref.dataset_name}_{ref.subject_id}.png"
-            renderer(
-                output_path,
-                inputs,
-                y_pred_proba,
-                labels,
-                f"{ref.dataset_name}/{ref.subject_id}",
+            renderer(output_path, inputs, y_pred_proba, labels, name)
+            hypnograms[name] = str(output_path)
+        scored_subjects.append(ScoredSubject(ref, epochs, y_true, y_pred_proba))
+        print(f"  scored {name} ({epochs} epochs)")
+
+    return ScoredCohort(
+        config=config,
+        checkpoint=checkpoint,
+        input_shape=input_shape,
+        subjects=scored_subjects,
+        truncated=truncated,
+        hypnograms=hypnograms,
+        ggir_sib_filter=ggir_sib_filter,
+        sib_demoted=sib_demoted,
+    )
+
+
+def operating_point(cohorts: Sequence[ScoredCohort], target_sensitivity: float) -> ThresholdSearch:
+    """The sleep threshold meeting ``target_sensitivity`` over every subject of ``cohorts``.
+
+    Sensitivity is averaged over subjects, as ``sleep_sensitivity`` is; pooling
+    several cohorts -- the folds of a cross-validation -- gives them one
+    operating point.
+    """
+    recordings = [
+        (subject.y_true, subject.y_pred_proba)
+        for cohort in cohorts
+        for subject in cohort.subjects
+    ]
+    return search_sleep_threshold(recordings, target_sensitivity=target_sensitivity)
+
+
+def write_cohort(
+    cohort: ScoredCohort,
+    *,
+    output_dir: Path | str,
+    identity: RunIdentity,
+    provenance: Mapping[str, object] | None = None,
+    threshold: ThresholdSearch | None = None,
+    target_sensitivity: float | None = None,
+) -> Path:
+    """Record a scored cohort's metrics and ``evaluation.json``.
+
+    With ``threshold`` every hard-prediction metric scores the calls at that
+    sleep threshold rather than the argmax.
+    """
+    output_dir = Path(output_dir)
+    config = cohort.config
+    csv_path = results_csv_path(output_dir, config)
+    csv_path.unlink(missing_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger = MetricsLogger(config.metrics)
+    gap_classes = (GAP_STAGE_INDEX,) if config.model.output_classes > config.model.num_classes else ()
+
+    for subject in cohort.subjects:
+        y_pred = None
+        extra = None
+        if threshold is not None:
+            y_pred = threshold_predictions(
+                subject.y_pred_proba, threshold.threshold, WAKE_STAGE_INDEX, gap_classes
             )
-            hypnograms[f"{ref.dataset_name}/{ref.subject_id}"] = str(output_path)
+            extra = {"sleep_threshold": threshold.threshold}
         logger.record(
             csv_path=csv_path,
-            y_true=y_true,
-            y_pred_proba=y_pred_proba,
+            y_true=subject.y_true,
+            y_pred_proba=subject.y_pred_proba,
+            y_pred=y_pred,
             run_id=identity.run_id,
             fold=identity.fold,
             epoch=identity.epoch,
-            subject_id=ref.subject_id,
-            dataset=ref.dataset_name,
+            subject_id=subject.ref.subject_id,
+            dataset=subject.ref.dataset_name,
             training_dataset=identity.training_dataset,
+            extra=extra,
         )
-        print(f"  scored {ref.dataset_name}/{ref.subject_id} ({epochs} epochs)")
 
     by_dataset: Dict[str, list[str]] = {}
-    for ref in subjects:
-        by_dataset.setdefault(ref.dataset_name, []).append(ref.subject_id)
+    for subject in cohort.subjects:
+        by_dataset.setdefault(subject.ref.dataset_name, []).append(subject.ref.subject_id)
+    operating = None
+    if threshold is not None:
+        operating = {
+            "target_sensitivity": target_sensitivity,
+            "sleep_threshold": threshold.threshold,
+            "mean_sensitivity": threshold.sensitivity,
+            "attained": threshold.attained,
+        }
     _write_json(
         output_dir / "evaluation.json",
         {
             "identity": asdict(identity),
-            "input_shape": list(input_shape),
+            "input_shape": list(cohort.input_shape),
             "checkpoint": {
-                "path": str(checkpoint),
-                "sha256": sha256_file(checkpoint),
+                "path": str(cohort.checkpoint),
+                "sha256": sha256_file(cohort.checkpoint),
             },
-            "subject_count": len(subjects),
+            "subject_count": len(cohort.subjects),
             "subjects": by_dataset,
-            "truncated": [f"{ref.dataset_name}/{ref.subject_id}" for ref in truncated],
-            "hypnograms": hypnograms,
-            "ggir_sib_filter": ggir_sib_filter,
-            "sib_demoted_epochs": sib_demoted,
+            "truncated": cohort.truncated,
+            "hypnograms": cohort.hypnograms,
+            "ggir_sib_filter": cohort.ggir_sib_filter,
+            "sib_demoted_epochs": cohort.sib_demoted,
+            "operating_point": operating,
             **dict(provenance or {}),
         },
     )
 
-    _summarise(csv_path, subjects)
+    _summarise(csv_path, len(cohort.subjects))
     print(f"\nResults: {output_dir}")
     return output_dir
 
 
-def _summarise(csv_path: Path, subjects: Mapping[SubjectRef, ModelIOBundle]) -> None:
+def run_evaluation(
+    config: RunConfig,
+    *,
+    subjects: Mapping[SubjectRef, ModelIOBundle],
+    checkpoint: Path | str,
+    output_dir: Path | str,
+    identity: RunIdentity,
+    provenance: Mapping[str, object] | None = None,
+    overwrite: bool = False,
+    render_hypnograms: bool = False,
+    ggir_sib_filter: bool = False,
+    target_sensitivity: float | None = None,
+) -> Path:
+    """Score every subject and return the directory the results landed in.
+
+    See :func:`score_cohort` for hypnograms and the SIB filter. With
+    ``target_sensitivity`` the metrics are scored at the sleep threshold that
+    meets it over these subjects (:func:`operating_point`); the filter, which
+    demotes argmax sleep, cannot be combined with it.
+    """
+    if target_sensitivity is not None and ggir_sib_filter:
+        raise ValueError("--target-sensitivity cannot be combined with --ggir-sib-filter")
+    prepare_output(config, output_dir, overwrite)
+    # Resolve the renderer before scoring: a missing matplotlib must fail
+    # before any work is done.
+    if render_hypnograms:
+        _hypnogram_renderer(config)
+    cohort = score_cohort(
+        config,
+        subjects=subjects,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
+        render_hypnograms=render_hypnograms,
+        ggir_sib_filter=ggir_sib_filter,
+    )
+    threshold = None
+    if target_sensitivity is not None:
+        threshold = operating_point([cohort], target_sensitivity)
+        print(f"  operating point: {threshold}")
+    return write_cohort(
+        cohort,
+        output_dir=output_dir,
+        identity=identity,
+        provenance=provenance,
+        threshold=threshold,
+        target_sensitivity=target_sensitivity,
+    )
+
+
+def _summarise(csv_path: Path, subject_count: int) -> None:
     """Print the cohort's macro means -- the mean over subjects, as the report reads it.
 
     Read with the stdlib rather than pandas: this is the package's own summary,
@@ -446,7 +581,7 @@ def _summarise(csv_path: Path, subjects: Mapping[SubjectRef, ModelIOBundle]) -> 
             continue
         by_metric.setdefault(row["metric"], []).append(value)
 
-    print(f"\n{len(rows)} rows, {len(subjects)} subjects -> {csv_path}")
+    print(f"\n{len(rows)} rows, {subject_count} subjects -> {csv_path}")
     for metric in sorted(by_metric):
         values = np.asarray(by_metric[metric])
         print(f"  {metric:<20} {values.mean():>10.4f}  (n={values.size})")

@@ -241,8 +241,10 @@ def cv_configs_for_plan(
     Per fold: train on the other folds, test on the held-out one. The final
     model trains on every fold and is scored only on the external sets -- it
     has no held-out cohort subjects by construction, so scoring it on them
-    would report training performance.
+    would report training performance. ``deblip_sets`` are written only when
+    the template has them.
     """
+    deblips = "deblip_sets" in template
     names = plan.fold_names
     extra_deblip = extra_deblip_sets(template, plan.cohort)
     configs: Dict[str, dict] = {}
@@ -256,7 +258,8 @@ def cv_configs_for_plan(
         # then scoring them is still exposure; restricting it to the training
         # folds keeps that impossible rather than merely filtered. Deblip-only
         # datasets outside the cohort hold no scored subjects and ride along.
-        config["deblip_sets"] = train + extra_deblip
+        if deblips:
+            config["deblip_sets"] = train + extra_deblip
         config["fold_label"] = f"fold{index}"
         configs[f"fold{index}"] = config
 
@@ -264,7 +267,8 @@ def cv_configs_for_plan(
     final.pop("n_splits", None)
     final["train_sets"] = list(names)
     final["test_sets"] = list(external_test_sets)
-    final["deblip_sets"] = list(names) + extra_deblip
+    if deblips:
+        final["deblip_sets"] = list(names) + extra_deblip
     final["fold_label"] = FINAL_FOLD_NAME
     configs[FINAL_FOLD_NAME] = final
     return configs

@@ -656,3 +656,44 @@ def test_sib_filter_without_anglez_in_the_cache_is_refused_before_scoring(tmp_pa
             config, subjects={SubjectRef("d", "s"): bundle}, checkpoint=tmp_path / "x.pisces",
             output_dir=tmp_path / "out", identity=identity, ggir_sib_filter=True,
         )
+
+
+def _fake_graded_subject(
+    model, bundle, *, target_x_length, target_y_length, num_classes, return_context=False
+):
+    """Half wake, half light; the sleep probability climbs across the night."""
+    y_true = np.array([0, 1] * (target_y_length // 2), dtype=np.int64)
+    sleep = np.linspace(0.05, 0.95, target_x_length)
+    probs = np.zeros((target_x_length, 5), dtype=np.float32)
+    probs[:, 0], probs[:, 1] = 1.0 - sleep, sleep
+    if return_context:
+        inputs = np.zeros((target_x_length, 4, 2), dtype=np.float64)
+        return y_true, probs, inputs, y_true
+    return y_true, probs
+
+
+def test_a_target_sensitivity_scores_at_the_threshold_that_meets_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _configs(tmp_path / "cfg", x_length=8)
+    checkpoint = tmp_path / "model_final_seed_0.pisces"
+    checkpoint.write_bytes(b"not really a zip")
+    subjects = load_bundles([_save(tmp_path / "a_features.npz", _bundle("CohortB", "s", 8))])
+    monkeypatch.setattr(BIDOZE, "load_checkpoint", _fake_load_checkpoint)
+    monkeypatch.setattr(run_module, "evaluate_subject", _fake_graded_subject)
+    output_dir = tmp_path / "validation"
+
+    run_evaluation(
+        config,
+        subjects=subjects,
+        checkpoint=checkpoint,
+        output_dir=output_dir,
+        identity=RunIdentity("id", "final_seed_0", 200, "CohortA"),
+        target_sensitivity=0.5,
+    )
+
+    operating = json.loads((output_dir / "evaluation.json").read_text())["operating_point"]
+    assert operating["attained"] and operating["mean_sensitivity"] >= 0.5
+    with (output_dir / "cv_results_4_stages.csv").open(newline="") as handle:
+        values = {row["metric"]: float(row["value"]) for row in csv.DictReader(handle)}
+    assert values["sleep_sensitivity"] == pytest.approx(operating["mean_sensitivity"])

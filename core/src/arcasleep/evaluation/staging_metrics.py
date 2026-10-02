@@ -12,8 +12,8 @@ name them alongside the built-ins (``auroc``, ``tst_mape``, ``waso_mape``):
     kappa_sleep_wake       Cohen's kappa over binarized wake/sleep
 
 Every metric here scores the same hard predictions, produced by
-:func:`staged_preds` and governed by one knob, ``sleep_threshold``
-(``ctx.extra``, so ``metrics.json`` sets it once for the whole protocol):
+:func:`staged_preds` and governed by one knob, ``sleep_threshold`` in
+``ctx.extra``, which ``evaluate --target-sensitivity`` sets for every subject:
 
 * ``None`` — plain argmax over all classes.
 * a float — sleep is called when the *summed* sleep-class probability reaches

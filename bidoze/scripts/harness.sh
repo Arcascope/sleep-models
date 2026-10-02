@@ -23,6 +23,9 @@ WORK_DIR="${BIDOZE_WORK_DIR:-${TMPDIR:-/tmp}/bidoze-folds}"
 # release model, and the same wiring at any epoch count. For a quick wiring
 # check, override BIDOZE_TRAINING_CONFIG with a smaller custom config.
 TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training.json}"
+# The balanced recipe has no deblip phase, so it pairs with
+# config/cv-balanced.json, which lists no deblip sets.
+CV_CONFIG="${BIDOZE_CV_CONFIG:-config/cv.json}"
 # Where a finished run is shipped. Empty disables the upload, which is the
 # default on a workstation; ECS sets it.
 RESULTS_S3_PREFIX="${BIDOZE_RESULTS_S3_PREFIX:-}"
@@ -54,13 +57,14 @@ BASE_ARGS=(
 
 # One model per generated config: fold0..fold{k-1}, then final.
 PHASES=()
-N_SPLITS=$(python -c "import json;print(json.load(open('config/cv.json'))['n_splits'])")
+N_SPLITS=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
 for ((i = 0; i < N_SPLITS; i++)); do PHASES+=("fold$i"); done
 PHASES+=("final")
 
 if [[ $DRY_RUN -eq 1 ]]; then
     printf 'Run directory: %s\n' "$RESULTS_ROOT/$RUN_ID"
     printf 'Training cfg:  %s\n' "$TRAINING_CONFIG"
+    printf 'CV cfg:        %s\n' "$CV_CONFIG"
     printf 'Split plan:    %s\n' "$SPLIT_PLAN"
     printf 'Upload to:     %s\n' "${RESULTS_S3_PREFIX:-<disabled>}"
     printf 'Linked cache:  %s\n' "$LINK_ROOT"
@@ -74,7 +78,7 @@ fi
 echo "==> materialising $SPLIT_PLAN"
 arcasleep splits-apply \
     -pc config/inputs.json \
-    -cvc config/cv.json \
+    -cvc "$CV_CONFIG" \
     --plan "$SPLIT_PLAN" \
     --link-dir "$LINK_ROOT/$(python -c "import json;print(json.load(open('config/inputs.json'))['cache_prefix'])")" \
     --cv-out "$CV_DIR"
