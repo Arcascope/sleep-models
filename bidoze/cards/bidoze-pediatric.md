@@ -13,23 +13,73 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
 ## Limitations
 
-- **It tends to overestimate sleep.** Like other actigraphy methods, it
-  identifies sleep more reliably than wake: still, quiet wakefulness is often
-  scored as sleep.
+- **Wake is harder to detect than sleep.** In the pediatric cross-validation
+  it finds 94% of PSG sleep epochs but 82% of wake epochs; the wake it
+  misses is usually quiet wakefulness. Total sleep time comes out about 11
+  minutes short on average.
 - **Stages are harder than sleep/wake.** Light, deep and REM durations carry
   much larger errors than total sleep time; REM is the least reliable.
 - **Adults are outside the intended population.** Wake specificity and κ are
-  lower in the adult cohorts, and deep sleep is overestimated in healthy
-  adults. Validate on your own data before using it with adults.
+  lower in both adult cohorts, and adults with sleep apnea get about 27
+  minutes too much sleep. Deep sleep is overestimated: it is about twice the
+  PSG amount in healthy adults and close to four times in adults with sleep
+  apnea, with light sleep underestimated to match. The training data is
+  pediatric, and children spend far more of the night in deep sleep than
+  adults do. Validate on your own data before using it with adults.
 - **Device and placement.** It was trained on wrist data from Apple Watch and
   Fitbit devices, sampled at 12 Hz or faster. Hip, ankle and upper-arm
   placements have not been evaluated.
+
+## GGIR sleep filter
+
+`arcasleep bidoze predict` applies a GGIR-style filter by default (turn it off
+with `--no-ggir-sleep-filter`). GGIR's sleep period time (SPT) detection finds
+the main sleep window. Outside that window, predicted sleep that vanHees2015
+does not call sustained inactivity becomes wake, and remaining sleep is
+flagged as a nap. Inside the window the model's sleep is never flipped to
+wake. A recording, or a section between data gaps, of 9 hours or less is
+treated as one main sleep window, so for a single night the filter changes
+nothing.
+
+We checked the inside-the-window rule against PSG. Flipping non-SIB sleep to
+wake inside the window as well moves the pediatric cross-validation to 88%
+sleep sensitivity and 88% wake specificity, and lowers sleep/wake κ from
+0.65 to 0.56. Setting this model's own sleep threshold to the same 88%
+sensitivity gives 91% specificity instead, with κ no lower. So inside the
+sleep period, the model is the better wake detector, and its sleep is
+trusted there. Every PSG recording available to us is 9 hours or shorter,
+so the outside-the-window step has not been validated against PSG. It
+follows GGIR practice for multi-day, free-living recordings.
+
+## BiDoze or UNet
+
+[arcasleep-unet-pediatric](https://huggingface.co/arcascope/arcasleep-unet-pediatric)
+is a temporal U-Net trained on the same pediatric data, with the same folds
+and the same class-balanced training scheme. At their default (argmax) settings the two make
+slightly different trades: BiDoze finds 94.0% of sleep and 82.1% of wake,
+and UNet finds 94.4% of sleep and 79.8% of wake. Calibrated to the same 93.3%
+sleep sensitivity across the five cross-validation folds, they perform
+alike, compared subject by subject (202 children):
+
+| At 93.3% sleep sensitivity | BiDoze | UNet |
+|:---|---:|---:|
+| Wake specificity (%) | 83.9 | 82.2 |
+| Cohen's κ, sleep/wake | 0.64 | 0.65 |
+| Cohen's κ, 4 stages | 0.55 | 0.56 |
+| TST error (min) | −14.0 | −12.3 |
+
+The specificity and κ differences are under 2 points and not significant
+(Wilcoxon signed-rank, p > 0.05). Choose on practical grounds:
+
+- **Recording length:** BiDoze scores up to 25 hours in one pass and longer
+  recordings in consecutive passes; UNet scores any recording whole.
+- **Operating point:** BiDoze's default leans slightly further toward wake.
 
 ## Training data
 
 Trained on the pediatric cohort of Weaver _et al_
 ([PubMed 40676371](https://pubmed.ncbi.nlm.nih.gov/40676371/)), a clinical sample spanning
-no, mild, moderate and severe obstructive sleep apnea (OSA). 
+no, mild, moderate and severe obstructive sleep apnea (OSA).
 
 Two adult cohorts were additionally used for evaluating the trained model:
 1. [SleepAccel](https://pubmed.ncbi.nlm.nih.gov/31579900/): healthy adults
