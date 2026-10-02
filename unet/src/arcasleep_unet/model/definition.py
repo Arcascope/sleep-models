@@ -46,12 +46,13 @@ from flax import traverse_util
 from flax.core import unfreeze
 
 from arcasleep.data.constants import GAP_LABEL, SPECTROGRAM_PADDING_VALUE
-from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion, pooled_confusion
+from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
     balanced_cross_entropy,
     sample_balanced_segments,
+    selection_confusion,
 )
 
 #: Recordings per forward pass when scoring.
@@ -458,11 +459,11 @@ class UNetModel:
 
         def eval_kappa(params, batch_stats) -> float:
             variables = {"params": params, "batch_stats": batch_stats}
-            cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+            cm = np.zeros((num_classes, num_classes + 1), dtype=np.int64)
             for i in range(0, eval_x.shape[0], eval_batch_size):
                 logits = self._apply(variables, jnp.asarray(eval_x[i : i + eval_batch_size]))
                 pred = np.argmax(np.asarray(logits), axis=-1)
-                cm += pooled_confusion(eval_y[i : i + eval_batch_size], pred, num_classes)
+                cm += selection_confusion(eval_y[i : i + eval_batch_size], pred, num_classes)
             return cohen_kappa_from_confusion(cm)
 
         steps_per_epoch = max(1, -(-len(train_nights) // batch_size))
@@ -527,7 +528,7 @@ class UNetModel:
                 print(f"    lr -> {lr:.2e}")
 
         if best_variables is None:
-            best_variables = jax.device_get({"params": params, "batch_stats": batch_stats})
+            raise ValueError("no epoch reached a finite eval kappa; nothing to select")
         self.variables = unfreeze(best_variables)
         history["best_eval_kappa"] = float(best_kappa)
         history["best_epoch"] = int(best_epoch)

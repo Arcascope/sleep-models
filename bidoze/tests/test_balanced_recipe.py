@@ -44,7 +44,9 @@ def _write_cache(cache_dir: Path, dataset: str, subjects: list[str], epochs: int
         ).save_npz(cache_dir / f"{dataset}{SUBJECT_SEPARATOR}{subject}{CACHE_SUFFIX}")
 
 
-def _configs(directory: Path, model_overrides: dict | None = None) -> RunConfig:
+def _configs(
+    directory: Path, model_overrides: dict | None = None, cv_overrides: dict | None = None
+) -> RunConfig:
     directory.mkdir(parents=True, exist_ok=True)
     files = {
         "inputs.json": {
@@ -68,7 +70,7 @@ def _configs(directory: Path, model_overrides: dict | None = None) -> RunConfig:
             "mode": "transfer",
             "train_sets": ["CohortA"],
             "test_sets": ["CohortB"],
-            "deblip_sets": ["CohortA"],
+            **(cv_overrides or {}),
         },
         "training.json": BALANCED_TRAINING,
         "metrics.json": {
@@ -121,3 +123,46 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
 def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> None:
     with pytest.raises(ValueError):
         TrainingConfig.from_dict({**BALANCED_TRAINING, **overrides})
+
+
+@pytest.mark.parametrize(
+    "cv_overrides",
+    [{"deblip_sets": ["CohortA"]}, {"validation_sets": ["CohortC"]}],
+)
+def test_cv_options_the_balanced_recipe_does_not_use_are_refused(
+    tmp_path: Path, cv_overrides: dict
+) -> None:
+    from pisces_lite.cv import Fold, SubjectRef
+
+    config = _configs(tmp_path / "config", cv_overrides=cv_overrides)
+    fold = Fold(
+        fold_id=0,
+        total_folds=1,
+        mode="transfer",
+        train_subjects=[SubjectRef("CohortA", f"a{i}") for i in range(4)],
+        test_subjects=[],
+        val_subjects=[],
+        description="",
+    )
+
+    with pytest.raises(ValueError):
+        BIDOZE.train_fold(config, fold=fold, fit_seed=0, split_seed=0, features={}, datasets={})
+
+
+def test_a_fit_with_no_finite_eval_kappa_refuses_to_pick_an_epoch(tmp_path: Path) -> None:
+    from arcasleep.data.constants import GAP_LABEL
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    model = BiDozeNetModel(_configs(tmp_path / "config").model)
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(4, 16, 6, 2)).astype(np.float32)
+    y = rng.integers(0, 4, size=(4, 16)).astype(np.int32)
+    no_scored_epochs = np.full((2, 16), GAP_LABEL, dtype=np.int32)
+
+    with pytest.raises(ValueError):
+        model.fit_balanced(
+            x, y, x[:2], no_scored_epochs,
+            batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
+            lr_drop_patience=1, early_stop_patience=2, max_epochs=3, fit_seed=0,
+        )

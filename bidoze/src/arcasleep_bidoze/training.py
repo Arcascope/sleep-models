@@ -57,13 +57,13 @@ class TrainingConfig:
 
     run_seed: int
     seed_count: int
+    # Under "balanced", the most the fit may run before it early-stops.
     epochs: int
     batch_size: int
     lr: float
     weight_decay: float
     x_length: int
     y_length: int
-    # Under "balanced", ``epochs`` is the most the fit may run before early stopping.
     recipe: str = "curriculum"
     sliding_copies: int = 1
     curriculum_loss_mode: str = "staged"
@@ -280,6 +280,7 @@ def _check_balanced_cv(config: RunConfig) -> None:
     """Refuse ``cv.json`` options that only the curriculum recipe acts on."""
     cv = config.cv
     unused = {
+        "deblip_sets": bool(cv.deblip_sets),
         "validation_sets": bool(cv.validation_sets),
         "train_batch_sampling": cv.train_batch_sampling.mode != "disabled",
         "subsample_to_smallest": cv.subsample_to_smallest,

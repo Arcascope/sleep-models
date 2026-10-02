@@ -29,12 +29,13 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion, pooled_confusion
+from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
     balanced_cross_entropy,
     sample_balanced_segments,
+    selection_confusion,
 )
 
 
@@ -3182,12 +3183,15 @@ class BiDozeNetModel(CVModel):
 
         Rows are padded recordings ``(B, T, ...)`` with labels ``(B, T)`` in
         ``0..num_classes-1`` plus the gap label and ``-1`` for unscored. Each
-        epoch draws one batch of pseudo-class-balanced rows per ``batch_size``
-        training rows, scored by the effective-number class-balanced
-        cross-entropy. AdamW starts at ``initial_lr``; the rate is divided by
-        ``lr_drop_factor`` after ``lr_drop_patience`` epochs without an eval
-        improvement, training stops after ``early_stop_patience``, and the
-        best epoch's parameters are kept.
+        epoch draws as many rows as there are training rows through the
+        pseudo-class-balanced sampler. A row padded to the fit length is a
+        whole recording that nearly always holds every stage, so the draws are
+        close to uniform and the class balance comes from the effective-number
+        class-balanced cross-entropy. AdamW starts at ``initial_lr``; the rate
+        is divided by ``lr_drop_factor`` after ``lr_drop_patience`` epochs
+        without an eval improvement, training stops after
+        ``early_stop_patience``, and the best epoch's parameters are kept. The
+        eval kappa counts a scored epoch predicted as gap as a miss.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3240,12 +3244,12 @@ class BiDozeNetModel(CVModel):
         )
 
         def eval_kappa(params) -> float:
-            cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+            cm = np.zeros((num_classes, num_classes + 1), dtype=np.int64)
             for i in range(0, eval_x.shape[0], eval_batch_size):
                 batch = slice(i, i + eval_batch_size)
                 logits = eval_logits(params, jnp.asarray(eval_x[batch]), jnp.asarray(eval_mask[batch]))
                 pred = np.argmax(np.asarray(logits), axis=-1)
-                cm += pooled_confusion(eval_y[batch], pred, num_classes)
+                cm += selection_confusion(eval_y[batch], pred, num_classes)
             return cohen_kappa_from_confusion(cm)
 
         fpe = cfg.frames_per_epoch
@@ -3320,7 +3324,9 @@ class BiDozeNetModel(CVModel):
                 epochs_since_lr_drop = 0
                 print(f"    lr -> {lr:.2e}")
 
-        self.params = params if best_params is None else best_params
+        if best_params is None:
+            raise ValueError("no epoch reached a finite eval kappa; nothing to select")
+        self.params = best_params
         self.model = {"params": self.params}
         history["best_eval_kappa"] = float(best_kappa)
         history["best_epoch"] = int(best_epoch)

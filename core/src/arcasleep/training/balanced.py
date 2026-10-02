@@ -2,8 +2,8 @@
 
 Shared by every recipe that trains this way: the effective-number
 class-balanced cross-entropy of its eq. 1, pseudo-class-balanced online
-segment sampling, and the held-out share of the training subjects that the
-fit early-stops on.
+segment sampling, the held-out share of the training subjects that the fit
+early-stops on, and the confusion its early-stopping kappa is read from.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import numpy as np
 from pisces_lite.cv import SubjectRef
 
 from arcasleep.data.constants import GAP_LABEL, SPECTROGRAM_PADDING_VALUE
+from arcasleep.evaluation.staging_metrics import scored_epoch_mask
 
 #: The learning rate is divided by this after ``lr_drop_patience`` epochs
 #: without an improvement in eval kappa.
@@ -106,3 +107,20 @@ def sample_balanced_segments(
         xs[i, : seg_x.shape[0]] = seg_x
         ys[i, : seg_y.shape[0]] = seg_y
     return xs, ys
+
+
+def selection_confusion(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> np.ndarray:
+    """``(num_classes, num_classes + 1)`` confusion over scored epochs for model selection.
+
+    Rows are the true stage; the extra column holds scored epochs the model
+    called gap (any prediction outside ``0..num_classes-1``), so
+    :func:`~arcasleep.evaluation.staging_metrics.cohen_kappa_from_confusion`
+    counts each of them as a miss.
+    """
+    y_true = np.asarray(y_true).reshape(-1)
+    y_pred = np.asarray(y_pred).reshape(-1)
+    scored = scored_epoch_mask(y_true) & (y_true < num_classes)
+    pred = np.where((y_pred >= 0) & (y_pred < num_classes), y_pred, num_classes)
+    cm = np.zeros((num_classes, num_classes + 1), dtype=np.int64)
+    np.add.at(cm, (y_true[scored], pred[scored]), 1)
+    return cm
