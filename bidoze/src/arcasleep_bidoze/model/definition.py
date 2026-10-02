@@ -2758,7 +2758,7 @@ class BiDozeNetModel(CVModel):
                         batch_size,
                         preview_rng,
                     )
-            train_examples_per_epoch = sliding_copies
+            train_examples_per_epoch = int(train_x.shape[0]) * sliding_copies
             optimizer_examples_per_epoch = (
                 int(balanced_batches.size)
                 if balanced_batches is not None
