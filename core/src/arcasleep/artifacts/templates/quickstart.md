@@ -31,15 +31,15 @@ result.to_csv("night_stages.csv")
 result.plot("night_stages.png")     # hypnogram; needs the [report] extra
 ```
 
-By default the corrected `stage` applies a GGIR-style sleep filter, and what
-it does depends on recording length:
+By default the corrected `stage` applies a GGIR-style sleep filter; the
+definition depends on recording length:
 
 - **≤ 9 hours, such as a single night:** nothing; `stage` is the model's own
   scoring, `stage_raw`.
 - **Longer, such as multi-day wear:** GGIR estimates the main sleep period
-  (`is_spt`). Inside it the model's scoring stands. Outside it, sleep becomes
+  (`is_spt`). Inside this the model's scoring is unchanged. Outside it, sleep becomes
   `wake` unless the wrist was still for at least 5 minutes (`is_sib`), and the
-  sleep that remains is flagged in `is_nap`.
+  sleep that remains is flagged by `is_nap == 1`.
 
 A gap of 60 minutes or more without data splits a recording, and each part is
 judged on its own length. Pass `ggir_sleep_filter=False` (or
