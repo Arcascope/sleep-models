@@ -4,7 +4,7 @@ Arcascope's open source, open weights sleep models.
 
 ---
 
-One Python distribution, `arcasleep`, carries the shared data, training,
+One Python distribution, `arcasleep`, carries the shared data handling, training,
 evaluation and release tooling (`core/`, the `arcasleep` import package) and
 every model family (`bidoze/` and `unet/`, the `arcasleep_bidoze` and
 `arcasleep_unet` import packages). Model
@@ -22,6 +22,7 @@ pip install "arcasleep[unet,train]"             # training stack (adds optax, ma
 pip install "arcasleep[prep]"                   # build the feature cache
 pip install "arcasleep[aws]"                    # S3 manifests and result upload
 pip install "arcasleep[publish]"                # build a release bundle
+pip install "arcasleep[all]"                    # installs all extras
 ```
 
 `pisces-lite` and `arcascope-senpy` are public on PyPI; pisces-lite supplies
@@ -50,7 +51,11 @@ arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
 arcasleep unet train | evaluate | publish | predict
 ```
 
-## BiDoze
+## Models
+
+The current pediatric model variants are trained on the clinical pediatric pool described in[Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/). This set has subjects with no recorded diagnosis (n=), as well as mild (n=), moderate (n=), and severe (n=) obstructive sleep apnea (OSA). We are grateful to Glenn Weaver and his group for sharing their data with us.
+
+### BiDoze
 
 Published on Hugging Face as [`arcascope/arcasleep-bidoze-pediatric`](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric); the model lives in [`bidoze/`](bidoze/).
 
@@ -60,13 +65,10 @@ Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in acceler
 2. Developed via a semi-autonomous research loop using LLMs.
     1. Agents were given the goal to optimize model architecture and training regime with fixed train/test splits. 
     2. "Best" as measured by the geometric mean of TST and WASO MAPE. 
-3. The current production training is based on a clinical pediatric pool with varying levels of sleep apnea.
-    1. We are grateful to Glenn Weaver and his group for sharing their data with us.  
-        These data is described in [Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/).
 
 ## UNet
 
-The model lives in [`unet/`](unet/).
+Published on Hugging Face as [`arcascope/arcasleep-unet-pediatric`](https://huggingface.co/arcascope/arcasleep-unet-pediatric); the model lives in [`unet/`](unet/).
 
 Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in accelerometer.
 
