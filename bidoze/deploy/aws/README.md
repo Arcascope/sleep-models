@@ -55,7 +55,7 @@ exact image bytes.
 
 Overrides, all optional:
 
-    BIDOZE_TRAINING_CONFIG=/path/to/training.json      # default: config/training.json, 30 epochs
+    BIDOZE_TRAINING_CONFIG=/path/to/training.json      # default: config/training-balanced.json
     BIDOZE_RUN_ID=my-run-name                          # default: <image tag>/<UTC launch time>
     BIDOZE_STACK=bidoze-train
     AWS_REGION=us-east-1
