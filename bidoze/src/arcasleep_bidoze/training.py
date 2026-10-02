@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +10,7 @@ from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.batching import assemble_batch
+from arcasleep.training.balanced import split_train_eval
 from arcasleep.training.config import RunConfig, read_json, reject_unknown, require_one_of
 from arcasleep.training.folds import DatasetIndex, deblip_subjects_for_fold
 
@@ -17,6 +18,31 @@ DEBLIP_SCHEDULES = frozenset({"interleaved", "final"})
 CURRICULUM_LOSS_MODES = frozenset({"staged", "weighted"})
 LR_SCHEDULES = frozenset({"cosine", "constant", "exponential"})
 TRAINABLE_SCOPES = frozenset({"all", "gate_head"})
+# "curriculum" is the staged focal-loss fit with deblip and SWA; "balanced" is
+# the class-balanced cross-entropy fit with plateau drops and early stopping on
+# a held-out share of the training subjects (Olsen et al., Section II-E).
+RECIPES = frozenset({"curriculum", "balanced"})
+CURRICULUM_ONLY_KEYS = (
+    "sliding_copies",
+    "curriculum_loss_mode",
+    "deblip_schedule",
+    "deblip_adjustment_epochs",
+    "deblip_logit_weight",
+    "deblip_min_wake_block_minutes",
+    "deblip_max_sleep_minutes",
+    "deblip_epsilon",
+    "lr_schedule",
+    "lr_decay_rate",
+    "trainable_scope",
+    "anchor_l2_weight",
+    "disable_swa",
+)
+BALANCED_ONLY_KEYS = (
+    "balance_beta",
+    "lr_drop_patience",
+    "early_stop_patience",
+    "eval_fraction",
+)
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
 # trainer's own defaults so an unset config trains identically.
@@ -37,6 +63,8 @@ class TrainingConfig:
     weight_decay: float
     x_length: int
     y_length: int
+    # Under "balanced", ``epochs`` is the most the fit may run before early stopping.
+    recipe: str = "curriculum"
     sliding_copies: int = 1
     curriculum_loss_mode: str = "staged"
     deblip_schedule: str = "interleaved"
@@ -50,6 +78,11 @@ class TrainingConfig:
     trainable_scope: str = "all"
     anchor_l2_weight: float = 0.0
     disable_swa: bool = False
+    balance_beta: float = 0.999
+    lr_drop_patience: int = 10
+    early_stop_patience: int = 25
+    # Share of the training subjects held out to early-stop on.
+    eval_fraction: float = 0.3
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -90,6 +123,13 @@ class TrainingConfig:
             if int(value) < 1:
                 raise ValueError(f"training.json: {name} must be at least 1")
 
+        require_one_of(self.recipe, RECIPES, "training.json recipe")
+        unused = CURRICULUM_ONLY_KEYS if self.recipe == "balanced" else BALANCED_ONLY_KEYS
+        defaults = {field.name: field.default for field in fields(self)}
+        changed = sorted(name for name in unused if getattr(self, name) != defaults[name])
+        if changed:
+            raise ValueError(f"training.json: the {self.recipe} recipe does not use {changed}")
+
         require_one_of(
             self.curriculum_loss_mode, CURRICULUM_LOSS_MODES, "training.json curriculum_loss_mode"
         )
@@ -115,6 +155,12 @@ class TrainingConfig:
             raise ValueError("training.json: deblip_max_sleep_minutes must be positive")
         if not 0.0 < self.deblip_epsilon < 0.5:
             raise ValueError("training.json: deblip_epsilon must be in (0, 0.5)")
+        if not 0.0 < self.balance_beta < 1.0:
+            raise ValueError("training.json: balance_beta must be in (0, 1)")
+        if self.lr_drop_patience < 1 or self.early_stop_patience < 1:
+            raise ValueError("training.json: patiences must be at least 1")
+        if not 0.0 < self.eval_fraction < 1.0:
+            raise ValueError("training.json: eval_fraction must be in (0, 1)")
 
     @property
     def deblips(self) -> bool:
@@ -137,10 +183,16 @@ def train_fold(
     *,
     fold: Fold,
     fit_seed: int,
+    split_seed: int,
     features: Mapping[SubjectRef, ModelIOBundle],
     datasets: Mapping[str, DatasetIndex],
 ):
     """Fit one BiDoze model on ``fold``'s training subjects."""
+    if config.training.recipe == "balanced":
+        return _train_fold_balanced(
+            config, fold=fold, fit_seed=fit_seed, split_seed=split_seed, features=features
+        )
+
     from arcasleep_bidoze.model import BiDozeNetModel
 
     training: TrainingConfig = config.training
@@ -221,6 +273,71 @@ def train_fold(
     )
     if training.deblip_schedule == "final" and deblip_x is not None:
         _run_final_deblip(model, deblip_x, training, config, fit_seed)
+    return model
+
+
+def _check_balanced_cv(config: RunConfig) -> None:
+    """Refuse ``cv.json`` options that only the curriculum recipe acts on."""
+    cv = config.cv
+    unused = {
+        "validation_sets": bool(cv.validation_sets),
+        "train_batch_sampling": cv.train_batch_sampling.mode != "disabled",
+        "subsample_to_smallest": cv.subsample_to_smallest,
+    }
+    named = sorted(name for name, used in unused.items() if used)
+    if named:
+        raise ValueError(f"cv.json: the balanced recipe does not use {named}")
+
+
+def _train_fold_balanced(
+    config: RunConfig,
+    *,
+    fold: Fold,
+    fit_seed: int,
+    split_seed: int,
+    features: Mapping[SubjectRef, ModelIOBundle],
+):
+    """The ``recipe='balanced'`` fit, early-stopping on a held-out share of the subjects."""
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    _check_balanced_cv(config)
+    training: TrainingConfig = config.training
+    fit_refs, eval_refs = split_train_eval(
+        fold.train_subjects, training.eval_fraction, split_seed
+    )
+    print(
+        f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
+        f"(fraction {training.eval_fraction}, seed {split_seed})"
+    )
+    num_classes = config.model.num_classes
+    frames_per_epoch = config.model.frames_per_epoch
+    X_fit, y_fit = assemble_batch(
+        features, fit_refs, training.x_length, training.y_length, num_classes,
+        frames_per_epoch=frames_per_epoch,
+    )
+    X_eval, y_eval = assemble_batch(
+        features, eval_refs, training.x_length, training.y_length, num_classes,
+        frames_per_epoch=frames_per_epoch,
+    )
+    print(f"  fit  X: {X_fit.shape}  y: {y_fit.shape}")
+    print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
+
+    model = BiDozeNetModel(config.model)
+    history = model.fit_balanced(
+        X_fit,
+        y_fit,
+        X_eval,
+        y_eval,
+        batch_size=training.batch_size,
+        initial_lr=training.lr,
+        weight_decay=training.weight_decay,
+        balance_beta=training.balance_beta,
+        lr_drop_patience=training.lr_drop_patience,
+        early_stop_patience=training.early_stop_patience,
+        max_epochs=training.epochs,
+        fit_seed=fit_seed,
+    )
+    print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
 
 
