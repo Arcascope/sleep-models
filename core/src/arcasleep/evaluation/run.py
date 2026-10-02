@@ -37,7 +37,7 @@ from arcasleep.artifacts.provenance import (
     run_fingerprint,
     sha256_file,
 )
-from arcasleep.data.batching import pool_frames_to_epochs
+from arcasleep.data.batching import recording_input
 from arcasleep.evaluation import staging_metrics  # noqa: F401  (registers the metrics)
 from arcasleep.evaluation.staging_metrics import GAP_STAGE_INDEX
 from arcasleep.training.config import RunConfig
@@ -150,10 +150,11 @@ def cohort_input_shape(
     """
     if not subjects:
         raise ValueError("cohort_input_shape: no subjects")
+    frames_per_epoch = config.model.frames_per_epoch
     by_dims: Dict[tuple[int, ...], list[str]] = {}
     for ref, bundle in subjects.items():
-        pooled = pool_frames_to_epochs(bundle.X, bundle.y)
-        by_dims.setdefault(tuple(pooled.shape[2:]), []).append(
+        inputs = recording_input(bundle.X[0], int(bundle.y.shape[1]), frames_per_epoch)
+        by_dims.setdefault(tuple(inputs.shape[1:]), []).append(
             f"{ref.dataset_name}/{ref.subject_id}"
         )
     if len(by_dims) != 1:
@@ -165,7 +166,7 @@ def cohort_input_shape(
     x_length, _ = config.family.scoring_lengths(
         config, [int(bundle.y.shape[1]) for bundle in subjects.values()]
     )
-    return (x_length, *feature_dims)
+    return (x_length * frames_per_epoch, *feature_dims)
 
 
 #: The class index the metrics treat as wake (``staging_metrics._wake_class``).

@@ -1,0 +1,10 @@
+{
+  "num_classes": 4,
+  "c_u": 16,
+  "kernel_temporal": 16,
+  "kernel_freq": 3,
+  "m_blocks": 10,
+  "head_hidden": 64,
+  "score_gap": true,
+  "frames_per_epoch": 15
+}

@@ -19,7 +19,11 @@ from pisces_lite.metrics import MetricsLogger
 from pisces_lite.model_io import ModelIOBundle
 from pisces_lite.utils import pad_or_truncate
 
-from arcasleep.data.batching import pad_pooled, pool_frames_to_epochs
+from arcasleep.data.batching import (
+    pad_recording_input,
+    pool_frames_to_epochs,
+    recording_input,
+)
 from arcasleep.data.cache import (
     discover_cached_subjects,
     load_cached_features,
@@ -56,22 +60,24 @@ def evaluate_subject(
 ) -> tuple[np.ndarray, ...]:
     """Score one held-out subject into ``(y_true, y_pred_proba)``.
 
-    Pooling runs before padding: the 12 Hz config steps every 2 s, so ``X``
-    carries several frames per 30 s epoch, and pooling leaves missing frames
-    out and records them in the gap row. Both arrays then pad to fixed
+    The input is built before padding (:func:`recording_input`): the 12 Hz
+    config steps every 2 s, so ``X`` carries several frames per 30 s epoch,
+    and a model that reads one row per epoch gets them pooled, with missing
+    frames left out and recorded in the gap row. Both arrays then pad to fixed
     lengths so JAX traces ``infer`` once rather than once per subject length,
     and pad epochs — genuinely absent data — fold into the gap class beside
     any gap the subject already carried.
 
     ``return_context`` appends the pooled/padded spectrogram and the rendered
     truth (gap at :data:`GAP_STAGE_INDEX`, not masked) so a caller can draw a
-    hypnogram from the exact arrays that were scored, without a second infer.
+    hypnogram from the arrays that were scored, without a second infer.
     """
     X = bundle.X[0]
     y = bundle.y_for_n_classes(num_classes)[0]
+    frames_per_epoch = model.config.frames_per_epoch
 
-    X_pooled = pool_frames_to_epochs(X[None, ...], y[None, ...])[0]
-    X_padded = pad_pooled(X_pooled, target_x_length)
+    X_input = recording_input(X, y.shape[0], frames_per_epoch)
+    X_padded = pad_recording_input(X_input, target_x_length, frames_per_epoch)
     y_padded = pad_or_truncate(y, target_length=target_y_length, pad_value=GAP_LABEL, axis=0)
     y_scored = np.where(y_padded == GAP_LABEL, GAP_STAGE_INDEX, y_padded)
 
@@ -80,6 +86,8 @@ def evaluate_subject(
 
     y_true = labels_for_metric_scoring(y_scored)
     if return_context:
+        if frames_per_epoch > 1:
+            X_padded = pool_frames_to_epochs(X_padded[None], np.zeros((1, target_x_length)))[0]
         return y_true, proba[0], X_padded, y_scored
     return y_true, proba[0]
 
@@ -170,6 +178,7 @@ def run_training(
                 paths,
                 fold=fold,
                 fit_seed=fit_seed,
+                split_seed=resolved_split_seed,
                 features=features,
                 datasets=datasets,
                 logger=logger,
@@ -201,6 +210,7 @@ def _run_fold(
     *,
     fold: Fold,
     fit_seed: int,
+    split_seed: int,
     features: Dict[SubjectRef, ModelIOBundle],
     datasets,
     logger,
@@ -220,7 +230,12 @@ def _run_fold(
     else:
         started = time.time()
         model = config.family.train_fold(
-            config, fold=fold, fit_seed=fit_seed, features=features, datasets=datasets
+            config,
+            fold=fold,
+            fit_seed=fit_seed,
+            split_seed=split_seed,
+            features=features,
+            datasets=datasets,
         )
         print(f"  trained in {time.time() - started:.1f}s")
         model.savez(checkpoint_path)

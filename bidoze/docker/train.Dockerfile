@@ -44,6 +44,7 @@ WORKDIR /opt/arcasleep
 COPY pyproject.toml README.md LICENSE MANIFEST.in ./
 COPY core/src ./core/src
 COPY bidoze/src ./bidoze/src
+COPY unet/src ./unet/src
 # [aws] as well as [train]: the harness uploads the finished run to S3, and
 # boto3 is pure Python -- ~15MB, no compiler, no CUDA.
 RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PACKAGE_VERSION} \

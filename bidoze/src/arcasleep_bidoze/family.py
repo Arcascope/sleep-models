@@ -36,7 +36,7 @@ class BiDozeFamily(ModelFamily):
             f"{training.deblip_adjustment_epochs} epochs @ {training.deblip_logit_weight}"
         )
 
-    def train_fold(self, config, *, fold, fit_seed, features, datasets):
+    def train_fold(self, config, *, fold, fit_seed, split_seed, features, datasets):
         from arcasleep_bidoze.training import train_fold
 
         return train_fold(

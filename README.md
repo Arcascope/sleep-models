@@ -6,7 +6,8 @@ Arcascope's open source, open weights sleep models.
 
 One Python distribution, `arcasleep`, carries the shared data, training,
 evaluation and release tooling (`core/`, the `arcasleep` import package) and
-every model family (`bidoze/`, the `arcasleep_bidoze` import package). Model
+every model family (`bidoze/` and `unet/`, the `arcasleep_bidoze` and
+`arcasleep_unet` import packages). Model
 weights are released on the Hugging Face Hub, one repository per model variant.
 
 ## Install
@@ -17,7 +18,7 @@ working CLI, and every other command imports its dependencies on demand.
 ```bash
 pip install arcasleep                           # CLI + manifest tools, no heavy deps
 pip install "arcasleep[bidoze,inference,hub]"   # run a released BiDoze model
-pip install "arcasleep[bidoze,train]"           # training stack (adds optax, matplotlib)
+pip install "arcasleep[unet,train]"             # training stack (adds optax, matplotlib)
 pip install "arcasleep[prep]"                   # build the feature cache
 pip install "arcasleep[aws]"                    # S3 manifests and result upload
 pip install "arcasleep[publish]"                # build a release bundle
@@ -45,6 +46,8 @@ arcasleep bidoze train     # run the recipe from a feature cache
 arcasleep bidoze evaluate  # score a checkpoint on a cohort
 arcasleep bidoze publish   # build a safetensors release bundle, optionally upload it
 arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
+
+arcasleep unet train | evaluate | publish | predict
 ```
 
 ## BiDoze
@@ -60,6 +63,15 @@ Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in acceler
 3. The current production training is based on a clinical pediatric pool with varying levels of sleep apnea.
     1. We are grateful to Glenn Weaver and his group for sharing their data with us.  
         These data is described in [Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/).
+
+## UNet
+
+The model lives in [`unet/`](unet/).
+
+Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in accelerometer.
+
+1. **Architecture:** the temporal U-Net described in Olsen et al., "A flexible deep learning architecture for temporal sleep stage classification using accelerometry and photoplethysmography," IEEE TBME 2022 ([doi:10.1109/TBME.2022.3187945](https://doi.org/10.1109/TBME.2022.3187945)), over raw 2-s spectrogram frames.
+2. Trained with the paper's procedure: class-balanced segment sampling and loss, early stopping on held-out subjects.
 
 ## Releasing the package
 

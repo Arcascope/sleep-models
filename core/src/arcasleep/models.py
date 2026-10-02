@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 #: Family name -> module holding its ``FAMILY``.
 FAMILY_MODULES: dict[str, str] = {
     "bidoze": "arcasleep_bidoze.family",
+    "unet": "arcasleep_unet.family",
 }
 
 #: The family a release bundle or checkpoint belongs to when it does not say.
@@ -105,10 +106,15 @@ class ModelFamily(ABC):
         *,
         fold: Fold,
         fit_seed: int,
+        split_seed: int,
         features: Mapping[SubjectRef, ModelIOBundle],
         datasets: Mapping[str, DatasetIndex],
     ) -> SleepModel:
-        """Fit one model on ``fold``'s training subjects."""
+        """Fit one model on ``fold``'s training subjects.
+
+        ``split_seed`` is the run's participant split seed, for a recipe that
+        divides the training subjects further.
+        """
 
     @abstractmethod
     def load_checkpoint(

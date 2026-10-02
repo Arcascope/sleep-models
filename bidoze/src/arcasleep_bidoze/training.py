@@ -146,6 +146,7 @@ def train_fold(
     training: TrainingConfig = config.training
     num_classes = config.model.num_classes
     target_x, target_y = training.x_length, training.y_length
+    frames_per_epoch = config.model.frames_per_epoch
 
     plans_by_dataset = (
         config.cv.train_batch_sampling.mode == "balanced_by_dataset"
@@ -154,18 +155,20 @@ def train_fold(
     if plans_by_dataset:
         X_train, y_train, train_dataset_labels = assemble_batch(
             features, fold.train_subjects, target_x, target_y, num_classes,
-            with_dataset_labels=True,
+            frames_per_epoch=frames_per_epoch, with_dataset_labels=True,
         )
     else:
         X_train, y_train = assemble_batch(
-            features, fold.train_subjects, target_x, target_y, num_classes
+            features, fold.train_subjects, target_x, target_y, num_classes,
+            frames_per_epoch=frames_per_epoch,
         )
         train_dataset_labels = None
 
     X_val, y_val = (None, None)
     if fold.val_subjects:
         X_val, y_val = assemble_batch(
-            features, fold.val_subjects, target_x, target_y, num_classes
+            features, fold.val_subjects, target_x, target_y, num_classes,
+            frames_per_epoch=frames_per_epoch,
         )
 
     print(f"  train X: {X_train.shape}  y: {y_train.shape}")
@@ -177,7 +180,8 @@ def train_fold(
         deblip_refs = deblip_subjects_for_fold(datasets, config.cv.deblip_sets, fold)
         if deblip_refs:
             deblip_x, _ = assemble_batch(
-                features, deblip_refs, target_x, target_y, num_classes
+                features, deblip_refs, target_x, target_y, num_classes,
+                frames_per_epoch=frames_per_epoch,
             )
             print(f"  deblip X: {deblip_x.shape}  ({len(deblip_refs)} subjects)")
         else:
