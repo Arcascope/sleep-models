@@ -1,7 +1,7 @@
 name: test
 
-# CI for the bidoze distribution. The workspace root pyproject.toml carries no
-# package; every build and install below is scoped to bidoze/.
+# CI for the arcasleep distribution: the shared code under core/ and every
+# model family, installed together from the repository root.
 
 on:
   push:
@@ -18,8 +18,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      # Full history and tags: the local install below builds bidoze with
-      # setuptools-scm, which reads the version from the nearest `bidoze-v*`
+      # Full history and tags: the local install below builds arcasleep with
+      # setuptools-scm, which reads the version from the nearest `arcasleep-v*`
       # tag and fails on a shallow clone without it.
       - uses: actions/checkout@v7
         with:
@@ -28,16 +28,15 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      # [all] carries the runtime deps the suite exercises (jax, pisces-lite,
-      # safetensors, ...); [report] adds pandas/matplotlib, which the summary
-      # and compare tests import directly. Tests for optional paths
-      # importorskip anything a future matrix entry cannot install.
-      - name: Install with dev, all and report extras
+      # [all] carries every runtime extra the suite exercises. Tests for
+      # optional paths importorskip anything a future matrix entry cannot
+      # install.
+      - name: Install with dev and all extras
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./bidoze[dev,all,report]"
+          python -m pip install ".[dev,all]"
       - name: Run tests
-        run: python -m pytest bidoze/tests -q
+        run: python -m pytest -q
 
   lint:
     name: Lint
@@ -53,4 +52,4 @@ jobs:
       # Gate on fatal errors only (syntax, undefined names); the full rule set
       # in that config is advisory.
       - name: Check syntax and undefined names
-        run: ruff check --select E9,F63,F7,F82 bidoze/src bidoze/tests
+        run: ruff check --select E9,F63,F7,F82 core bidoze/src bidoze/tests

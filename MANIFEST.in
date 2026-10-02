@@ -1,0 +1,11 @@
+# setuptools_scm puts every Git-tracked file in the sdist. Only the packages,
+# their tests and the project metadata belong there; run configs, split plans,
+# cards, deployment files and CI are repository material.
+prune bidoze/cards
+prune bidoze/config
+prune bidoze/deploy
+prune bidoze/docker
+prune bidoze/scripts
+prune .github
+prune .claude
+prune plans

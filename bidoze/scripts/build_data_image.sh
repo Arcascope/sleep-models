@@ -46,7 +46,7 @@ MANIFEST_DIR="$REPO_ROOT/build/manifest/$CACHE_PREFIX"
 mkdir -p "$MANIFEST_DIR"
 
 echo "==> manifest $CACHE_DIR"
-MANIFEST_OUTPUT=$(bidoze manifest-local --root "$CACHE_DIR" --output "$MANIFEST_DIR/manifest.jsonl")
+MANIFEST_OUTPUT=$(arcasleep manifest-local --root "$CACHE_DIR" --output "$MANIFEST_DIR/manifest.jsonl")
 echo "$MANIFEST_OUTPUT"
 MANIFEST_SHA256=${MANIFEST_OUTPUT##*manifest_sha256=}
 [[ ${#MANIFEST_SHA256} -eq 64 ]] || { echo "could not read manifest digest" >&2; exit 1; }

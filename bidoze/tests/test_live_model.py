@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("jax")
 
-from bidoze.model import BiDozeNetConfig  # noqa: E402
+from arcasleep_bidoze.model import BiDozeNetConfig  # noqa: E402
 
 
 def test_release_compatible_mlp_emits_stage_and_gap_logits() -> None:
