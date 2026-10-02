@@ -32,24 +32,20 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
 ## GGIR sleep filter
 
-`arcasleep bidoze predict` applies a GGIR-style filter by default (turn it off
-with `--no-ggir-sleep-filter`). GGIR's sleep period time (SPT) detection finds
-the main sleep window. Outside that window, predicted sleep that vanHees2015
-does not call sustained inactivity becomes wake, and remaining sleep is
-flagged as a nap. Inside the window the model's sleep is never flipped to
-wake. A recording, or a section between data gaps, of 9 hours or less is
-treated as one main sleep window, so for a single night the filter changes
-nothing.
+**For recordings of ≤ 9 hours, such as a single night, the filter changes
+nothing:** the output is the model's own scoring. For longer recordings it
+applies the rule in the Quickstart above.
 
-We checked the inside-the-window rule against PSG. Flipping non-SIB sleep to
-wake inside the window as well moves the pediatric cross-validation to 88%
-sleep sensitivity and 88% wake specificity, and lowers sleep/wake κ from
-0.65 to 0.56. Setting this model's own sleep threshold to the same 88%
-sensitivity gives 91% specificity instead, with κ no lower. So inside the
-sleep period, the model is the better wake detector, and its sleep is
-trusted there. Every PSG recording available to us is 9 hours or shorter,
-so the outside-the-window step has not been validated against PSG. It
-follows GGIR practice for multi-day, free-living recordings.
+**Why the model's sleep stands inside the sleep period.** On the pediatric
+cross-validation, also flipping sleep to wake inside it wherever GGIR saw no
+sustained inactivity moved sensitivity from 94% to 88% and specificity from
+82% to 88%, and lowered sleep/wake κ from 0.65 to 0.56. Lowering the model's
+own sleep threshold to the same 88% sensitivity reached 91% specificity, so
+the model detects wake better than the GGIR rule does.
+
+**Not yet validated:** every PSG night available to us is ≤ 9 hours, so the
+step outside the sleep period follows GGIR practice but has not been checked
+against PSG.
 
 ## BiDoze or UNet
 
