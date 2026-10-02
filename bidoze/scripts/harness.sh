@@ -19,13 +19,21 @@ SPLIT_PLAN="${BIDOZE_SPLIT_PLAN:-config/splits/weaver_5fold.json}"
 # rebuilt from the committed plan on every run, and live outside the results
 # tree so they are not mistaken for outputs.
 WORK_DIR="${BIDOZE_WORK_DIR:-${TMPDIR:-/tmp}/bidoze-folds}"
-# config/training.json is the official 30-epoch recipe: enough to train the
-# release model, and the same wiring at any epoch count. For a quick wiring
-# check, override BIDOZE_TRAINING_CONFIG with a smaller custom config.
-TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training.json}"
-# The balanced recipe has no deblip phase, so it pairs with
-# config/cv-balanced.json, which lists no deblip sets.
-CV_CONFIG="${BIDOZE_CV_CONFIG:-config/cv.json}"
+# config/training-balanced.json is the release recipe: the class-balanced fit,
+# early-stopped on a held-out share of each fold's training subjects.
+# config/training.json is the curriculum recipe (staged focal loss, deblip,
+# SWA). For a quick wiring check, override BIDOZE_TRAINING_CONFIG with a
+# smaller custom config.
+TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training-balanced.json}"
+# The cv config follows the recipe unless BIDOZE_CV_CONFIG names one: the
+# balanced recipe has no deblip phase, so it reads config/cv-balanced.json,
+# which lists no deblip sets.
+RECIPE=$(python -c "import json,sys;print(json.load(open(sys.argv[1])).get('recipe','curriculum'))" "$TRAINING_CONFIG")
+if [[ "$RECIPE" == "balanced" ]]; then
+    CV_CONFIG="${BIDOZE_CV_CONFIG:-config/cv-balanced.json}"
+else
+    CV_CONFIG="${BIDOZE_CV_CONFIG:-config/cv.json}"
+fi
 # Where a finished run is shipped. Empty disables the upload, which is the
 # default on a workstation; ECS sets it.
 RESULTS_S3_PREFIX="${BIDOZE_RESULTS_S3_PREFIX:-}"
@@ -63,7 +71,7 @@ PHASES+=("final")
 
 if [[ $DRY_RUN -eq 1 ]]; then
     printf 'Run directory: %s\n' "$RESULTS_ROOT/$RUN_ID"
-    printf 'Training cfg:  %s\n' "$TRAINING_CONFIG"
+    printf 'Training cfg:  %s (%s)\n' "$TRAINING_CONFIG" "$RECIPE"
     printf 'CV cfg:        %s\n' "$CV_CONFIG"
     printf 'Split plan:    %s\n' "$SPLIT_PLAN"
     printf 'Upload to:     %s\n' "${RESULTS_S3_PREFIX:-<disabled>}"

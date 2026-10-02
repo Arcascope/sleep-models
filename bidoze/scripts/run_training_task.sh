@@ -13,7 +13,7 @@ Everything else comes from the CloudFormation stack's outputs.
 Environment overrides:
   BIDOZE_STACK               stack name            (default bidoze-train)
   AWS_REGION                 region                (default us-east-1)
-  BIDOZE_TRAINING_CONFIG     recipe                (default config/training.json)
+  BIDOZE_TRAINING_CONFIG     recipe                (default config/training-balanced.json)
   BIDOZE_RUN_ID              run id                (default <image tag>/<UTC launch time>)
 USAGE
 }
@@ -27,7 +27,7 @@ IMAGE="$1"
 
 STACK="${BIDOZE_STACK:-bidoze-train}"
 REGION="${AWS_REGION:-us-east-1}"
-TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training.json}"
+TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training-balanced.json}"
 
 out() {
     aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
