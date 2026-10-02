@@ -400,6 +400,9 @@ def test_sib_does_not_flip_sleep_on_a_recording_without_spt() -> None:
 
 
 class _StubModel:
+    class config:
+        frames_per_epoch = 1
+
     def infer(self, chunks: np.ndarray) -> np.ndarray:
         return np.zeros((*chunks.shape[:2], 4))
 
@@ -410,7 +413,8 @@ def _stub_predictor():
     predictor = Predictor.__new__(Predictor)
     predictor.model = _StubModel()
     predictor.stage_names = ("wake", "light", "deep", "rem")
-    predictor.context_epochs = 8
+    predictor.frames_per_epoch = 1
+    predictor.context_epochs, predictor.epoch_multiple = 8, 1
     predictor.features = lambda accel, origin: (np.zeros((5, 3, 2)), 0.0)
     return predictor
 

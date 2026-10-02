@@ -127,6 +127,18 @@ class ModelFamily(ABC):
         """Load a release bundle's ``config.json`` and ``model.safetensors``."""
 
     @abstractmethod
+    def prediction_window(self, model: SleepModel) -> tuple[int | None, int]:
+        """``(context, multiple)`` in epochs for scoring one recording.
+
+        A fixed ``context`` scores consecutive windows of that length; ``None``
+        scores the whole recording, padded to a multiple of ``multiple``.
+        """
+
+    @abstractmethod
+    def describe_length(self, input_shape: Sequence[int]) -> str:
+        """Model card text on how long a recording one pass scores."""
+
+    @abstractmethod
     def describe_architecture(
         self, config: Mapping[str, Any], parameter_count: int | None
     ) -> list[str]:

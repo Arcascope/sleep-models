@@ -56,6 +56,16 @@ class BiDozeFamily(ModelFamily):
         model.load_weights_safetensors(weights)
         return model
 
+    def prediction_window(self, model) -> tuple[int | None, int]:
+        return int(model.input_shape[0]), 1
+
+    def describe_length(self, input_shape: Sequence[int]) -> str:
+        hours = input_shape[0] * 30 / 3600  # one row per 30-s epoch
+        return (
+            f"Up to {hours:g} hours are scored in one pass; longer recordings are "
+            "scored in consecutive passes."
+        )
+
     def describe_architecture(
         self, config: Mapping[str, Any], parameter_count: int | None
     ) -> list[str]:

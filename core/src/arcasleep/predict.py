@@ -1,9 +1,9 @@
 """Sleep stages from a raw accelerometer recording, using a released bundle.
 
 This is the inference entry point a model card points at: it runs the bundle's
-own ``preprocessing.json`` over timestamped triaxial samples, pools the
-sub-epoch spectrogram frames to 30-second epochs exactly as training did, and
-scores them with the bundle's weights. No PSG, labels or feature cache are
+own ``preprocessing.json`` over timestamped triaxial samples, builds the
+model input from the spectrogram frames exactly as training did, and scores
+it with the bundle's weights. No PSG, labels or feature cache are
 involved.
 
     from arcasleep.predict import predict
@@ -287,8 +287,9 @@ class Predictor:
     def __init__(self, bundle_dir: Path | str):
         from pisces_lite.proc import ProcessingConfig
 
-        from arcasleep.artifacts.publish import load_bundle_model
+        from arcasleep.artifacts.publish import bundle_family, load_bundle_model
         from arcasleep.data.prepare import frames_per_label
+        from arcasleep.models import get_family
 
         bundle_dir = Path(bundle_dir)
         self.bundle_dir = bundle_dir
@@ -297,20 +298,20 @@ class Predictor:
             json.loads((bundle_dir / "preprocessing.json").read_text())
         )
         self.frames_per_epoch = frames_per_label(self.processing)
-        provenance = json.loads((bundle_dir / "provenance.json").read_text())
-        self.context_epochs = int(provenance["input_shape"][0])
+        self.context_epochs, self.epoch_multiple = get_family(
+            bundle_family(bundle_dir)
+        ).prediction_window(self.model)
         self.stage_names = STAGE_NAMES[: self.model.config.num_classes]
         self.min_sampling_hz = float(self.processing.fs)
 
     def features(
         self, accel: np.ndarray, origin: float | str | None = None
     ) -> tuple[np.ndarray, float]:
-        """``(epochs, bins + 1, channels)`` model input and the grid origin in seconds.
+        """``(frames, bins, channels)`` spectrogram over whole epochs, and the grid origin.
 
-        The last row along the bin axis is the fraction of the epoch with no
-        accelerometer data.
+        The origin is in seconds on the input clock; frames run
+        ``frames_per_epoch`` to an epoch from it.
         """
-        from arcasleep.data.batching import pool_frames_to_epochs
         from arcasleep.data.prepare import clean_accelerometer_rows, median_sampling_rate
 
         accel = np.asarray(accel, dtype=np.float64)
@@ -328,9 +329,7 @@ class Predictor:
         n_epochs = frames.shape[0] // self.frames_per_epoch
         if n_epochs < 1:
             raise ValueError("recording is shorter than one 30-second epoch")
-        frames = frames[: n_epochs * self.frames_per_epoch]
-        pooled = pool_frames_to_epochs(frames[None], np.zeros((1, n_epochs)))[0]
-        return pooled, origin_s
+        return frames[: n_epochs * self.frames_per_epoch], origin_s
 
     def predict(
         self,
@@ -346,16 +345,28 @@ class Predictor:
         n_stages = len(self.stage_names)
         if return_gap_head and self.model.config.output_classes <= n_stages:
             raise ValueError("return_gap_head=True, but this model has no gap head")
-        from arcasleep.data.batching import pad_pooled, split_gap_row
+        from arcasleep.data.batching import (
+            pad_recording_input,
+            pool_frames_to_epochs,
+            recording_input,
+            split_gap_row,
+        )
         from arcasleep.data.prepare import clean_accelerometer_rows
         from arcasleep.ggir import evaluate as ggir_evaluate
 
-        pooled, origin_s = self.features(accel, origin)
-        n_epochs = pooled.shape[0]
-        # A recording longer than the context window is scored as consecutive
-        # windows; the last one is padded with absent epochs, as in training.
-        L = self.context_epochs
-        chunks = [pad_pooled(pooled[s : s + L], L) for s in range(0, n_epochs, L)]
+        frames, origin_s = self.features(accel, origin)
+        n_epochs = frames.shape[0] // self.frames_per_epoch
+        pooled = pool_frames_to_epochs(frames[None], np.zeros((1, n_epochs)))[0]
+        model_fpe = self.model.config.frames_per_epoch
+        inputs = recording_input(frames, n_epochs, model_fpe)
+        # A recording longer than a fixed context window is scored as
+        # consecutive windows; the last one, or a whole recording scored in
+        # one pass, is padded with absent epochs, as in training.
+        L = self.context_epochs or -(-n_epochs // self.epoch_multiple) * self.epoch_multiple
+        chunks = [
+            pad_recording_input(inputs[s * model_fpe : (s + L) * model_fpe], L, model_fpe)
+            for s in range(0, n_epochs, L)
+        ]
         logits = self.model.infer(np.stack(chunks))
         logits = logits.reshape(-1, logits.shape[-1])[:n_epochs]
         probabilities, gap_head = _stage_and_gap_probabilities(logits, n_stages)

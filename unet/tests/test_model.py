@@ -20,9 +20,8 @@ from arcasleep_unet.model.definition import (  # noqa: E402
     sample_balanced_segments,
 )
 
-RELEASE_CONFIG = json.loads(
-    (Path(__file__).resolve().parents[1] / "config" / "model.json").read_text()
-)
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+RELEASE_CONFIG = json.loads((CONFIG_DIR / "model.json").read_text())
 SMALL = {"m_blocks": 2, "c_u": 4, "head_hidden": 8, "frames_per_epoch": 3, "kernel_temporal": 4}
 
 
@@ -224,3 +223,26 @@ def test_a_tiny_fit_runs_and_keeps_its_best_epoch() -> None:
 
     assert 1 <= len(history["train_loss"]) <= 3
     assert model.infer(_features(n=1)).shape == (1, 4, 5)
+
+
+def test_a_release_bundle_predicts_a_whole_recording_from_raw_frames(tmp_path) -> None:
+    pytest.importorskip("senpy")
+    pytest.importorskip("safetensors")
+    from arcasleep.predict import Predictor
+
+    config = {**SMALL, "frames_per_epoch": 5, "kernel_freq": 3}
+    model = _built(config, n_frames=20, f_bins=60)
+    bundle = tmp_path / "release"
+    bundle.mkdir()
+    model.save_weights_safetensors(bundle / "model.safetensors")
+    (bundle / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "unet", **config}))
+    inputs = json.loads((CONFIG_DIR / "inputs.json").read_text())
+    # A 6 s hop gives the model's five frames per 30 s epoch.
+    (bundle / "preprocessing.json").write_text(json.dumps({**inputs, "window_step_seconds": 6}))
+
+    fs, minutes = 25.0, 47
+    t = np.arange(int(fs * 60 * minutes)) / fs
+    xyz = np.random.default_rng(5).normal(scale=0.05, size=(t.size, 3)) + [0.0, 0.0, 1.0]
+    result = Predictor(bundle).predict(np.column_stack([t, xyz]), ggir_sleep_filter=False)
+
+    assert result.probabilities.shape == (minutes * 2, 4)
