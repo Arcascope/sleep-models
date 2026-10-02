@@ -3248,6 +3248,7 @@ class BiDozeNetModel(CVModel):
                 cm += pooled_confusion(eval_y[batch], pred, num_classes)
             return cohen_kappa_from_confusion(cm)
 
+        fpe = cfg.frames_per_epoch
         rows = [(train_x[i], train_y[i]) for i in range(train_x.shape[0])]
         steps_per_epoch = max(1, -(-len(rows) // batch_size))
         lr = float(initial_lr)
@@ -3265,12 +3266,13 @@ class BiDozeNetModel(CVModel):
                 rows,
                 rng,
                 n_segments=steps_per_epoch * batch_size,
-                segment_epochs=train_x.shape[1],
+                segment_epochs=train_y.shape[1],
                 num_classes=num_classes,
-                frames_per_epoch=1,
+                frames_per_epoch=fpe,
                 max_attempts=class_sample_max_attempts,
             )
-            ms = valid_mask(ys)
+            # The model pools the mask with its frames, so it runs per frame.
+            ms = np.repeat(valid_mask(ys), fpe, axis=1)
             ys = np.where(ys <= GAP_LABEL, gap_class, ys)
             epoch_loss = 0.0
             for step in range(steps_per_epoch):

@@ -44,7 +44,7 @@ def _write_cache(cache_dir: Path, dataset: str, subjects: list[str], epochs: int
         ).save_npz(cache_dir / f"{dataset}{SUBJECT_SEPARATOR}{subject}{CACHE_SUFFIX}")
 
 
-def _configs(directory: Path) -> RunConfig:
+def _configs(directory: Path, model_overrides: dict | None = None) -> RunConfig:
     directory.mkdir(parents=True, exist_ok=True)
     files = {
         "inputs.json": {
@@ -62,6 +62,7 @@ def _configs(directory: Path) -> RunConfig:
             "d_ff": 32,
             "conv_kernels": [3],
             "dropout": 0.0,
+            **(model_overrides or {}),
         },
         "cv.json": {
             "mode": "transfer",
@@ -90,8 +91,11 @@ def _configs(directory: Path) -> RunConfig:
     )
 
 
-def test_balanced_recipe_trains_and_scores_end_to_end(tmp_path: Path) -> None:
-    config = _configs(tmp_path / "config")
+@pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
+def test_balanced_recipe_trains_and_scores_end_to_end(
+    tmp_path: Path, model_frames_per_epoch: int
+) -> None:
+    config = _configs(tmp_path / "config", {"frames_per_epoch": model_frames_per_epoch})
     cache_root = tmp_path / "feature_cache"
     _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
     _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
