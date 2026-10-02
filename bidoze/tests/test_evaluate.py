@@ -509,6 +509,19 @@ def _night_with_dropout_and_lapse() -> np.ndarray:
     return np.concatenate(parts)
 
 
+def _long_recording_with_restless_start() -> np.ndarray:
+    """Raw accel: 4 h restless then 8 h still, spanning enough for SPT estimation."""
+    fs = 4
+    rng = np.random.default_rng(0)
+
+    def stretch(start_s: float, seconds: float, moving: bool) -> np.ndarray:
+        t = start_s + np.arange(int(seconds * fs)) / fs
+        xyz = rng.normal(size=(t.size, 3)) if moving else np.tile([0.0, 0.0, 1.0], (t.size, 1))
+        return np.column_stack([t, xyz])
+
+    return np.concatenate([stretch(0, 4 * 3600, True), stretch(4 * 3600, 8 * 3600, False)])
+
+
 def test_epoch_bins_place_each_5s_mean_in_its_epoch():
     from bidoze import ggir
 
@@ -544,11 +557,40 @@ def test_cached_bins_give_the_same_judgement_as_the_raw_signal():
     np.testing.assert_array_equal(cached.is_spt, raw.is_spt)
 
 
-def test_apply_sib_filter_demotes_sleep_outside_sustained_inactivity():
+def test_apply_sib_filter_demotes_sleep_outside_spt_but_not_inside_it():
     from bidoze import ggir
     from bidoze.evaluation.run import apply_sib_filter
 
-    accel = _night_with_dropout_and_lapse()
+    accel = _long_recording_with_restless_start()
+    bin_start, anglez = ggir.anglez_bins(accel)
+    n_epochs = int(np.ceil((bin_start[-1] + 5) / 30))
+    grid = ggir.epoch_bins(bin_start, anglez, n_epochs)
+    is_spt = ggir.evaluate(accel, accel[0, 0] + 30.0 * np.arange(n_epochs), n_epochs).is_spt
+
+    proba = np.zeros((n_epochs + 4, 5))
+    proba[:n_epochs, 2] = 1.0          # every real epoch predicted sleep
+    proba[10, :] = 0.0
+    proba[10, 4] = 1.0                 # ... except one gap epoch
+    proba[n_epochs:, 4] = 1.0          # and the padding
+
+    filtered, demoted = apply_sib_filter(proba, grid, n_epochs)
+
+    real = filtered[:n_epochs]
+    assert demoted > 0
+    restless = ~is_spt & (np.arange(n_epochs) < 200) & (np.arange(n_epochs) != 10)
+    assert restless.any() and np.all(real[restless].argmax(axis=1) == 0)  # outside SPT: wake
+    assert is_spt.any() and np.all(real[is_spt].argmax(axis=1) == 2)  # inside SPT: sleep kept
+    assert filtered[10].argmax() == 4 and np.all(filtered[n_epochs:].argmax(axis=1) == 4)
+    assert proba[0].argmax() == 2                          # input untouched
+
+
+def test_apply_sib_filter_leaves_short_recordings_alone():
+    from bidoze import ggir
+    from bidoze.evaluation.run import apply_sib_filter
+
+    fs = 4
+    t = np.arange(4 * 3600 * fs) / fs
+    accel = np.column_stack([t, np.zeros_like(t), np.zeros_like(t), np.ones_like(t)])
     bin_start, anglez = ggir.anglez_bins(accel)
     n_epochs = int(np.ceil((bin_start[-1] + 5) / 30))
     grid = ggir.epoch_bins(bin_start, anglez, n_epochs)
@@ -561,11 +603,10 @@ def test_apply_sib_filter_demotes_sleep_outside_sustained_inactivity():
 
     filtered, demoted = apply_sib_filter(proba, grid, n_epochs)
 
-    assert demoted > 0
-    assert np.all(filtered[125:175].argmax(axis=1) == 0)     # thrashing hour: wake
-    assert np.all(filtered[20:100].argmax(axis=1) == 2)      # still hour: sleep
+    real = filtered[:n_epochs]
+    assert demoted == 0
+    assert np.all(np.delete(real, 10, axis=0).argmax(axis=1) == 2)  # sleep survives untouched
     assert filtered[10].argmax() == 4 and np.all(filtered[n_epochs:].argmax(axis=1) == 4)
-    assert proba[150].argmax() == 2                          # input untouched
 
 
 def test_bundle_round_trips_anglez_and_the_base_reader_still_loads_it(tmp_path):

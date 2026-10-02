@@ -174,15 +174,18 @@ WAKE_STAGE_INDEX = 0
 def apply_sib_filter(
     proba: np.ndarray, anglez_5s: np.ndarray, n_epochs: int
 ) -> tuple[np.ndarray, int]:
-    """Demote predicted sleep that is not a GGIR sustained inactivity bout.
+    """Demote predicted sleep outside the SPT that is not a GGIR SIB.
 
     The same rule as :func:`bidoze.predict.predict`'s corrected ``stage``:
-    an epoch whose argmax is a sleep class but which vanHees2015 does not call
-    a sustained inactivity bout becomes wake. It is a hard decision, so the
-    epoch's row is replaced by a one-hot wake row and every metric --
-    thresholded or argmax -- sees wake. Sleep is never promoted, gap epochs are
-    untouched, and naps outside the main sleep window are kept, since the
-    scored night has no notion of them.
+    outside the main sleep window an epoch whose argmax is a sleep class but
+    which vanHees2015 does not call a sustained inactivity bout becomes wake.
+    Inside the main sleep window SIB never flips sleep to wake, and a
+    sub-recording of at most 9 h is treated as one long main sleep window, so
+    for a <= 9 h recording nothing is demoted. It is a hard
+    decision, so the epoch's row is replaced by a one-hot wake row and every
+    metric -- thresholded or argmax -- sees wake. Sleep is never promoted, gap
+    epochs are untouched, and naps outside the main sleep window are kept, since
+    the scored night has no notion of them.
 
     ``anglez_5s`` is the bundle's ``(epochs, 6)`` 5 s z-angle series
     (:class:`bidoze.data.bundle.BiDozeBundle`). It covers the whole
@@ -195,14 +198,14 @@ def apply_sib_filter(
 
     total = anglez_5s.shape[0]
     bin_start_s, anglez = bins_from_epochs(anglez_5s)
-    is_sib = evaluate_bins(bin_start_s, anglez, EPOCH_SECONDS * np.arange(total), total).is_sib[
-        :n_epochs
-    ]
+    ggir = evaluate_bins(bin_start_s, anglez, EPOCH_SECONDS * np.arange(total), total)
+    is_sib = ggir.is_sib[:n_epochs]
+    is_spt = ggir.is_spt[:n_epochs]
     filtered = np.array(proba, copy=True)
     predicted = filtered[:n_epochs].argmax(axis=-1)
     sleep = (predicted != WAKE_STAGE_INDEX) & (predicted != GAP_STAGE_INDEX)
     demote = np.zeros(filtered.shape[0], dtype=bool)
-    demote[:n_epochs] = sleep & ~is_sib
+    demote[:n_epochs] = sleep & ~is_sib & ~is_spt
     filtered[demote] = 0.0
     filtered[demote, WAKE_STAGE_INDEX] = 1.0
     return filtered, int(demote.sum())
@@ -281,11 +284,13 @@ def run_evaluation(
     ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were scored, using
     :mod:`bidoze.reporting.hypnogram`.
 
-    ``ggir_sib_filter`` demotes predicted sleep that is not a sustained
-    inactivity bout to wake (:func:`apply_sib_filter`) before anything is scored
-    or drawn, using the ``anglez_5s`` each cached bundle carries. A subject
-    whose cache lacks it is an error, raised before any scoring -- never a
-    silently unfiltered row.
+    ``ggir_sib_filter`` demotes predicted sleep outside the main sleep window
+    that is not a sustained inactivity bout to wake (:func:`apply_sib_filter`)
+    before anything is scored or drawn, using the ``anglez_5s`` each cached
+    bundle carries. Inside the window sleep is left alone, and a <= 9 h
+    recording is all one main sleep window, so nothing in it is demoted. A
+    subject whose cache lacks ``anglez_5s`` is an error, raised before any
+    scoring -- never a silently unfiltered row.
     """
     checkpoint = Path(checkpoint)
     output_dir = Path(output_dir)

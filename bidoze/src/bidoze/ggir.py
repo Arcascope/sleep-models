@@ -5,9 +5,11 @@ is little movement, so a quiet reading session can look like sleep. GGIR has
 solved a version of this: it finds sustained inactivity bouts (SIB) with the
 ``vanHees2015`` rule (no z-angle change over 5 degrees for 5 minutes) and then
 estimates the Sleep Period Time (SPT) window with HDCZA, the main sleep block
-of the day. Model sleep that is not a SIB is quiet wakefulness. The SPT window
-is informational only: sleep outside it is flagged as a nap, not removed,
-because people on split-sleep schedules have several real sleep periods a day.
+of the day. Outside that window model sleep that is not a SIB is quiet
+wakefulness; inside it the model's sleep stands without the SIB test, since the
+SPT is by construction a period of sleep. The SPT window itself is informational
+for sleep: sleep outside it is flagged as a nap, not removed, because people on
+split-sleep schedules have several real sleep periods a day.
 
 This module reimplements just those pieces for a raw ``(N, 4)`` accelerometer
 array. It is deliberately self-contained: no GGIR, no timezone, no clock. The
@@ -71,7 +73,7 @@ HDCZA_THRESHOLD_HI = 0.50
 #: in no-movement shorter than this.
 SPT_MIN_BLOCK_MIN = 30.0
 SPT_MAX_GAP_MIN = 60.0
-#: A sub-recording must span this long before SPT is worth estimating.
+#: A sub-recording must span longer than this before SPT is worth estimating.
 MIN_SPAN_HOURS = 9.0
 #: A lapse with no sample at least this long starts a new sub-recording.
 RECORDING_GAP_MINUTES = 60.0
@@ -83,7 +85,7 @@ class GGIRResult:
 
     ``is_sib`` is the vanHees2015 sustained-inactivity decision; ``is_spt``
     marks the main-sleep window(s). Both are length ``n_epochs`` and ``False``
-    for epochs with no data. A sub-recording shorter than ``MIN_SPAN_HOURS`` is
+    for epochs with no data. A sub-recording of at most ``MIN_SPAN_HOURS`` is
     taken to be a sleep bout the researcher chose to submit, so all of it is
     ``is_spt``; longer ones get the SPT estimate. Epochs in a lapse between
     sub-recordings are not ``is_spt``. ``spt_ran`` records whether any
@@ -383,7 +385,7 @@ def evaluate_bins(
         first_s = bin_start_s[lo]
         last_s = bin_start_s[hi - 1] + GGIR_EPOCH_SECONDS
         sib_5s[lo:hi] = van_hees_sib(anglez_5s[lo:hi])
-        if (last_s - first_s) / 3600.0 < MIN_SPAN_HOURS:
+        if (last_s - first_s) / 3600.0 <= MIN_SPAN_HOURS:
             # Too short to estimate SPT: treat the whole stretch as main sleep.
             is_spt |= (epoch_start_s + EPOCH_SECONDS > first_s) & (epoch_start_s < last_s)
             continue

@@ -429,10 +429,13 @@ def predict(
     ``gap_head`` output; it needs a model trained with a gap head.
 
     With ``ggir_sleep_filter`` (the default) the corrected ``stage`` column has
-    quiet wakefulness demoted to wake, and sleep outside the main sleep window
-    flagged as naps but kept; pass ``False`` for the raw BiDoze argmax. If the
-    filter itself raises, the raw prediction is returned with the filter
-    columns empty and a warning; ``ggir_error_fails=True`` re-raises instead.
+    non-SIB quiet wakefulness outside the main sleep window demoted to wake,
+    and sleep outside that window flagged as naps but kept; inside the window
+    sleep is never flipped to wake, and a recording <= 9 h is all one main
+    sleep window, so the SIB judgement changes nothing for it. Pass ``False``
+    for the raw BiDoze argmax. If the filter itself raises, the raw prediction
+    is returned with the filter columns empty and a warning;
+    ``ggir_error_fails=True`` re-raises instead.
 
     Loads the bundle on every call; use :class:`Predictor` for many recordings.
     """
@@ -485,13 +488,19 @@ def _apply_ggir_filter(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Corrected labels and nap flags from the GGIR SIB and SPT judgement.
 
-    Sleep is demoted to wake where the epoch is not a sustained inactivity
-    bout. Remaining sleep outside every main sleep window is flagged as a nap and kept. Sleep is never promoted, and gap
+    Outside the main sleep window predicted sleep that is not a sustained
+    inactivity bout is demoted to wake. Inside the window SIB never flips
+    sleep to wake: the SPT window is a sleep period, so sleep the model found
+    there stands even when it is not a SIB. A sub-recording of at most
+    9 h has no estimated SPT, so all of it is treated as the main
+    sleep window and no sleep inside it is demoted -- for a <= 9 h recording
+    the SIB judgement changes nothing. Remaining sleep outside every main sleep
+    window is flagged as a nap and kept. Sleep is never promoted, and gap
     epochs are neither sleep nor naps.
     """
     stage = _label_epochs(probabilities, stage_names, is_gap)
     sleep = ~np.isin(stage, ["wake", GAP_LABEL_NAME])
-    demote = sleep & ~ggir.is_sib
+    demote = sleep & ~ggir.is_sib & ~ggir.is_spt
     stage[demote] = "wake"
     sleep = sleep & ~demote
     is_nap = np.zeros(stage.shape[0], dtype=np.int8)

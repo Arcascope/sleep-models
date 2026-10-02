@@ -836,9 +836,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument(
         "--ggir-sib-filter",
         action="store_true",
-        help="demote predicted sleep that is not a GGIR (vanHees2015) sustained "
-             "inactivity bout to wake before scoring; needs anglez_5s in the "
-             "cache (built by `process`, or added with `process --sib-only`)",
+        help="demote predicted sleep outside the main sleep window that is not "
+             "a GGIR (vanHees2015) sustained inactivity bout to wake before "
+             "scoring; a recording <= 9 h is all main sleep window and is left "
+             "alone; needs anglez_5s in the cache (built by `process`, or added "
+             "with `process --sib-only`)",
     )
     evaluate.add_argument(
         "--overwrite",
@@ -970,9 +972,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--ggir-sleep-filter",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="demote quiet wakefulness to wake and flag sleep outside the main "
-             "sleep window as naps, GGIR-style (default: on; use "
-             "--no-ggir-sleep-filter for the raw BiDoze stage)",
+        help="demote quiet wakefulness outside the main sleep window to wake "
+             "and flag sleep outside it as naps, GGIR-style; sleep inside the "
+             "window is never flipped, and a recording <= 9 h is all main sleep "
+             "window (default: on; use --no-ggir-sleep-filter for the raw "
+             "BiDoze stage)",
     )
     predict.add_argument(
         "--ggir-error-fails",
