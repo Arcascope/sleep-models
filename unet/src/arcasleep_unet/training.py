@@ -9,6 +9,7 @@ from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.batching import recording_input
+from arcasleep.training.balanced import split_train_eval
 from arcasleep.training.config import RunConfig, reject_unknown
 from arcasleep.training.folds import DatasetIndex
 
@@ -63,28 +64,6 @@ class TrainingConfig:
     def epochs(self) -> int:
         """The epoch count a results row records: the most the fit may run."""
         return self.max_epochs
-
-
-def split_train_eval(
-    refs: Sequence[SubjectRef], eval_fraction: float, split_seed: int
-) -> tuple[list[SubjectRef], list[SubjectRef]]:
-    """Hold out ``eval_fraction`` of the subjects to early-stop on, seeded by ``split_seed``.
-
-    The split is by subject id, so a subject listed under several datasets
-    lands on one side.
-    """
-    groups: dict[str, list[SubjectRef]] = {}
-    for ref in refs:
-        groups.setdefault(ref.subject_id, []).append(ref)
-    group_refs = list(groups.values())
-
-    order = np.random.default_rng(split_seed).permutation(len(group_refs))
-    eval_count = max(1, int(round(eval_fraction * len(group_refs))))
-    eval_refs = sorted(ref for i in order[:eval_count] for ref in group_refs[i])
-    fit_refs = sorted(ref for i in order[eval_count:] for ref in group_refs[i])
-    if not fit_refs:
-        raise ValueError("the train/eval split left no subjects to fit on")
-    return fit_refs, eval_refs
 
 
 def _nights(
