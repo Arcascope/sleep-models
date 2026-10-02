@@ -156,8 +156,11 @@ def checkpoint_family(path: Path | str) -> str:
     import json
     import zipfile
 
-    with zipfile.ZipFile(path) as archive:
-        metadata = json.loads(archive.read("metadata.json"))
+    try:
+        with zipfile.ZipFile(path) as archive:
+            metadata = json.loads(archive.read("metadata.json"))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"{path} is not a .pisces checkpoint archive") from exc
     model_class = metadata.get("model_class")
     for name in family_names():
         if get_family(name).checkpoint_class == model_class:

@@ -1168,6 +1168,16 @@ _OPTIONAL_DEP_EXTRAS = {
     "huggingface_hub": "hub",
     "markdown_it": "preview",
 }
+#: Modules a model family's network needs. Under a family's commands a missing
+#: one names that family's extra, which carries the whole set.
+_FAMILY_NETWORK_MODULES = frozenset({"jax", "flax", "optax"})
+
+
+def _extra_for(module: str | None, family: str | None) -> str | None:
+    """The extra that installs ``module`` for a command of ``family``, if any."""
+    if family is not None and module in _FAMILY_NETWORK_MODULES:
+        return family
+    return _OPTIONAL_DEP_EXTRAS.get(module or "")
 
 
 def main() -> int:
@@ -1175,7 +1185,7 @@ def main() -> int:
     try:
         return int(args.handler(args))
     except ModuleNotFoundError as exc:
-        extra = _OPTIONAL_DEP_EXTRAS.get(exc.name or "")
+        extra = _extra_for(exc.name, getattr(args, "family", None))
         if extra is None:
             raise
         command = " ".join(filter(None, (args.command, getattr(args, "family_command", None))))

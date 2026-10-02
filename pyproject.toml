@@ -35,6 +35,7 @@ dependencies = []
 # reads it).
 pisces = ["pisces-lite>=4.1.1"]
 # One extra per model family: what loading and running that network needs.
+# Training or predicting also needs the `train` or `inference` extra.
 bidoze = ["jax", "flax", "optax"]
 # Local inference from published releases (safetensors bundles): `predict`
 # runs the bundle's spectrogram pipeline, so it needs pisces-lite's senpy NUFFT
@@ -62,14 +63,7 @@ publish = ["safetensors", "matplotlib", "pandas"]
 # Render a built bundle's model card to standalone HTML for local review.
 preview = ["markdown-it-py>=3"]
 all = [
-    "arcasleep[bidoze]",
-    "jax",
-    "flax",
-    "optax",
-    "arcasleep[pisces]",
-    "matplotlib",
-    "boto3>=1.34",
-    "safetensors",
+    "arcasleep[bidoze,inference,hub,prep,train,report,aws,publish,preview]",
 ]
 dev = ["pytest>=8", "ruff>=0.8"]
 

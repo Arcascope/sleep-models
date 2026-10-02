@@ -103,6 +103,10 @@ def _results_csv(directory: Path, dataset: str, fold: str, n_subjects: int = 3) 
 
 
 PEDIATRIC_INFO = Path(__file__).resolve().parents[1] / "cards" / "bidoze-pediatric.toml"
+# The sdist leaves the authored cards out, so tests that read one skip there.
+needs_pediatric_info = pytest.mark.skipif(
+    not PEDIATRIC_INFO.is_file(), reason="bidoze/cards is not in this tree"
+)
 
 
 def _info_without_card(root: Path) -> Path:
@@ -167,6 +171,7 @@ def test_provenance_records_the_checkpoint_and_phase_hashes(tmp_path: Path) -> N
     assert provenance["input_shape"] == [8, 3, 2]
 
 
+@needs_pediatric_info
 def test_bundle_builds_with_the_real_info_and_card(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     build_release_bundle(
@@ -196,6 +201,7 @@ def test_pediatric_glance_score_never_substitutes_an_adult_cohort() -> None:
     assert _glance_score(cv_and_adult, require_cv=True) is not None
 
 
+@needs_pediatric_info
 def test_card_discovers_the_phases_own_results_and_draws_a_grid(tmp_path: Path) -> None:
     pytest.importorskip("matplotlib")
     pytest.importorskip("pandas")
@@ -514,6 +520,7 @@ def test_release_info_rejects_unknown_keys_and_missing_files(tmp_path: Path) -> 
         load_release_info(tmp_path / "missing.toml")
 
 
+@needs_pediatric_info
 def test_info_names_the_authored_card_and_card_flag_overrides_it(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     build_release_bundle(phase, tmp_path / "a", version="v1.0.0", info=PEDIATRIC_INFO)
