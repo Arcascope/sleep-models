@@ -83,8 +83,12 @@ def discover_cached_subjects(
 def load_cached_features(
     subjects: Iterable[CachedSubject],
 ) -> Dict[SubjectRef, ModelIOBundle]:
-    """Load every cached subject into the ``{ref: bundle}`` map training uses."""
-    return {subject.ref: ModelIOBundle.from_npz(subject.path) for subject in subjects}
+    """Load every cached subject into the ``{ref: bundle}`` map training uses.
+
+    Each is a :class:`~arcasleep.data.bundle.CacheBundle`, so a held-out
+    subject's ``anglez_5s`` reaches its saved prediction.
+    """
+    return {subject.ref: CacheBundle.from_npz(subject.path) for subject in subjects}
 
 
 def load_bundles(paths: Iterable[Path | str]) -> Dict[SubjectRef, ModelIOBundle]:
