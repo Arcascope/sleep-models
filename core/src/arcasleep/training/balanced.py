@@ -40,7 +40,8 @@ class Patience:
 
     With ``smoothing_steps`` > 0, the kappa compared is the mean of the
     evaluations made in the last ``smoothing_steps`` optimizer steps, so a
-    single high evaluation does not reset the patience. The fit keeps the
+    single high evaluation does not reset the patience. No evaluation counts
+    as an improvement before the fit has run ``smoothing_steps`` steps. The fit keeps the
     parameters of the epoch with the best unsmoothed kappa either way.
     """
 
@@ -93,7 +94,10 @@ class Plateau:
             self._window.popleft()
         smoothed = float(np.mean([k for _, k in self._window])) if self._window else float("nan")
 
-        improved = np.isfinite(smoothed) and smoothed > self.best_smoothed
+        # Until the window spans smoothing_steps it holds fewer evaluations
+        # than it should, and its mean is no smoother than one evaluation.
+        window_full = self.step >= self.patience.smoothing_steps
+        improved = window_full and np.isfinite(smoothed) and smoothed > self.best_smoothed
         if improved:
             self.best_smoothed = smoothed
             self.best_step = self.step
