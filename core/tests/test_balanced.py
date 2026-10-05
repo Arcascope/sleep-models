@@ -71,6 +71,16 @@ def test_one_high_evaluation_does_not_reset_a_smoothed_patience() -> None:
     assert raw_decisions[-1].stop and smoothed_decisions[-1].stop
 
 
+def test_a_high_first_evaluation_does_not_set_the_bar_before_the_window_fills() -> None:
+    kappas = [0.3, 0.1, 0.2, 0.2] + [0.22] * 3 + [0.1] * 20
+    plateau = Plateau(Patience(lr_drop=50, early_stop=6, smoothing_steps=4, unit="steps"), 1)
+
+    _run(plateau, kappas)
+
+    assert plateau.best_step >= 4
+    assert plateau.best_smoothed < 0.3
+
+
 def test_an_evaluation_without_a_kappa_is_left_out_of_the_smoothing() -> None:
     plateau = Plateau(Patience(lr_drop=5, early_stop=9, smoothing_steps=3, unit="steps"), 1)
 
