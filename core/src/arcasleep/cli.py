@@ -154,6 +154,54 @@ def _process(args: argparse.Namespace) -> int:
     return 0
 
 
+def _align_labels(args: argparse.Namespace) -> int:
+    import csv
+
+    from arcasleep.data.alignment import AlignmentSettings, align_cache
+    from arcasleep.data.cache import resolve_feature_cache_dir
+    from arcasleep.etc import ETCKernel
+    from arcasleep.training.config import load_inputs
+
+    try:
+        _, cache_prefix = load_inputs(args.processing_config)
+        settings = AlignmentSettings(
+            kernel=ETCKernel(window=args.etc_window, std=args.etc_std),
+            style=args.etc_alignment_style,
+            max_shift=args.max_shift,
+            min_peak=args.min_peak,
+            min_margin=args.min_margin,
+            channel=args.etc_channel,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    source_root = Path(
+        args.source or os.environ.get("FEATURE_CACHE_DIR", DEFAULT_FEATURE_CACHE_DIR)
+    )
+    source = resolve_feature_cache_dir(source_root, cache_prefix)
+    target = Path(args.output_dir) / cache_prefix
+    if source.resolve() == target.resolve():
+        raise SystemExit(
+            "--output-dir must differ from the source cache; the source is never modified"
+        )
+    try:
+        rows = align_cache(
+            source, target, args.dataset, settings, dry_run=args.dry_run, overwrite=args.overwrite
+        )
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.report:
+        report = Path(args.report)
+        report.parent.mkdir(parents=True, exist_ok=True)
+        with report.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"report: {report}")
+    if not args.dry_run:
+        print(f"aligned cache: {target}")
+    return 0
+
+
 def _split_targets(cv_path: str) -> tuple[str, list[str], int]:
     """Read cohort, external test sets and k out of the cv template.
 
@@ -1058,6 +1106,78 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite", action="store_true", help="rebuild subjects already cached"
     )
     process.set_defaults(handler=_process)
+
+    align = commands.add_parser(
+        "align-labels",
+        help="write a cache whose PSG labels are moved, night by night, to match the "
+             "accelerometer",
+        description=(
+            "Estimate each night's offset between the PSG labels and the accelerometer "
+            "from the parameter-free ETC wake score, and write a new cache with the "
+            "labels moved by it. Only the named datasets are aligned; the others are "
+            "linked in unchanged. Nights whose offset cannot be estimated with "
+            "confidence are dropped and listed. The source cache is never modified."
+        ),
+    )
+    align.add_argument("-pc", "--processing-config", required=True)
+    align.add_argument(
+        "--dataset", action="append", required=True,
+        help="dataset whose labels are aligned; repeatable",
+    )
+    align.add_argument(
+        "-o", "--output-dir", required=True,
+        help="feature-cache root for the aligned cache",
+    )
+    align.add_argument(
+        "--source",
+        help="feature-cache root to read; defaults to $FEATURE_CACHE_DIR or "
+             f"{DEFAULT_FEATURE_CACHE_DIR!r}",
+    )
+    align.add_argument(
+        "--etc-alignment-style", choices=["auroc", "kappa"], default="kappa",
+        help="compare the ETC wake score with PSG wake by AUROC, or by kappa against a "
+             "wake call of the night's highest-scoring epochs (default: kappa)",
+    )
+    align.add_argument(
+        "--etc-window", type=int, default=3,
+        help="ETC kernel length in 30 s epochs; odd (default: 3)",
+    )
+    align.add_argument(
+        "--etc-std", type=float, default=0.5,
+        help="ETC kernel standard deviation in epochs (default: 0.5)",
+    )
+    align.add_argument(
+        "--etc-channel", type=int, default=0,
+        help="spectrogram channel the energy is read from (default: 0, magnitude)",
+    )
+    align.add_argument(
+        "--max-shift", type=int, default=20,
+        help="largest offset searched, in epochs either way (default: 20); a night "
+             "whose best offset is at this limit is dropped",
+    )
+    align.add_argument(
+        "--min-peak", type=float,
+        help="drop a night whose best comparison is below this (default: 0.1 for "
+             "kappa, 0.6 for auroc)",
+    )
+    align.add_argument(
+        "--min-margin", type=float, default=0.005,
+        help="drop a night whose best comparison stands less than this above every "
+             "offset more than 2 epochs away (default: 0.005)",
+    )
+    align.add_argument(
+        "--report",
+        help="CSV with each night's offset in both styles, side by side",
+    )
+    align.add_argument(
+        "--dry-run", action="store_true",
+        help="estimate and report only; write no cache",
+    )
+    align.add_argument(
+        "--overwrite", action="store_true",
+        help="replace aligned files already in the output cache",
+    )
+    align.set_defaults(handler=_align_labels)
 
     summarize = commands.add_parser(
         "summarize",
