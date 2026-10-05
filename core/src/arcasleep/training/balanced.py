@@ -8,7 +8,9 @@ early-stops on, and the confusion its early-stopping kappa is read from.
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -18,11 +20,93 @@ from pisces_lite.cv import SubjectRef
 from arcasleep.data.constants import GAP_LABEL, SPECTROGRAM_PADDING_VALUE
 from arcasleep.evaluation.staging_metrics import scored_epoch_mask
 
-#: The learning rate is divided by this after ``lr_drop_patience`` epochs
-#: without an improvement in eval kappa.
+#: The learning rate is divided by this when :class:`Patience` runs out.
 LR_DROP_FACTOR = math.sqrt(10.0)
+#: Units a :class:`Patience` can be counted in.
+PATIENCE_UNITS = ("epochs", "steps")
 #: Recording draws per segment before the sampler gives up on its target class.
 CLASS_SAMPLE_MAX_ATTEMPTS = 100
+
+
+@dataclass(frozen=True)
+class Patience:
+    """When the learning rate drops and the fit stops, read from the eval kappa.
+
+    The learning rate drops after ``lr_drop`` ``unit``s without an improvement
+    in eval kappa, and again after each further ``lr_drop``; the fit stops after
+    ``early_stop``. In ``"steps"`` the rule allows the same number of optimizer
+    steps on a small cohort as on a large one; in ``"epochs"`` a cohort with
+    fewer training nights gets fewer steps.
+
+    With ``smoothing_steps`` > 0, the kappa compared is the mean of the
+    evaluations made in the last ``smoothing_steps`` optimizer steps, so a
+    single high evaluation does not reset the patience. The fit keeps the
+    parameters of the epoch with the best unsmoothed kappa either way.
+    """
+
+    lr_drop: int
+    early_stop: int
+    unit: str = "epochs"
+    smoothing_steps: int = 0
+
+    def __post_init__(self) -> None:
+        if self.unit not in PATIENCE_UNITS:
+            raise ValueError(f"patience unit must be one of {PATIENCE_UNITS}, got {self.unit!r}")
+        if self.lr_drop < 1 or self.early_stop < 1:
+            raise ValueError("patiences must be at least 1")
+        if self.smoothing_steps < 0:
+            raise ValueError("smoothing_steps must be nonnegative")
+
+
+@dataclass(frozen=True)
+class PlateauDecision:
+    """What :meth:`Plateau.update` decided after one epoch's evaluation."""
+
+    smoothed_kappa: float
+    improved: bool
+    drop_lr: bool
+    stop: bool
+
+
+class Plateau:
+    """Tracks the eval kappa over a fit and applies a :class:`Patience`."""
+
+    def __init__(self, patience: Patience, steps_per_epoch: int) -> None:
+        scale = steps_per_epoch if patience.unit == "epochs" else 1
+        self.lr_drop_steps = patience.lr_drop * scale
+        self.early_stop_steps = patience.early_stop * scale
+        self.patience = patience
+        self.steps_per_epoch = steps_per_epoch
+        self.step = 0
+        self.best_smoothed = -np.inf
+        self.best_step = 0
+        self.last_reset_step = 0
+        self._window: deque[tuple[int, float]] = deque()
+
+    def update(self, kappa: float) -> PlateauDecision:
+        """Record one epoch's eval ``kappa``, after that epoch's optimizer steps."""
+        self.step += self.steps_per_epoch
+        if np.isfinite(kappa):
+            self._window.append((self.step, float(kappa)))
+        span = max(self.patience.smoothing_steps, 1)
+        while self._window and self._window[0][0] <= self.step - span:
+            self._window.popleft()
+        smoothed = float(np.mean([k for _, k in self._window])) if self._window else float("nan")
+
+        improved = np.isfinite(smoothed) and smoothed > self.best_smoothed
+        if improved:
+            self.best_smoothed = smoothed
+            self.best_step = self.step
+            self.last_reset_step = self.step
+        stop = self.step - self.best_step >= self.early_stop_steps
+        drop_lr = not stop and self.step - self.last_reset_step >= self.lr_drop_steps
+        if drop_lr:
+            self.last_reset_step = self.step
+        return PlateauDecision(smoothed, bool(improved), drop_lr, stop)
+
+    def describe_stop(self) -> str:
+        """The early-stop message, in the patience's own unit."""
+        return f"no eval improvement in {self.patience.early_stop} {self.patience.unit}"
 
 
 def split_train_eval(

@@ -36,6 +36,7 @@ class UNetFamily(ModelFamily):
             f"lr={training.lr} balance_beta={training.balance_beta}\n"
             f"max_epochs={training.max_epochs} lr_drop_patience={training.lr_drop_patience} "
             f"early_stop_patience={training.early_stop_patience} "
+            f"({training.patience_unit}) eval_smoothing_steps={training.eval_smoothing_steps} "
             f"eval_fraction={training.eval_fraction}"
         )
 

@@ -37,9 +37,15 @@ effective-number class-balanced cross-entropy (`balance_beta`).
 - **Held-out subjects:** 30% of the training subjects (`eval_fraction`) are
   held out and scored by Cohen's κ after every epoch.
 - **Learning rate:** Adam starts at `lr`; the rate drops by √10 after
-  `lr_drop_patience` epochs without an improvement in κ.
-- **Stopping:** training stops after `early_stop_patience` epochs without an
+  `lr_drop_patience` optimizer steps without an improvement in κ.
+- **Stopping:** training stops after `early_stop_patience` steps without an
   improvement in κ; the epoch with the best κ is kept.
+- **Patience in steps:** `patience_unit` is `"steps"`, so a cohort with few
+  training nights gets as many optimizer steps of patience as a large one.
+  `"epochs"` counts epochs instead.
+- **Smoothed κ:** the κ compared for these two rules is the mean over the
+  evaluations in the last `eval_smoothing_steps` steps, so one high evaluation
+  does not reset the patience. 0 compares each evaluation alone.
 
 `scripts/harness.sh` runs the whole recipe: one model per fold of the
 committed split plan (`config/splits/weaver_5fold.json`), each scored on the
