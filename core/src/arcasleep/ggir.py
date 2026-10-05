@@ -359,6 +359,16 @@ def evaluate(
     return evaluate_bins(bin_start_s, anglez_5s, epoch_start_s, n_epochs)
 
 
+def evaluate_epoch_grid(epoch_grid: np.ndarray) -> GGIRResult:
+    """GGIR judgements from a cached ``(epochs, 6)`` grid (:func:`epoch_bins`), on its epochs.
+
+    The grid covers the whole recording, so the judgement is made on all of it;
+    epoch ``k`` starts ``30 * k`` s after the grid's first bin.
+    """
+    total = np.asarray(epoch_grid).shape[0]
+    return evaluate_bins(*bins_from_epochs(epoch_grid), EPOCH_SECONDS * np.arange(total), total)
+
+
 def evaluate_bins(
     bin_start_s: np.ndarray,
     anglez_5s: np.ndarray,

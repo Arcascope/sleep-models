@@ -112,6 +112,13 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
     (checkpoint,) = (results / "model_outputs").glob("*.pisces")
     assert checkpoint_family(checkpoint) == "bidoze"
 
+    (fold_dir,) = (results / "predictions").iterdir()
+    for subject in ("b0", "b1"):
+        with (fold_dir / f"CohortB_{subject}.csv").open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert len(rows) == 9
+        assert {row["psg"] for row in rows} <= {"wake", "light", "deep", "rem"}
+
 
 @pytest.mark.parametrize(
     "overrides",
