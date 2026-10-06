@@ -100,7 +100,24 @@ deploy/scripts/status.sh
 deploy/scripts/run_task.sh --max-hours 6 prep <prep image> <family>/config/inputs.json <dataset> [<dataset> ...]
 ```
 
-When the task has stopped with exit code 0:
+When the task has stopped with exit code 0, check its log: each dataset says
+whether it was cached under pseudonyms or source ids. Then compare the
+cache's subject ids with the split plan before building a data image; a plan
+id with no cache file means the cache was built from a different copy of the
+data:
+
+```bash
+PLAN=<family>/config/splits/<plan>.json
+COHORT=$(jq -r .cohort "$PLAN")
+aws s3 ls s3://arcascope-sleep-models-data/feature_cache/<cache_prefix>/ | awk '{print $4}' \
+  | sed -nE "s/^${COHORT}_subject_(.*)_features\.npz$/\1/p" | sort > /tmp/cache-ids
+jq -r '.folds[][]' "$PLAN" | sort -u > /tmp/plan-ids
+comm -13 /tmp/cache-ids /tmp/plan-ids | head    # plan ids missing from the cache
+```
+
+If ids are missing, stop and tell the user; do not build the data image.
+
+Then:
 
 ```bash
 deploy/scripts/remote_build.sh data <cache_prefix>   # prints the data image

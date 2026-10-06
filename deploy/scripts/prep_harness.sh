@@ -37,6 +37,13 @@ DATA_ARGS=()
 for dataset in "${DATASETS[@]}"; do
     echo "==> sync $dataset"
     aws s3 sync --only-show-errors "${PREP_DATA_S3%/}/$dataset/" "$WORK_DIR/data/$dataset/"
+    # A dataset with a key is cached under pseudonyms; say which, since the
+    # cache file names are all that distinguish the two.
+    if [[ -f "$WORK_DIR/data/$dataset/arcasleep_pseudonym.key" ]]; then
+        echo "    $dataset: pseudonym key present; subjects cached under pseudonyms"
+    else
+        echo "    $dataset: no pseudonym key; subjects cached under their source ids"
+    fi
     DATA_ARGS+=(-dd "$WORK_DIR/data/$dataset")
 done
 

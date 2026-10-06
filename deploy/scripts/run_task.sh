@@ -141,9 +141,14 @@ active_tasks() {
 ACTIVE=$(active_tasks)
 FREE=$((MAX_INSTANCES - ACTIVE))
 echo "==> $MODEL_FAMILY  $IMAGE"
-echo "    recipe   $TRAINING_CONFIG"
+if [[ "$MODEL_FAMILY" == prep ]]; then
+    echo "    inputs   ${PHASES[0]}"
+    echo "    data     ${PHASES[*]:1}"
+else
+    echo "    recipe   $TRAINING_CONFIG"
+    echo "    phases   ${PHASES[*]:-all, in one task}"
+fi
 echo "    run id   $RUN_ID"
-echo "    phases   ${PHASES[*]:-all, in one task}"
 echo "    slots    $FREE free of $MAX_INSTANCES ($ACTIVE active)"
 echo "    limit    $MAX_HOURS h per task"
 
@@ -193,4 +198,8 @@ echo
 echo "capacity starts at zero, so each task waits a few minutes for an instance to boot."
 echo "follow:    aws logs tail $LOG_GROUP --follow --log-stream-name-prefix $MODEL_FAMILY --region $REGION"
 echo "status:    aws ecs describe-tasks --cluster $CLUSTER --region $REGION --tasks ${TASKS[*]} --query 'tasks[].[taskArn,lastStatus,stoppedReason,containers[0].exitCode]' --output text"
-echo "results:   $RESULTS_URI/$RUN_ID/training/<phase>/"
+if [[ "$MODEL_FAMILY" == prep ]]; then
+    echo "cache:     $CACHE_URI/<cache prefix>/"
+else
+    echo "results:   $RESULTS_URI/$RUN_ID/training/<phase>/"
+fi
