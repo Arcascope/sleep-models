@@ -79,6 +79,9 @@ GATE_HEAD_TRAINABLE_ROOTS = {
 }
 
 
+FRAME_POOLINGS = ("mean", "conv")
+
+
 @dataclass
 class BiDozeNetConfig(ModelConfig):
     # With this `True` the net learns to predict sections that have
@@ -89,6 +92,12 @@ class BiDozeNetConfig(ModelConfig):
     # them down to one token per epoch before the conv/transformer stack.
     # Use 1 for the canonical 30 s-hop configs, where the pool is the identity.
     frames_per_epoch: int = 1
+    # How raw frames become one token per epoch when frames_per_epoch > 1:
+    # "mean" averages them; "conv" adds a learned convolution over each
+    # epoch's frames (FramePoolModule) beside the average.
+    frame_pooling: str = "mean"
+    # Output width of the "conv" frame pool.
+    frame_pool_features: int = 64
     d_model: int = 256
     n_heads: int = 8
     n_transformer_layers: int = 4
@@ -151,6 +160,18 @@ class BiDozeNetConfig(ModelConfig):
 
         if config.frames_per_epoch < 1:
             raise ValueError("BiDozeNetConfig.frames_per_epoch must be at least 1")
+
+        if config.frame_pooling not in FRAME_POOLINGS:
+            raise ValueError(
+                f"BiDozeNetConfig.frame_pooling must be one of {FRAME_POOLINGS}, "
+                f"got {config.frame_pooling!r}"
+            )
+        if config.frame_pooling == "conv" and config.frames_per_epoch < 2:
+            raise ValueError(
+                "BiDozeNetConfig.frame_pooling 'conv' needs raw frames: frames_per_epoch >= 2"
+            )
+        if config.frame_pool_features < 1:
+            raise ValueError("BiDozeNetConfig.frame_pool_features must be at least 1")
 
         if config.focal_alpha is not None:
             config.focal_alpha = [float(value) for value in config.focal_alpha]
@@ -230,6 +251,56 @@ def _pool_frames_to_epochs(x: jnp.ndarray, frames_per_epoch: int) -> jnp.ndarray
     n_epochs = n_frames // frames_per_epoch
     pooled = x.reshape(x.shape[0], n_epochs, frames_per_epoch, *x.shape[2:])
     return pooled.mean(axis=2)
+
+
+class FramePoolModule(nn.Module):
+    """Learned pooling of each epoch's raw frames to one token.
+
+    Input ``(B, epochs * frames_per_epoch, F, C)`` raw frames, where a frame
+    with no accelerometer data holds SPECTROGRAM_PADDING_VALUE in every bin and
+    channel. Output ``(B, epochs, F * C + 1 + features)``:
+
+    - the mean of the epoch's real frames (missing frames left out; an epoch
+      with none gives zeros), as the host pool computes it;
+    - the fraction of the epoch's frames that are missing;
+    - ``features`` channels from one convolution whose kernel and stride span
+      exactly one epoch's frames, over the frames with missing ones zeroed and
+      a per-frame "real" channel appended.
+    """
+
+    frames_per_epoch: int
+    features: int
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        fpe = self.frames_per_epoch
+        batch, n_frames = x.shape[:2]
+        if n_frames % fpe != 0:
+            raise ValueError(
+                f"frames_per_epoch={fpe} does not evenly divide the T axis (length {n_frames})"
+            )
+        n_epochs = n_frames // fpe
+        flat = x.reshape(batch, n_frames, -1)
+        real = jnp.any(flat != SPECTROGRAM_PADDING_VALUE, axis=-1).astype(flat.dtype)
+        frames = flat * real[..., None]
+
+        per_epoch = frames.reshape(batch, n_epochs, fpe, -1)
+        real_epoch = real.reshape(batch, n_epochs, fpe)
+        count = real_epoch.sum(axis=2, keepdims=True)
+        mean = per_epoch.sum(axis=2) / jnp.maximum(count, 1.0)
+        missing = 1.0 - count / fpe
+
+        conv_in = jnp.concatenate([frames, real[..., None]], axis=-1)
+        learned = nn.Conv(
+            self.features,
+            kernel_size=(fpe,),
+            strides=(fpe,),
+            padding="VALID",
+            kernel_init=GLOROT_UNIFORM,
+            bias_init=ZEROS,
+            name="conv",
+        )(conv_in)
+        return jnp.concatenate([mean, missing, _gelu(learned)], axis=-1)
 
 
 def _flatten_timestep_features(x: jnp.ndarray) -> jnp.ndarray:
@@ -1069,7 +1140,12 @@ class BiDozeNetModule(nn.Module):
         return_outputs: bool = False,
     ) -> jnp.ndarray | dict[str, jnp.ndarray]:
         if self.cfg.frames_per_epoch > 1:
-            x = _pool_frames_to_epochs(x, self.cfg.frames_per_epoch)
+            if self.cfg.frame_pooling == "conv":
+                x = FramePoolModule(
+                    self.cfg.frames_per_epoch, self.cfg.frame_pool_features, name="frame_pool"
+                )(x)
+            else:
+                x = _pool_frames_to_epochs(x, self.cfg.frames_per_epoch)
             if valid_mask is not None:
                 valid_mask = _pool_frames_to_epochs(valid_mask, self.cfg.frames_per_epoch)
         x = _flatten_timestep_features(x)
