@@ -7,8 +7,10 @@ prune bidoze/deploy
 prune bidoze/docker
 prune bidoze/scripts
 prune unet/cards
+prune unet/docker
 prune unet/config
 prune unet/scripts
+prune deploy
 prune .github
 prune .claude
 prune plans

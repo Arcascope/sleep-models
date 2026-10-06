@@ -1,14 +1,25 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Self-contained infrastructure for one BiDoze training job: its own VPC,
-  cluster, GPU capacity, roles and repository. Nothing here is shared with any
-  other stack, so deleting the stack removes everything it made.
+  Self-contained GPU training infrastructure for every Arcasleep model family:
+  one VPC, cluster, GPU capacity, roles, and an image repository per family.
+  Nothing here is shared with any other stack, so deleting the stack removes
+  everything it made.
 
 Parameters:
   NamePrefix:
     Type: String
-    Default: bidoze-train
+    Default: arcasleep-train
     Description: Prefix for every resource this stack names.
+
+  MaxInstances:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 4
+    Description: >
+      Most GPU instances running at once; each runs one training task. The
+      account's on-demand G/VT quota is 32 vCPUs, so four 8-vCPU instances
+      use all of it, leaving none for any other GPU work in the account.
 
   InstanceType:
     Type: String
@@ -16,7 +27,7 @@ Parameters:
     Description: >
       One GPU with 24 GB VRAM. g6.2xlarge is an L4 with 8 vCPU and 32 GiB RAM;
       g5.2xlarge (A10G) is the same VRAM on older silicon if L4 capacity is
-      short. Measured peak is around 22 GB with XLA preallocation off.
+      short. BiDoze and UNet both train within 22 GB.
 
   GpuAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -148,18 +159,43 @@ Resources:
       Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-sg" }]
 
   # ------------------------------------------------------------------- image
-  Repository:
+  # One repository for feature-cache data images, one per model family for
+  # training images. Tags are immutable: a run is pinned by digest, and an
+  # immutable tag makes the code half of a run fingerprint mean something.
+  # Adding a model family means adding its repository here and its output.
+  DataRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Ref NamePrefix
-      ImageScanningConfiguration: { ScanOnPush: true }
-      # Tags move; a run is pinned by digest. Keeping tags immutable makes the
-      # code half of a run fingerprint mean something.
+      RepositoryName: !Sub "${NamePrefix}/data"
       ImageTagMutability: IMMUTABLE
       LifecyclePolicy:
         LifecyclePolicyText: |
           {"rules":[{"rulePriority":1,"description":"keep the 10 most recent images",
           "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  BidozeRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}/bidoze"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the 20 most recent images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},
+          "action":{"type":"expire"}}]}
+
+  UnetRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}/unet"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the 20 most recent images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},
           "action":{"type":"expire"}}]}
 
   LogGroup:
@@ -268,15 +304,15 @@ Resources:
             echo "ECS_IMAGE_PULL_BEHAVIOR=default" >> /etc/ecs/ecs.config
             echo "ECS_CONTAINER_STOP_TIMEOUT=2m" >> /etc/ecs/ecs.config
 
-  # Desired 0: the capacity provider starts an instance when a task is placed
-  # and scales back to nothing when it ends. A training run should not leave a
-  # GPU idling.
+  # Desired 0: the capacity provider starts one instance per placed task, up
+  # to MaxInstances, and scales back to nothing when they end. A training run
+  # should not leave a GPU idling.
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       AutoScalingGroupName: !Sub "${NamePrefix}-asg"
       MinSize: "0"
-      MaxSize: "1"
+      MaxSize: !Ref MaxInstances
       DesiredCapacity: "0"
       VPCZoneIdentifier: [!Ref SubnetA, !Ref SubnetB, !Ref SubnetC, !Ref SubnetD]
       LaunchTemplate:
@@ -297,7 +333,7 @@ Resources:
           Status: ENABLED
           TargetCapacity: 100
           MinimumScalingStepSize: 1
-          MaximumScalingStepSize: 1
+          MaximumScalingStepSize: !Ref MaxInstances
         ManagedTerminationProtection: ENABLED
 
   Cluster:
@@ -318,7 +354,12 @@ Resources:
 Outputs:
   ClusterName: { Value: !Ref Cluster }
   CapacityProviderName: { Value: !Sub "${NamePrefix}-capacity" }
-  RepositoryUri: { Value: !GetAtt Repository.RepositoryUri }
+  AutoScalingGroupName: { Value: !Ref AutoScalingGroup }
+  MaxInstances: { Value: !Ref MaxInstances }
+  InstanceType: { Value: !Ref InstanceType }
+  DataRepositoryUri: { Value: !GetAtt DataRepository.RepositoryUri }
+  BidozeRepositoryUri: { Value: !GetAtt BidozeRepository.RepositoryUri }
+  UnetRepositoryUri: { Value: !GetAtt UnetRepository.RepositoryUri }
   ExecutionRoleArn: { Value: !GetAtt ExecutionRole.Arn }
   TaskRoleArn: { Value: !GetAtt TaskRole.Arn }
   LogGroupName: { Value: !Ref LogGroup }

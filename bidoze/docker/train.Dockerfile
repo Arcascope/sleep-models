@@ -1,7 +1,7 @@
 # Training image: the data image plus the package and the harness.
 #
-# Built by scripts/build_train_image.sh. The data image arrives as a named build
-# context; pisces-lite and its senpy backend are installed from PyPI:
+# Built by deploy/scripts/build_train_image.sh. The data image arrives as a
+# named build context; pisces-lite and its senpy backend are installed from PyPI:
 #
 #   --build-context data=docker-image://<data image pinned by digest>
 #
@@ -14,7 +14,7 @@
 # than to whatever this tag froze.
 FROM nvidia/cuda:12.6.2-base-ubuntu24.04
 ARG JAX_VERSION=0.11.2
-# No default: build_train_image.sh passes the version pinned in pyproject.toml.
+# No default: deploy/scripts/build_train_image.sh passes the version pinned in pyproject.toml.
 ARG PISCES_LITE_VERSION
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \

@@ -50,8 +50,9 @@ external test sets. Name phases to run only those, in order:
 FEATURE_CACHE_DIR=<cache root> UNET_RUN_ID=<run> scripts/harness.sh [--dry-run] [final fold0 ...]
 ```
 
-Results are written to `results/<run>/training/<phase>/`. To run one phase by
-hand:
+Results are written to `results/<run>/training/<phase>/`. To train on AWS
+GPUs, one phase per GPU, see [`deploy/`](../deploy/README.md). To run one
+phase by hand:
 
 ```bash
 arcasleep unet train \

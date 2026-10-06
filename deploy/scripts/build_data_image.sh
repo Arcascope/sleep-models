@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Build the content-addressed data image from a feature cache directory.
 #
-#   scripts/build_data_image.sh feature_cache/12Hz_log_PSD
-#   scripts/build_data_image.sh /path/to/12Hz_log_PSD --push <ecr-repo-uri>
+#   deploy/scripts/build_data_image.sh bidoze/feature_cache/12Hz_log_PSD_aligned
+#   deploy/scripts/build_data_image.sh /path/to/12Hz_log_PSD_aligned --push <data-repo-uri>
 #
 # The argument is the cache *prefix* directory -- the one holding the NPZs --
 # and its basename becomes the cache prefix, so it must match "cache_prefix" in
-# config/inputs.json. The image is tagged by the manifest digest, not by hand:
-# the same bytes always produce the same tag.
+# the family's config/inputs.json. The image is tagged by the manifest digest,
+# not by hand: the same bytes always produce the same tag. Every model family
+# reading this cache prefix builds its training image on the same data image.
 set -euo pipefail
 
-REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-DOCKERFILE="$REPO_ROOT/docker/data.Dockerfile"
-IMAGE_NAME="${BIDOZE_DATA_IMAGE_NAME:-bidoze-data}"
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+DOCKERFILE="$REPO_ROOT/deploy/docker/data.Dockerfile"
+IMAGE_NAME="${ARCASLEEP_DATA_IMAGE_NAME:-arcasleep-data}"
 
 usage() {
     echo "Usage: $0 <cache-prefix-dir> [--push <repository-uri>]" >&2
@@ -79,6 +80,8 @@ if [[ -n "$PUSH_REPO" ]]; then
     # existing digest rather than making a second image of the same cache.
     docker push "$REMOTE"
     echo
-    echo "pass this digest to scripts/build_train_image.sh:"
-    docker inspect --format '{{index .RepoDigests 0}}' "$REMOTE"
+    echo "pass this reference to deploy/scripts/build_train_image.sh:"
+    PINNED=$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REMOTE" \
+        | grep -m1 "^$PUSH_REPO@")
+    echo "$REMOTE@${PINNED#*@}"
 fi
