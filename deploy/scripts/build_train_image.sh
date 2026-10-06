@@ -1,28 +1,21 @@
 #!/usr/bin/env bash
 # Build a model family's training image on top of a data image.
 #
-#   deploy/scripts/build_train_image.sh <family> <data-image-ref> [--push <repository-uri>]
+#   deploy/scripts/build_train_image.sh <family> <data-image-ref> [--deps <deps-image-ref>] [--push <repository-uri>]
 #
 # The Dockerfile is <family>/docker/train.Dockerfile, built with the repository
-# root as context. pisces-lite and arcascope-senpy are installed from PyPI. The
-# image installs exactly the minimum version pinned by the `pisces` extra in
-# pyproject.toml; override it with PISCES_LITE_VERSION when validating a new
-# release.
+# root as context, FROM the dependency image (build_deps_image.sh). --deps
+# defaults to the local arcasleep-deps image with the current deps_tag.sh tag.
+#
+# The commit comes from git, or from GIT_COMMIT where there is no .git (the
+# remote build's source archive).
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-if [[ -z ${PISCES_LITE_VERSION:-} ]]; then
-    PISCES_LITE_VERSION=$(python3 - "$REPO_ROOT/pyproject.toml" <<'EOF'
-import re, sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    (spec,) = tomllib.load(f)["project"]["optional-dependencies"]["pisces"]
-print(re.fullmatch(r"pisces-lite>=([\w.]+)", spec).group(1))
-EOF
-)
-fi
+DEPS_IMAGE="arcasleep-deps:$(bash "$REPO_ROOT/deploy/scripts/deps_tag.sh")"
 
 usage() {
-    echo "Usage: $0 <family> <data-image-ref> [--push <repository-uri>]" >&2
+    echo "Usage: $0 <family> <data-image-ref> [--deps <deps-image-ref>] [--push <repository-uri>]" >&2
     exit 2
 }
 
@@ -42,6 +35,11 @@ while [[ $# -gt 0 ]]; do
             PUSH_REPO=$2
             shift 2
             ;;
+        --deps)
+            [[ $# -ge 2 ]] || usage
+            DEPS_IMAGE=$2
+            shift 2
+            ;;
         *) usage ;;
     esac
 done
@@ -51,24 +49,28 @@ done
 DATA_TAG=${DATA_IMAGE%@*}
 DATA_TAG=${DATA_TAG##*:}
 [[ "$DATA_TAG" != */* ]] || { echo "the data image reference needs a tag: $DATA_IMAGE" >&2; exit 2; }
-GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
-# A tag naming a clean commit is a claim that the image holds that commit's
-# tree. Mark it when it does not, so the run fingerprint cannot silently
-# attribute a result to code that was never committed.
-if [[ -n $(git -C "$REPO_ROOT" status --porcelain) ]]; then
-    GIT_SHA="$GIT_SHA-dirty"
+if [[ -n ${GIT_COMMIT:-} ]]; then
+    GIT_SHA=$GIT_COMMIT
+else
+    GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
+    # A tag naming a clean commit is a claim that the image holds that
+    # commit's tree. Mark it when it does not, so the run fingerprint cannot
+    # silently attribute a result to code that was never committed.
+    if [[ -n $(git -C "$REPO_ROOT" status --porcelain) ]]; then
+        GIT_SHA="$GIT_SHA-dirty"
+    fi
 fi
 TAG="$IMAGE_NAME:$DATA_TAG-$GIT_SHA"
 
 echo "==> build $TAG"
+echo "    deps   $DEPS_IMAGE"
 echo "    data   $DATA_IMAGE"
-echo "    pisces-lite $PISCES_LITE_VERSION (PyPI)"
 docker buildx build \
     --platform "${TARGET_PLATFORM:-linux/amd64}" \
     -f "$DOCKERFILE" \
     --build-context "data=docker-image://$DATA_IMAGE" \
     --build-arg "GIT_COMMIT=$GIT_SHA" \
-    --build-arg "PISCES_LITE_VERSION=$PISCES_LITE_VERSION" \
+    --build-arg "DEPS_IMAGE=$DEPS_IMAGE" \
     -t "$TAG" \
     --load \
     "$REPO_ROOT"

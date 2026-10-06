@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
-# Run training on the arcasleep-train stack's GPU capacity: one ECS task per
-# phase, or one task for the whole recipe when no phase is named.
+# Run work on the arcasleep-train stack's GPU capacity: training, one ECS task
+# per phase, or a feature-cache build.
 usage() {
     cat <<'USAGE'
 usage: deploy/scripts/run_task.sh [options] FAMILY IMAGE_URI [PHASE ...]
+       deploy/scripts/run_task.sh [options] prep IMAGE_URI INPUTS_CONFIG DATASET [DATASET ...]
 
 FAMILY is a model family (bidoze, unet); IMAGE_URI is a training image in that
 family's repository on the stack. Each PHASE (fold0, fold1, ..., final) runs as
 its own task on its own GPU, all under one run id. With no PHASE, one task
 runs every phase in order.
+
+prep runs one task that builds the feature cache named by INPUTS_CONFIG (a
+path in the prep image, such as unet/config/inputs.json) from each DATASET
+under the stack's data prefix in S3, and syncs it to the stack's feature-cache
+prefix. --config and --run-id do not apply to prep.
 
 Every task needs a free GPU slot (the stack's MaxInstances, less the tasks
 already active). A launch needing more slots than are free is refused unless
@@ -60,7 +66,12 @@ MODEL_FAMILY=${POSITIONAL[0]}
 IMAGE=${POSITIONAL[1]}
 PHASES=("${POSITIONAL[@]:2}")
 
+TEMPLATE=task-definition.json
+ROLE_KEY=TaskRoleArn
 case "$MODEL_FAMILY" in
+    prep)   ENV_PREFIX=PREP; REPO_KEY=PrepRepositoryUri
+            TEMPLATE=prep-task-definition.json; ROLE_KEY=PrepTaskRoleArn
+            [[ ${#PHASES[@]} -ge 2 ]] || { echo "prep takes INPUTS_CONFIG and at least one DATASET" >&2; exit 2; } ;;
     bidoze) ENV_PREFIX=BIDOZE; REPO_KEY=BidozeRepositoryUri
             : "${TRAINING_CONFIG:=config/training-balanced.json}" ;;
     unet)   ENV_PREFIX=UNET; REPO_KEY=UnetRepositoryUri
@@ -78,9 +89,11 @@ CAPACITY=$(output CapacityProviderName)
 MAX_INSTANCES=$(output MaxInstances)
 REPO=$(output "$REPO_KEY")
 EXECUTION_ROLE_ARN=$(output ExecutionRoleArn)
-TASK_ROLE_ARN=$(output TaskRoleArn)
+TASK_ROLE_ARN=$(output "$ROLE_KEY")
 LOG_GROUP=$(output LogGroupName)
 RESULTS_URI=$(output ResultsUri)
+DATA_URI=$(output DataUri)
+CACHE_URI=$(output FeatureCacheUri)
 
 # An image from another family's repository would run that family's harness
 # under this family's environment names.
@@ -95,7 +108,7 @@ IMAGE_TAG=${IMAGE_TAG##*:}
 TASK_FAMILY="$STACK-$MODEL_FAMILY"
 
 export TASK_FAMILY MODEL_FAMILY ENV_PREFIX EXECUTION_ROLE_ARN TASK_ROLE_ARN IMAGE \
-    RUN_ID RESULTS_URI LOG_GROUP TRAINING_CONFIG AWS_REGION="$REGION"
+    RUN_ID RESULTS_URI DATA_URI CACHE_URI LOG_GROUP TRAINING_CONFIG AWS_REGION="$REGION"
 TD=$(mktemp)
 trap 'rm -f "$TD"' EXIT
 EXTRA_JSON=$(printf '%s\n' "${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}" | jq -R -s -c \
@@ -103,14 +116,18 @@ EXTRA_JSON=$(printf '%s\n' "${EXTRA_ENV[@]+"${EXTRA_ENV[@]}"}" | jq -R -s -c \
 # The time limit sits in the entrypoint because RunTask can override a
 # container's command but not its entrypoint. timeout signals the whole
 # process group; the harness's EXIT trap then uploads what the run produced.
-envsubst < "$(dirname "$0")/../aws/task-definition.json" \
-    | jq --argjson extra "$EXTRA_JSON" --arg hours "${MAX_HOURS}h" '
+envsubst < "$(dirname "$0")/../aws/$TEMPLATE" \
+    | jq --argjson extra "$EXTRA_JSON" --arg hours "${MAX_HOURS}h" --arg family "$MODEL_FAMILY" '
         .containerDefinitions[0].environment += $extra
         | .containerDefinitions[0].entryPoint =
-            ["timeout", "--kill-after=10m", $hours, "bash", "scripts/harness.sh"]' > "$TD"
+            ["timeout", "--kill-after=10m", $hours, "bash",
+             (if $family == "prep" then "prep_harness.sh" else "scripts/harness.sh" end)]' > "$TD"
 
 # One task per named phase; a single task with no arguments runs them all.
-if [[ ${#PHASES[@]} -eq 0 ]]; then
+# prep is one task taking every argument.
+if [[ "$MODEL_FAMILY" == prep ]]; then
+    TASK_ARGS=("${PHASES[*]}")
+elif [[ ${#PHASES[@]} -eq 0 ]]; then
     TASK_ARGS=("")
 else
     TASK_ARGS=("${PHASES[@]}")
@@ -154,15 +171,16 @@ for arg in "${TASK_ARGS[@]}"; do
     done
     OVERRIDES='{}'
     if [[ -n "$arg" ]]; then
-        OVERRIDES=$(jq -n -c --arg name "$TASK_FAMILY" --arg phase "$arg" \
-            '{containerOverrides: [{name: $name, command: [$phase]}]}')
+        # Split on spaces: prep's single task carries all its arguments.
+        OVERRIDES=$(jq -n -c --arg name "$TASK_FAMILY" --arg args "$arg" \
+            '{containerOverrides: [{name: $name, command: ($args | split(" "))}]}')
     fi
     TASK=$(aws ecs run-task \
         --cluster "$CLUSTER" \
         --task-definition "$ARN" \
         --capacity-provider-strategy "capacityProvider=$CAPACITY,weight=1" \
         --overrides "$OVERRIDES" \
-        --tags "key=run-id,value=$RUN_ID" "key=phase,value=${arg:-all}" \
+        --tags "key=run-id,value=$RUN_ID" "key=phase,value=$([[ $MODEL_FAMILY == prep ]] && echo prep || echo "${arg:-all}")" \
         --region "$REGION" --query 'tasks[0].taskArn' --output text)
     [[ "$TASK" == arn:* ]] || { echo "run-task returned no task for ${arg:-all}" >&2; exit 1; }
     echo "==> ${arg:-all}  $TASK"

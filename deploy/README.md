@@ -1,8 +1,9 @@
 # Training on ECS/EC2
 
 One CloudFormation stack, `arcasleep-train`, holds everything a training run
-needs for every model family: a VPC, an ECS cluster, GPU capacity, roles, an
-image repository per family and a log group. Nothing is shared with anything
+needs for every model family: a VPC, an ECS cluster, GPU capacity, roles,
+image repositories, a CodeBuild project that builds the images, and log
+groups. Nothing is shared with anything
 else in the account, and `delete-stack` removes all of it.
 
 ## Files
@@ -10,15 +11,37 @@ else in the account, and `delete-stack` removes all of it.
 | file | what it is |
 |---|---|
 | `aws/infra.yaml` | CloudFormation: the whole environment |
-| `aws/task-definition.json` | task definition template; `run_task.sh` fills it from stack outputs |
+| `aws/task-definition.json`, `aws/prep-task-definition.json` | task definition templates; `run_task.sh` fills them from stack outputs |
+| `aws/buildspec.yml` | the CodeBuild spec; it runs `scripts/codebuild.sh` |
+| `docker/deps.Dockerfile` | dependency image: Python, pisces-lite, CUDA jax |
+| `docker/prep.Dockerfile` | feature-cache build image |
 | `docker/data.Dockerfile` | data image: one feature-cache prefix, data only |
-| `scripts/build_data_image.sh` | build (and push) a data image from a cache directory |
-| `scripts/build_train_image.sh` | build (and push) a family's training image on a data image |
-| `scripts/run_task.sh` | launch training: one task per phase |
+| `scripts/remote_build.sh` | build and push any image in CodeBuild |
+| `scripts/build_*_image.sh` | build (and push) one kind of image on this machine |
+| `scripts/run_task.sh` | launch training (one task per phase) or a cache build |
 | `scripts/status.sh` | free GPU slots and the tasks holding the others |
 
 Each family's training image is built from `<family>/docker/train.Dockerfile`;
 its entrypoint is `<family>/scripts/harness.sh`.
+
+## Images
+
+| image | repository | holds | rebuilt when |
+|---|---|---|---|
+| deps | `arcasleep-train/deps` | Python, pisces-lite, CUDA jax | the jax pin (`scripts/deps_tag.sh`), the pisces-lite pin (`pyproject.toml`) or `deps.Dockerfile` changes |
+| prep | `arcasleep-train/prep` | deps + pisces-lite's NUFFT + AWS CLI | the code changes and a cache must be built |
+| data | `arcasleep-train/data` | one feature-cache prefix | the cache changes |
+| training | `arcasleep-train/<family>` | deps + code + configs + data | the code, a config or the data changes |
+
+Tags name their inputs, and are immutable:
+
+- **deps:** `jax<version>-pisces<version>-<Dockerfile digest>`.
+- **prep:** the commit.
+- **data:** `<cache prefix>-<manifest digest>`.
+- **training:** `<data tag>-<commit>`.
+
+The same inputs always give the same tag, so an image whose tag is already in
+ECR is never rebuilt.
 
 ## Account limits
 
@@ -44,43 +67,54 @@ Parameters worth knowing:
 
 - `InstanceType` (default `g6.2xlarge`): see **GPU sizing**.
 - `MaxInstances` (default 3): see **Account limits**.
-- `ResultsBucket` / `ResultsPrefix` (default `arcascope-sleep-models-data` /
-  `training_outputs`): the task role can write only under this prefix.
+- `ResultsBucket` (default `arcascope-sleep-models-data`) and its prefixes:
+  `ResultsPrefix` (`training_outputs`), where training tasks write;
+  `DataPrefix` (`data`), the raw datasets prep tasks read;
+  `FeatureCachePrefix` (`feature_cache`), where prep tasks write caches;
+  `BuildSourcePrefix` (`codebuild/source`), the source archives builds read.
+  Each role can reach only the prefixes it needs.
 
 The autoscaling group starts at **0 instances**. ECS starts one instance per
 task placed, up to `MaxInstances`, and returns to zero after the tasks end;
 no GPU runs while idle. Each task therefore waits a few minutes for its
 instance to boot.
 
-Adding a model family means adding its repository and output to
-`infra.yaml`, its case to `run_task.sh`, and redeploying.
+Adding a model family means adding its repository, output and build
+variable to `infra.yaml`, its case to `run_task.sh`, and redeploying.
 
-## 2. Push images
+## 2. Build images
 
-Images go in two steps: a data image holding one feature-cache prefix, then a
-training image per family built on it. Every family that reads the same cache
-prefix (BiDoze and UNet both read `12Hz_log_PSD_aligned`) shares one data
-image.
+`remote_build.sh` builds in CodeBuild (8 vCPU, about $0.02 per minute; at most
+two builds at once, each stopped after 60 minutes). It builds `HEAD` as
+committed, so every image names a commit; uncommitted changes are not
+included. It waits for the build and prints the pushed image, pinned by
+digest.
 
-    out() { aws cloudformation describe-stacks --stack-name arcasleep-train \
-      --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
-    aws ecr get-login-password --region us-east-1 \
-      | docker login --username AWS --password-stdin "$(out DataRepositoryUri | cut -d/ -f1)"
+    deploy/scripts/remote_build.sh deps                      # once per version bump
+    deploy/scripts/remote_build.sh prep                      # the cache builder
+    deploy/scripts/remote_build.sh data 12Hz_log_PSD_aligned # from the cache in S3
+    deploy/scripts/remote_build.sh train unet <data image>
 
-    deploy/scripts/build_data_image.sh bidoze/feature_cache/12Hz_log_PSD_aligned \
-      --push "$(out DataRepositoryUri)"
-    # prints <data repo>:12Hz_log_PSD_aligned-<digest>@sha256:...
+A train or prep build builds the deps image first if it is not in ECR yet.
 
-    deploy/scripts/build_train_image.sh unet <data image reference> --push "$(out UnetRepositoryUri)"
-    # prints the run_task.sh command for the pushed image
+### Feature caches
 
-Data images are tagged by the cache manifest's digest, and training images by
-`<data tag>-<git commit>`, with `-dirty` added when the working tree has
-uncommitted changes. Tags are **immutable**: pushing a tag that already exists
-fails, which means that data or that commit is already published.
+A cache is built on a GPU task from the raw datasets under
+`s3://<bucket>/data/`, one directory each, with a `data_set.json` or
+`pisces_lite_adapter.py` at its root:
 
-The training recipe and split plans are copied into the image, so a changed
-config needs a new commit and a new training image.
+    deploy/scripts/run_task.sh --max-hours 6 prep <prep image> unet/config/inputs.json weaver SleepAccel bidsleep
+
+The task syncs the cache already at `s3://<bucket>/feature_cache/<cache
+prefix>/` first, so only subjects not yet cached are processed. It then syncs
+the result back; nothing in S3 is deleted. `remote_build.sh data <cache
+prefix>` then packages the whole prefix as a data image.
+
+### Building on this machine
+
+The `build_*_image.sh` scripts build the same images locally; see each
+script's header. A data image built from a local cache is pushed with
+`build_data_image.sh <cache dir> --push <data repo>`.
 
 ## 3. Run
 
@@ -88,6 +122,8 @@ config needs a new commit and a new training image.
     deploy/scripts/run_task.sh unet <image> fold0 fold1 fold2 fold3 fold4 final
 
 Each named phase runs as its own task on its own GPU, all under one run id.
+The recipe and split plans are copied into the image, so a changed config
+needs a new commit and a new training image.
 With no phase named, one task runs every phase in order.
 
 A launch that needs more GPU slots than are free is refused. With `--queue`,

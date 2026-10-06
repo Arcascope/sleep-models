@@ -1,0 +1,33 @@
+{
+  "family": "${TASK_FAMILY}",
+  "networkMode": "bridge",
+  "requiresCompatibilities": ["EC2"],
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
+  "cpu": "7168",
+  "memory": "28672",
+  "containerDefinitions": [
+    {
+      "name": "${TASK_FAMILY}",
+      "image": "${IMAGE}",
+      "essential": true,
+      "resourceRequirements": [{ "type": "GPU", "value": "1" }],
+      "environment": [
+        { "name": "PREP_DATA_S3", "value": "${DATA_URI}" },
+        { "name": "PREP_CACHE_S3", "value": "${CACHE_URI}" },
+        { "name": "XLA_PYTHON_CLIENT_PREALLOCATE", "value": "false" },
+        { "name": "PYTHONUNBUFFERED", "value": "1" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "${LOG_GROUP}",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "prep"
+        }
+      },
+      "linuxParameters": { "sharedMemorySize": 2048 },
+      "stopTimeout": 120
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 name: aws-gpu-runs
-description: Train arcasleep models (BiDoze, UNet) on AWS GPUs. Covers building a data image for a feature cache and a training image on it, pushing both to ECR, launching one ECS task per CV phase on the shared arcasleep-train stack, monitoring, and fetching results from S3, all within the account's GPU limits. Use when an experiment needs more GPUs than the workstation has, or when asked to run, queue, check or collect a training run on AWS/ECS.
+description: Train arcasleep models (BiDoze, UNet) on AWS GPUs. Covers building feature caches from the raw datasets in S3, building data and training images in CodeBuild, launching one ECS task per CV phase on the shared arcasleep-train stack, monitoring, and fetching results from S3, all within the account's GPU limits. Use when an experiment needs more GPUs than the workstation has, or when asked to run, queue, check or collect a training run on AWS/ECS.
 ---
 
 # GPU training runs on AWS
@@ -34,78 +34,86 @@ every time:
 - An instance costs money from boot to scale-in, about 15 minutes after its
   task ends. Group work into fewer, larger launches rather than many short
   ones.
+- **Build images with `remote_build.sh`, not on the workstation.** Builds
+  cost about $0.02 per minute and at most two run at once; don't start a
+  build whose image is already in ECR (step 2 shows how to check).
 
-## Image layout
+## Images
 
-An image has two parts:
+| image | changes when | built by |
+|---|---|---|
+| deps | the jax or pisces-lite pin, or `deploy/docker/deps.Dockerfile` | `remote_build.sh deps` |
+| prep | code that `arcasleep process` runs | `remote_build.sh prep` |
+| data | the feature cache: a new `cache_prefix` in `config/inputs.json`, or new subjects | a prep task, then `remote_build.sh data <cache_prefix>` |
+| training | code, or anything in `<family>/config/` or `<family>/scripts/` | `remote_build.sh train <family> <data image>` |
 
-| image | repository | changes when | built by |
-|---|---|---|---|
-| data | `arcasleep-train/data` | the feature cache changes: a new `cache_prefix` in `config/inputs.json` or new recordings | `build_data_image.sh` |
-| training | `arcasleep-train/<family>` | code, dependencies or anything in `<family>/config/` or `<family>/scripts/` | `build_train_image.sh` |
+The training image is deps + code + the family's `config/` and `scripts/` +
+the data image's cache. The recipe and split plans are therefore inside the
+image: **changing a config means a new commit and a new training image.** No
+data image is needed for that.
 
-The training image copies the data image's cache in as one layer, then adds
-the package, the family's `config/` and `scripts/`, and the harness as its
-entrypoint. The recipe and split plans are therefore inside the image:
-**changing a config means a new commit and a new training image.** No data
-image is needed for that.
+`remote_build.sh` builds `HEAD` as committed: **commit first** (a local commit
+is enough; no push needed). Uncommitted changes are not in the image.
 
 Decide which images you need:
 
-1. **Same cache, new code or config**: reuse the existing data image and
-   build a new training image. This is the usual case.
-2. **New cache prefix** (different spectrogram settings, new datasets): build
-   the cache locally with `arcasleep process`, then build a data image from
-   it and a training image on top.
+1. **Same cache, new code or config**: build a new training image on the
+   existing data image. This is the usual case.
+2. **New cache prefix or new datasets**: run a prep task to build the cache in
+   S3, then build a data image, then a training image on it.
 3. **New dependency** for a family: edit `<family>/docker/train.Dockerfile`,
-   keeping pinned versions (`jax` is pinned exactly because it brings in the
-   CUDA libraries).
+   pinning the version. A change to `deps.Dockerfile` or a pin rebuilds deps,
+   which takes the longest; ask the user first.
 4. **New model family**: needs a repository in the stack. Ask the user.
 
 ## Workflow
 
-### 1. Log in to ECR, find the repositories
+Run from the repository root. Stack outputs:
 
 ```bash
 out() { aws cloudformation describe-stacks --stack-name arcasleep-train --region us-east-1 \
   --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
-DATA_REPO=$(out DataRepositoryUri)
-aws ecr get-login-password --region us-east-1 \
-  | docker login --username AWS --password-stdin "${DATA_REPO%%/*}"
 ```
 
-### 2. The data image: reuse one if it exists
+### 1. Find existing images
 
 ```bash
-aws ecr describe-images --repository-name arcasleep-train/data --region us-east-1 \
-  --query 'sort_by(imageDetails,&imagePushedAt)[].[imageTags[0],imageDigest,imagePushedAt]' --output text
+for r in data unet bidoze prep deps; do echo "== $r"
+  aws ecr describe-images --repository-name arcasleep-train/$r --region us-east-1 \
+    --query 'sort_by(imageDetails,&imagePushedAt)[-5:].[imageTags[0],imageDigest,imagePushedAt]' --output text
+done
 ```
 
-A tag is `<cache_prefix>-<manifest digest[:12]>`. If one matches your cache
-prefix and the cache has not changed, use `"$DATA_REPO:<tag>@<digest>"`.
-Otherwise:
+A data tag is `<cache_prefix>-<manifest digest[:12]>`; a training tag is
+`<data tag>-<commit>`. Pin images as `<repo>:<tag>@<digest>`. If the training
+image for your data tag and commit is already there, skip to step 4.
+
+### 2. A new feature cache (only for case 2)
+
+Raw datasets are directories under `s3://arcascope-sleep-models-data/data/`
+(`aws s3 ls` it to see which exist). Cached subjects are skipped, so a prep
+task only processes new ones:
 
 ```bash
-deploy/scripts/build_data_image.sh <path>/feature_cache/<cache_prefix> --push "$DATA_REPO"
+deploy/scripts/remote_build.sh prep        # prints the prep image
+deploy/scripts/status.sh
+deploy/scripts/run_task.sh --max-hours 6 prep <prep image> <family>/config/inputs.json <dataset> [<dataset> ...]
 ```
 
-Pushing a tag that already exists fails. That failure means the identical
-cache is already published, so use the existing image.
+When the task has stopped with exit code 0:
+
+```bash
+deploy/scripts/remote_build.sh data <cache_prefix>   # prints the data image
+```
 
 ### 3. The training image
 
-Commit first: the tag is `<data tag>-<git commit>`, and an image built from
-uncommitted changes is tagged `-dirty`. A `-dirty` image cannot be traced back
-to its exact code; use it only for wiring checks.
-
 ```bash
-deploy/scripts/build_train_image.sh <family> "<data image reference>" --push "$(out <Family>RepositoryUri)"
+deploy/scripts/remote_build.sh train <family> <data image>   # prints the training image
 ```
 
-`<Family>RepositoryUri` is `BidozeRepositoryUri` or `UnetRepositoryUri`. The
-script prints the exact `run_task.sh` command, with the image pinned by digest.
-A training image is about 6 GB. Pushing a new commit only uploads its changed
-layers, and the data layer is unchanged.
+`--no-wait` returns once the build has started; follow it with
+`aws logs tail /aws/codebuild/arcasleep-train --follow --region us-east-1`.
 
 ### 4. Launch
 
@@ -165,6 +173,7 @@ research log.
 
 ## Cleaning up
 
-ECR keeps the 10 most recent data images and the 20 most recent training
-images per family; older ones expire on their own. Do not delete images by
+ECR keeps the 5 most recent deps and prep images, the 10 most recent data
+images and the 20 most recent training images per family; older ones expire
+on their own. Do not delete images by
 hand: another agent's run may be pinned to them.

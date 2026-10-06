@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Self-contained GPU training infrastructure for every Arcasleep model family:
-  one VPC, cluster, GPU capacity, roles, and an image repository per family.
+  one VPC, cluster, GPU capacity, roles, image repositories and an image build
+  project.
   Nothing here is shared with any other stack, so deleting the stack removes
   everything it made.
 
@@ -38,8 +39,10 @@ Parameters:
 
   RootVolumeSizeGb:
     Type: Number
-    Default: 120
-    Description: The training image is ~8 GB; this leaves room for it and its layers.
+    Default: 200
+    Description: >
+      A training image is ~8 GB. A prep task also syncs its raw datasets
+      (~47 GB across weaver, SleepAccel and bidsleep) and writes the cache.
 
   ResultsBucket:
     Type: String
@@ -54,6 +57,21 @@ Parameters:
   LogRetentionDays:
     Type: Number
     Default: 30
+
+  DataPrefix:
+    Type: String
+    Default: data
+    Description: Key prefix under ResultsBucket holding raw datasets, one directory each.
+
+  FeatureCachePrefix:
+    Type: String
+    Default: feature_cache
+    Description: Key prefix under ResultsBucket holding feature caches, one per cache prefix.
+
+  BuildSourcePrefix:
+    Type: String
+    Default: codebuild/source
+    Description: Key prefix under ResultsBucket for the source archives remote builds read.
 
 Resources:
   # ---------------------------------------------------------------- network
@@ -163,6 +181,30 @@ Resources:
   # training images. Tags are immutable: a run is pinned by digest, and an
   # immutable tag makes the code half of a run fingerprint mean something.
   # Adding a model family means adding its repository here and its output.
+  # Python, pisces-lite and CUDA jax: rebuilt only when a pin changes.
+  DepsRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}/deps"
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the 5 most recent images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
+  # Feature-cache build images.
+  PrepRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}/prep"
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the 5 most recent images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":5},
+          "action":{"type":"expire"}}]}
+
   DataRepository:
     Type: AWS::ECR::Repository
     Properties:
@@ -277,6 +319,133 @@ Resources:
                 Resource: "*"
       Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-task" }]
 
+  # A feature-cache build reads raw datasets and writes the cache; it has no
+  # access to training results.
+  PrepTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cache-build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}/${DataPrefix}/*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:AbortMultipartUpload]
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}/${FeatureCachePrefix}/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Condition:
+                  StringLike:
+                    "s3:prefix": [!Sub "${DataPrefix}/*", !Sub "${FeatureCachePrefix}/*"]
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}"
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-prep" }]
+
+  # ------------------------------------------------------------ image builds
+  # Builds and pushes images inside AWS, so pulling the CUDA wheels and
+  # pushing multi-GB images does not depend on a workstation's network.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${NamePrefix}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: image-build
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt BuildLogGroup.Arn
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeImages
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource:
+                  - !GetAtt DepsRepository.Arn
+                  - !GetAtt PrepRepository.Arn
+                  - !GetAtt DataRepository.Arn
+                  - !GetAtt BidozeRepository.Arn
+                  - !GetAtt UnetRepository.Arn
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource:
+                  - !Sub "arn:aws:s3:::${ResultsBucket}/${BuildSourcePrefix}/*"
+                  - !Sub "arn:aws:s3:::${ResultsBucket}/${FeatureCachePrefix}/*"
+              - Effect: Allow
+                Action: [s3:GetBucketAcl, s3:GetBucketLocation]
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Condition:
+                  StringLike: { "s3:prefix": !Sub "${FeatureCachePrefix}/*" }
+                Resource: !Sub "arn:aws:s3:::${ResultsBucket}"
+      Tags: [{ Key: Name, Value: !Sub "${NamePrefix}-build" }]
+
+  # No source of its own: remote_build.sh supplies the source archive and the
+  # buildspec path on every build. Privileged mode runs the Docker daemon.
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref NamePrefix
+      ServiceRole: !GetAtt BuildRole.Arn
+      # Builds cost per minute; a hung one stops at the timeout, and at most
+      # two run at once.
+      TimeoutInMinutes: 60
+      ConcurrentBuildLimit: 2
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo "start builds with deploy/scripts/remote_build.sh" && exit 1
+      Artifacts: { Type: NO_ARTIFACTS }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - { Name: DEPS_REPO, Value: !GetAtt DepsRepository.RepositoryUri }
+          - { Name: PREP_REPO, Value: !GetAtt PrepRepository.RepositoryUri }
+          - { Name: DATA_REPO, Value: !GetAtt DataRepository.RepositoryUri }
+          - { Name: BIDOZE_REPO, Value: !GetAtt BidozeRepository.RepositoryUri }
+          - { Name: UNET_REPO, Value: !GetAtt UnetRepository.RepositoryUri }
+          - { Name: CACHE_S3, Value: !Sub "s3://${ResultsBucket}/${FeatureCachePrefix}" }
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref BuildLogGroup
+
   # -------------------------------------------------------- GPU capacity
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -357,6 +526,8 @@ Outputs:
   AutoScalingGroupName: { Value: !Ref AutoScalingGroup }
   MaxInstances: { Value: !Ref MaxInstances }
   InstanceType: { Value: !Ref InstanceType }
+  DepsRepositoryUri: { Value: !GetAtt DepsRepository.RepositoryUri }
+  PrepRepositoryUri: { Value: !GetAtt PrepRepository.RepositoryUri }
   DataRepositoryUri: { Value: !GetAtt DataRepository.RepositoryUri }
   BidozeRepositoryUri: { Value: !GetAtt BidozeRepository.RepositoryUri }
   UnetRepositoryUri: { Value: !GetAtt UnetRepository.RepositoryUri }
@@ -366,3 +537,8 @@ Outputs:
   SubnetIds: { Value: !Join [",", [!Ref SubnetA, !Ref SubnetB, !Ref SubnetC, !Ref SubnetD]] }
   SecurityGroupId: { Value: !Ref TaskSecurityGroup }
   ResultsUri: { Value: !Sub "s3://${ResultsBucket}/${ResultsPrefix}" }
+  PrepTaskRoleArn: { Value: !GetAtt PrepTaskRole.Arn }
+  DataUri: { Value: !Sub "s3://${ResultsBucket}/${DataPrefix}" }
+  FeatureCacheUri: { Value: !Sub "s3://${ResultsBucket}/${FeatureCachePrefix}" }
+  BuildProjectName: { Value: !Ref BuildProject }
+  BuildSourceUri: { Value: !Sub "s3://${ResultsBucket}/${BuildSourcePrefix}" }
