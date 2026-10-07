@@ -50,6 +50,8 @@ from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
+    Patience,
+    Plateau,
     balanced_cross_entropy,
     sample_balanced_segments,
     selection_confusion,
@@ -383,8 +385,7 @@ class UNetModel:
         batch_size: int,
         initial_lr: float,
         balance_beta: float,
-        lr_drop_patience: int,
-        early_stop_patience: int,
+        patience: Patience,
         max_epochs: int,
         fit_seed: int,
         lr_drop_factor: float = LR_DROP_FACTOR,
@@ -397,9 +398,8 @@ class UNetModel:
         ``0..num_classes-1`` plus the gap label and ``-1`` for unscored. Each
         epoch draws one batch of balanced segments per ``batch_size`` training
         nights. Adam starts at ``initial_lr``; the rate is divided by
-        ``lr_drop_factor`` after ``lr_drop_patience`` epochs without an eval
-        improvement, training stops after ``early_stop_patience``, and the
-        best epoch's variables are kept.
+        ``lr_drop_factor`` and the fit stops as ``patience`` decides, and the
+        variables of the epoch with the best eval kappa are kept.
         """
         cfg = self.config
         fpe = cfg.frames_per_epoch
@@ -471,9 +471,10 @@ class UNetModel:
         best_kappa = -np.inf
         best_variables = None
         best_epoch = -1
-        epochs_since_best = 0
-        epochs_since_lr_drop = 0
-        history: dict[str, Any] = {"train_loss": [], "eval_kappa": [], "lr": []}
+        plateau = Plateau(patience, steps_per_epoch)
+        history: dict[str, Any] = {
+            "train_loss": [], "eval_kappa": [], "smoothed_eval_kappa": [], "lr": []
+        }
 
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
@@ -497,34 +498,31 @@ class UNetModel:
             epoch_loss /= steps_per_epoch
 
             kappa = eval_kappa(params, batch_stats)
+            decision = plateau.update(kappa)
             history["train_loss"].append(epoch_loss)
             history["eval_kappa"].append(kappa)
+            history["smoothed_eval_kappa"].append(decision.smoothed_kappa)
             history["lr"].append(lr)
 
             if np.isfinite(kappa) and kappa > best_kappa:
                 best_kappa = kappa
                 best_epoch = epoch
                 best_variables = jax.device_get({"params": params, "batch_stats": batch_stats})
-                epochs_since_best = 0
-                epochs_since_lr_drop = 0
-            else:
-                epochs_since_best += 1
-                epochs_since_lr_drop += 1
 
             print(
-                f"    epoch {epoch:3d}  loss {epoch_loss:.3e}  eval_kappa {kappa:.4f}  "
+                f"    epoch {epoch:3d}  step {plateau.step}  loss {epoch_loss:.3e}  "
+                f"eval_kappa {kappa:.4f}  smoothed {decision.smoothed_kappa:.4f}  "
                 f"best {best_kappa:.4f}@{best_epoch}  lr {lr:.2e}  "
                 f"epoch_time={time.time() - epoch_start:.3f}s",
                 flush=True,
             )
 
-            if epochs_since_best >= early_stop_patience:
-                print(f"    early stop: no eval improvement in {early_stop_patience} epochs")
+            if decision.stop:
+                print(f"    early stop: {plateau.describe_stop()}")
                 break
-            if epochs_since_lr_drop >= lr_drop_patience:
+            if decision.drop_lr:
                 lr /= lr_drop_factor
                 opt_state.hyperparams["learning_rate"] = jnp.asarray(lr, dtype=jnp.float32)
-                epochs_since_lr_drop = 0
                 print(f"    lr -> {lr:.2e}")
 
         if best_variables is None:

@@ -13,6 +13,7 @@ pytest.importorskip("jax")
 from arcasleep.data.bundle import CacheBundle  # noqa: E402
 from arcasleep.data.cache import CACHE_SUFFIX, SUBJECT_SEPARATOR  # noqa: E402
 from arcasleep.models import checkpoint_family, get_family  # noqa: E402
+from arcasleep.training.balanced import Patience  # noqa: E402
 from arcasleep.training.config import RunConfig  # noqa: E402
 from arcasleep.training.driver import RunPaths, run_training  # noqa: E402
 from arcasleep_bidoze.training import TrainingConfig  # noqa: E402
@@ -171,5 +172,5 @@ def test_a_fit_with_no_finite_eval_kappa_refuses_to_pick_an_epoch(tmp_path: Path
         model.fit_balanced(
             x, y, x[:2], no_scored_epochs,
             batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
-            lr_drop_patience=1, early_stop_patience=2, max_epochs=3, fit_seed=0,
+            patience=Patience(lr_drop=1, early_stop=2), max_epochs=3, fit_seed=0,
         )

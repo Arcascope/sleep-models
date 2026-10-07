@@ -9,7 +9,7 @@ from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.batching import recording_input
-from arcasleep.training.balanced import split_train_eval
+from arcasleep.training.balanced import Patience, split_train_eval
 from arcasleep.training.config import RunConfig, reject_unknown
 from arcasleep.training.folds import DatasetIndex
 
@@ -25,8 +25,12 @@ class TrainingConfig:
     lr: float
     segment_epochs: int
     balance_beta: float = 0.999
+    # The two patiences count `patience_unit`s, "epochs" or optimizer "steps";
+    # eval_smoothing_steps > 0 compares the mean eval kappa over that many steps.
+    patience_unit: str = "epochs"
     lr_drop_patience: int = 10
     early_stop_patience: int = 25
+    eval_smoothing_steps: int = 0
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
 
@@ -50,10 +54,22 @@ class TrainingConfig:
             raise ValueError("training.json: lr must be positive")
         if not 0.0 < self.balance_beta < 1.0:
             raise ValueError("training.json: balance_beta must be in (0, 1)")
-        if self.lr_drop_patience < 1 or self.early_stop_patience < 1:
-            raise ValueError("training.json: patiences must be at least 1")
+        try:
+            _ = self.patience
+        except ValueError as exc:
+            raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+
+    @property
+    def patience(self) -> Patience:
+        """When the fit drops its learning rate and stops."""
+        return Patience(
+            lr_drop=self.lr_drop_patience,
+            early_stop=self.early_stop_patience,
+            unit=self.patience_unit,
+            smoothing_steps=self.eval_smoothing_steps,
+        )
 
     @property
     def seeds(self) -> list[int]:
@@ -128,8 +144,7 @@ def train_fold(
         batch_size=training.batch_size,
         initial_lr=training.lr,
         balance_beta=training.balance_beta,
-        lr_drop_patience=training.lr_drop_patience,
-        early_stop_patience=training.early_stop_patience,
+        patience=training.patience,
         max_epochs=training.max_epochs,
         fit_seed=fit_seed,
     )

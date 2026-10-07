@@ -13,6 +13,7 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 
 from arcasleep.models import MODEL_TYPE_KEY, checkpoint_family, get_family  # noqa: E402
+from arcasleep.training.balanced import Patience  # noqa: E402
 from arcasleep_unet.model import UNetConfig, UNetModel  # noqa: E402
 from arcasleep_unet.model.definition import (  # noqa: E402
     UNetModule,
@@ -215,8 +216,7 @@ def test_a_tiny_fit_runs_and_keeps_its_best_epoch() -> None:
         batch_size=2,
         initial_lr=1e-3,
         balance_beta=0.999,
-        lr_drop_patience=1,
-        early_stop_patience=2,
+        patience=Patience(lr_drop=1, early_stop=2),
         max_epochs=3,
         fit_seed=0,
     )
