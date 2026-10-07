@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from pisces_lite.cv import SubjectRef
 
+from arcasleep.data.cache import participant_id
 from arcasleep.data.constants import GAP_LABEL, SPECTROGRAM_PADDING_VALUE
 from arcasleep.evaluation.staging_metrics import scored_epoch_mask
 
@@ -116,14 +117,15 @@ class Plateau:
 def split_train_eval(
     refs: Sequence[SubjectRef], eval_fraction: float, split_seed: int
 ) -> tuple[list[SubjectRef], list[SubjectRef]]:
-    """Hold out ``eval_fraction`` of the subjects to early-stop on, seeded by ``split_seed``.
+    """Hold out ``eval_fraction`` of the participants to early-stop on, seeded by ``split_seed``.
 
-    The split is by subject id, so a subject listed under several datasets
+    The split is by participant, so every recording of a participant (other
+    nights, other devices, the same subject listed under several datasets)
     lands on one side.
     """
     groups: dict[str, list[SubjectRef]] = {}
     for ref in refs:
-        groups.setdefault(ref.subject_id, []).append(ref)
+        groups.setdefault(participant_id(ref.subject_id), []).append(ref)
     group_refs = list(groups.values())
 
     order = np.random.default_rng(split_seed).permutation(len(group_refs))

@@ -26,6 +26,14 @@ from arcasleep.data.bundle import CacheBundle
 
 CACHE_SUFFIX = "_features.npz"
 SUBJECT_SEPARATOR = "_subject_"
+# A subject id is ``<participant>`` or ``<participant>_<recording>``, e.g.
+# ``Bidslab00_n1`` or ``00lhv171_apple_n1``: one participant's nights and devices.
+PARTICIPANT_SEPARATOR = "_"
+
+
+def participant_id(subject_id: str) -> str:
+    """The participant a subject id's recording belongs to."""
+    return subject_id.split(PARTICIPANT_SEPARATOR, 1)[0]
 
 
 @dataclass(frozen=True, order=True)
