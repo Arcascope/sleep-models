@@ -56,7 +56,8 @@ def effective_weights(
     counts = np.asarray(night_counts, dtype=float)
     rng = np.random.default_rng(seed)
     batches = counts[rng.integers(len(counts), size=(draws, nights_per_batch))].sum(axis=1)
-    weights = np.where(batches > 0, (1 - beta) / (1 - beta**batches), 0.0)
+    with np.errstate(divide="ignore"):
+        weights = np.where(batches > 0, (1 - beta) / (1 - beta**batches), 0.0)
     return (batches * weights).sum(axis=0) / batches.sum(axis=0)
 
 
