@@ -16,6 +16,11 @@ Scorings:
           BIDsleep. SleepAccel-Clinical, scored by the mean output of the 5 fold models, uses the
           geometric mean of their divisors.
 
+Stalled fold models (best eval κ < 0.3; healthy ones reach ≥ 0.48) are kept in ``<arm>`` and
+left out of ``<arm> (stalled out)``, which is added for each arm that has one: a stalled seed's
+held-out SleepAccel subjects are dropped from that seed, and that fold's ensemble and the
+SleepAccel-Clinical mean use the other fold models.
+
 Statistics: mean over subjects; p: paired Wilcoxon over subjects. Seed arms are compared on the
 per-subject mean over seeds.
 
@@ -46,6 +51,7 @@ BIDOZE = HERE.parents[1]
 CACHE_NAME = "12Hz_log_PSD_aligned"
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 SEEDS = [0, 1, 2]
+STALLED_KAPPA = 0.3
 FOLDS = range(5)
 REFERENCE = "weaver-2026-10-06"
 STAGES = ["wake", "light", "deep", "rem"]
@@ -72,8 +78,12 @@ def load_predictions(pred_dir: Path, held_out: str) -> dict[str, dict[str, tuple
     return out
 
 
-def combine_folds(per_fold: list[dict]) -> dict[str, dict[str, tuple]]:
-    """SleepAccel: each subject from its held-out fold; SleepAccel-Clinical: mean over folds."""
+def combine_folds(per_fold: list[dict | None]) -> dict[str, dict[str, tuple]]:
+    """SleepAccel: each subject from its held-out fold; SleepAccel-Clinical: mean over folds.
+
+    A fold left out (None) contributes no SleepAccel subjects and no SleepAccel-Clinical output.
+    """
+    per_fold = [f for f in per_fold if f is not None]
     clinical = per_fold[0]["SleepAccel-Clinical"]
     return {
         "SleepAccel": {sid: v for f in per_fold for sid, v in f["SleepAccel"].items()},
@@ -84,9 +94,16 @@ def combine_folds(per_fold: list[dict]) -> dict[str, dict[str, tuple]]:
     }
 
 
-def mean_over_seeds(per_seed: list[dict]) -> dict:
+def mean_over_seeds(per_seed: list[dict | None]) -> dict:
+    per_seed = [s for s in per_seed if s is not None]
     return {c: {sid: (y, np.mean([s[c][sid][1] for s in per_seed], axis=0))
                 for sid, (y, _) in per_seed[0][c].items()} for c in COHORTS}
+
+
+def best_eval_kappas(log: Path) -> list[float]:
+    """Best eval κ per seed, in the order the seeds trained."""
+    return [float(line.split()[3]) for line in log.read_text().splitlines()
+            if line.strip().startswith("best eval kappa")]
 
 
 def night_counts(paths: list[Path]) -> np.ndarray:
@@ -150,6 +167,13 @@ def main(run: Path, adult_root: Path) -> None:
             cv = json.loads((run / f"setup/cv/{arm}/cv_fold{k}.json").read_text())
             train.append([p for d in cv["train_sets"] for p in sorted(cache.glob(f"{d}_subject_*"))])
         arms[arm] = (preds, train)
+        stalled = [(s, k) for k in FOLDS
+                   for s, kappa in zip(SEEDS, best_eval_kappas(run / arm / f"fold{k}/training.log"))
+                   if kappa < STALLED_KAPPA]
+        if stalled:
+            print(f"{arm}: stalled fold models (seed, fold): {stalled}")
+            kept = {s: [None if (s, k) in stalled else preds[s][k] for k in FOLDS] for s in SEEDS}
+            arms[f"{arm} (stalled out)"] = (kept, train)
     mix = results / "bidoze-weaver-mix-0"
     arms[REFERENCE] = (
         {s: [load_predictions(mix / f"mix{k}-seed{s}/predictions/mix{k}_seed_{s}", plan.fold_names[k])
@@ -178,9 +202,12 @@ def main(run: Path, adult_root: Path) -> None:
             # Each subject's adult calls use the divisor of the fold model(s) that scored it.
             adult_calls: dict[str, dict] = {c: {} for c in COHORTS}
             for k, fold in enumerate(per_fold):
+                if fold is None:
+                    continue
                 for sid, (_, p) in fold["SleepAccel"].items():
                     adult_calls["SleepAccel"][sid] = hybrid_calls(ped["SleepAccel"][sid][1], p, divisors[k])
-            mean_divisor = np.exp(np.mean(np.log(divisors), axis=0))
+            used = [d for d, fold in zip(divisors, per_fold) if fold is not None]
+            mean_divisor = np.exp(np.mean(np.log(used), axis=0))
             for sid, (_, p) in combined["SleepAccel-Clinical"].items():
                 adult_calls["SleepAccel-Clinical"][sid] = hybrid_calls(ped["SleepAccel-Clinical"][sid][1], p,
                                                                       mean_divisor)
