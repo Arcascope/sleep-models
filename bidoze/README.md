@@ -15,6 +15,9 @@ This directory holds the model's run configs (`config/`), release info and
 cards (`cards/`), and the training image and harness (`docker/`, `scripts/`,
 `deploy/`). Commands below run from here.
 
+Scoring adult nights (the release's sleep/wake calls with light/deep/REM from a model
+trained on adult nights) is described in [ADULT.md](ADULT.md).
+
 ## Releasing a model
 
 A training phase directory (`<run>/training/final`) holds the config snapshots,
