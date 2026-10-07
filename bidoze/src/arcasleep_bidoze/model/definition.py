@@ -116,6 +116,10 @@ class BiDozeNetConfig(ModelConfig):
         (0.3, 0.8, 2.0, 2.0, 1.0),
     )
     stage_focal_gammas: Tuple[float, float, float] = (2.0, 2.0, 2.0)
+    # Classes whose epochs accrue loss under the balanced recipe (e.g. [1, 2, 3]
+    # for light, deep and REM only); None trains every class. Epochs of other
+    # classes stay in the input, and the eval kappa counts only these classes.
+    loss_classes: Tuple[int, ...] | None = None
 
     @property
     def output_classes(self) -> int:
@@ -172,6 +176,11 @@ class BiDozeNetConfig(ModelConfig):
             )
         if config.frame_pool_features < 1:
             raise ValueError("BiDozeNetConfig.frame_pool_features must be at least 1")
+
+        if config.loss_classes is not None:
+            config.loss_classes = tuple(int(c) for c in config.loss_classes)
+            if not config.loss_classes or any(not 0 <= c < config.output_classes for c in config.loss_classes):
+                raise ValueError("BiDozeNetConfig.loss_classes must be output class indices")
 
         if config.focal_alpha is not None:
             config.focal_alpha = [float(value) for value in config.focal_alpha]
@@ -3319,12 +3328,21 @@ class BiDozeNetModel(CVModel):
             else _numpy_feature_activity_mask(eval_x)
         )
 
+        loss_classes = cfg.loss_classes
+        if loss_classes is not None:
+            kept = np.zeros(output_classes, dtype=bool)
+            kept[list(loss_classes)] = True
+            # Only the loss classes are scored and predicted when selecting the epoch.
+            eval_y = np.where(np.isin(eval_y, loss_classes), eval_y, -1)
+
         def eval_kappa(params) -> float:
             cm = np.zeros((num_classes, num_classes + 1), dtype=np.int64)
             for i in range(0, eval_x.shape[0], eval_batch_size):
                 batch = slice(i, i + eval_batch_size)
-                logits = eval_logits(params, jnp.asarray(eval_x[batch]), jnp.asarray(eval_mask[batch]))
-                pred = np.argmax(np.asarray(logits), axis=-1)
+                logits = np.asarray(eval_logits(params, jnp.asarray(eval_x[batch]), jnp.asarray(eval_mask[batch])))
+                if loss_classes is not None:
+                    logits = np.where(kept, logits, -np.inf)
+                pred = np.argmax(logits, axis=-1)
                 cm += selection_confusion(eval_y[batch], pred, num_classes)
             return cohen_kappa_from_confusion(cm)
 
@@ -3355,6 +3373,8 @@ class BiDozeNetModel(CVModel):
             # The model pools the mask with its frames, so it runs per frame.
             ms = np.repeat(valid_mask(ys), fpe, axis=1)
             ys = np.where(ys <= GAP_LABEL, gap_class, ys)
+            if loss_classes is not None:
+                ys = np.where(np.isin(ys, loss_classes), ys, -1)
             epoch_loss = 0.0
             for step in range(steps_per_epoch):
                 batch = slice(step * batch_size, (step + 1) * batch_size)
