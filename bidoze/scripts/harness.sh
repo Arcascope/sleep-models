@@ -4,7 +4,12 @@
 #   scripts/harness.sh [--dry-run] [phase ...]
 #
 # Phases are fold0..fold{k-1} and final, all of them by default, in the order
-# given. The folds are not computed here. config/splits/*.json records the literal
+# given.
+#
+# With BIDOZE_EXPERIMENT=experiments/<name>, each phase is instead one run of
+# that experiment's task.sh, which receives the phase name and the phase's
+# results directory and does its own data selection and training. Phases are
+# then required and named by the experiment (adult_devices: <arm>/fold<k>). The folds are not computed here. config/splits/*.json records the literal
 # subject ids per fold; this script only materialises them as linked datasets
 # and trains one model per generated cv config.
 set -euo pipefail
@@ -40,6 +45,7 @@ fi
 # Where a finished run is shipped. Empty disables the upload, which is the
 # default on a workstation; ECS sets it.
 RESULTS_S3_PREFIX="${BIDOZE_RESULTS_S3_PREFIX:-}"
+EXPERIMENT="${BIDOZE_EXPERIMENT:-}"
 LINK_ROOT="$WORK_DIR/cache"
 CV_DIR="$WORK_DIR/cv"
 
@@ -68,6 +74,11 @@ BASE_ARGS=(
     --split-seed 0
 )
 
+if [[ -n "$EXPERIMENT" ]]; then
+    [[ -f "$EXPERIMENT/task.sh" ]] || { echo "no task.sh in $EXPERIMENT" >&2; exit 2; }
+    [[ ${#PHASES[@]} -gt 0 ]] || { echo "$EXPERIMENT needs its phases named" >&2; exit 2; }
+fi
+
 # One model per generated config: fold0..fold{k-1}, then final.
 if [[ ${#PHASES[@]} -eq 0 ]]; then
     N_SPLITS=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
@@ -77,6 +88,14 @@ fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
     printf 'Run directory: %s\n' "$RESULTS_ROOT/$RUN_ID"
+    if [[ -n "$EXPERIMENT" ]]; then
+        printf 'Experiment:    %s\n' "$EXPERIMENT"
+        printf 'Upload to:     %s\n' "${RESULTS_S3_PREFIX:-<disabled>}"
+        for phase in "${PHASES[@]}"; do
+            printf '   bash %q %q %q\n' "$EXPERIMENT/task.sh" "$phase" "$RESULTS_ROOT/$RUN_ID/training/$phase"
+        done
+        exit 0
+    fi
     printf 'Training cfg:  %s (%s)\n' "$TRAINING_CONFIG" "$RECIPE"
     printf 'CV cfg:        %s\n' "$CV_CONFIG"
     printf 'Split plan:    %s\n' "$SPLIT_PLAN"
@@ -89,17 +108,19 @@ if [[ $DRY_RUN -eq 1 ]]; then
     exit 0
 fi
 
-echo "==> materialising $SPLIT_PLAN"
-arcasleep splits-apply \
-    -pc config/inputs.json \
-    -cvc "$CV_CONFIG" \
-    --plan "$SPLIT_PLAN" \
-    --link-dir "$LINK_ROOT/$(python -c "import json;print(json.load(open('config/inputs.json'))['cache_prefix'])")" \
-    --cv-out "$CV_DIR"
+if [[ -z "$EXPERIMENT" ]]; then
+    echo "==> materialising $SPLIT_PLAN"
+    arcasleep splits-apply \
+        -pc config/inputs.json \
+        -cvc "$CV_CONFIG" \
+        --plan "$SPLIT_PLAN" \
+        --link-dir "$LINK_ROOT/$(python -c "import json;print(json.load(open('config/inputs.json'))['cache_prefix'])")" \
+        --cv-out "$CV_DIR"
 
-# Training reads the linked cache, never the real one: the fold datasets exist
-# only as symlink names.
-export FEATURE_CACHE_DIR="$LINK_ROOT"
+    # Training reads the linked cache, never the real one: the fold datasets
+    # exist only as symlink names.
+    export FEATURE_CACHE_DIR="$LINK_ROOT"
+fi
 
 # On EXIT, not after the loop: a crashed run is exactly when the log and any
 # partial checkpoints are worth having, and `set -e` would otherwise skip the
@@ -129,7 +150,11 @@ for phase in "${PHASES[@]}"; do
     mkdir -p "$BASE_DIR"
     echo
     echo "==> $phase"
-    PYTHONUNBUFFERED=1 arcasleep bidoze train "${BASE_ARGS[@]}" \
-        -cvc "$CV_DIR/cv_$phase.json" \
-        -extn "$RUN_ID/training/$phase" 2>&1 | tee "$BASE_DIR/training.log"
+    if [[ -n "$EXPERIMENT" ]]; then
+        PYTHONUNBUFFERED=1 bash "$EXPERIMENT/task.sh" "$phase" "$BASE_DIR" 2>&1 | tee "$BASE_DIR/training.log"
+    else
+        PYTHONUNBUFFERED=1 arcasleep bidoze train "${BASE_ARGS[@]}" \
+            -cvc "$CV_DIR/cv_$phase.json" \
+            -extn "$RUN_ID/training/$phase" 2>&1 | tee "$BASE_DIR/training.log"
+    fi
 done
