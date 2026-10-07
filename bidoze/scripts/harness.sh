@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # BiDoze recipe: k-fold CV over the cohort, then a final model on all of it.
 #
-# The folds are not computed here. config/splits/*.json records the literal
+#   scripts/harness.sh [--dry-run] [phase ...]
+#
+# Phases are fold0..fold{k-1} and final, all of them by default, in the order
+# given. The folds are not computed here. config/splits/*.json records the literal
 # subject ids per fold; this script only materialises them as linked datasets
 # and trains one model per generated cv config.
 set -euo pipefail
@@ -41,15 +44,17 @@ LINK_ROOT="$WORK_DIR/cache"
 CV_DIR="$WORK_DIR/cv"
 
 usage() {
-    echo "Usage: $0 [--dry-run]" >&2
+    echo "Usage: $0 [--dry-run] [phase ...]" >&2
     exit 2
 }
 
 DRY_RUN=0
+PHASES=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1 ;;
-        *) usage ;;
+        -*) usage ;;
+        *) PHASES+=("$1") ;;
     esac
     shift
 done
@@ -64,10 +69,11 @@ BASE_ARGS=(
 )
 
 # One model per generated config: fold0..fold{k-1}, then final.
-PHASES=()
-N_SPLITS=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
-for ((i = 0; i < N_SPLITS; i++)); do PHASES+=("fold$i"); done
-PHASES+=("final")
+if [[ ${#PHASES[@]} -eq 0 ]]; then
+    N_SPLITS=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
+    for ((i = 0; i < N_SPLITS; i++)); do PHASES+=("fold$i"); done
+    PHASES+=("final")
+fi
 
 if [[ $DRY_RUN -eq 1 ]]; then
     printf 'Run directory: %s\n' "$RESULTS_ROOT/$RUN_ID"
@@ -98,16 +104,21 @@ export FEATURE_CACHE_DIR="$LINK_ROOT"
 # On EXIT, not after the loop: a crashed run is exactly when the log and any
 # partial checkpoints are worth having, and `set -e` would otherwise skip the
 # upload entirely. The original exit status is preserved for ECS to report.
+# Each phase is its own upload with its own manifest, so phases of one run
+# can train as separate tasks without one refusing another's destination.
 upload_results() {
-    local status=$?
+    local status=$? phase
     if [[ -n "$RESULTS_S3_PREFIX" ]]; then
-        echo
-        echo "==> upload $RESULTS_ROOT/$RUN_ID -> $RESULTS_S3_PREFIX (exit $status)"
-        arcasleep upload-results \
-            --run-dir "$RESULTS_ROOT/$RUN_ID" \
-            --destination "$RESULTS_S3_PREFIX" \
-            --run-id "$RUN_ID" \
-            ${BIDOZE_UPLOAD_OVERWRITE:+--overwrite} || echo "upload failed (exit $?)"
+        for phase in "${PHASES[@]}"; do
+            [[ -d "$RESULTS_ROOT/$RUN_ID/training/$phase" ]] || continue
+            echo
+            echo "==> upload $phase -> $RESULTS_S3_PREFIX/$RUN_ID/training/$phase (exit $status)"
+            arcasleep upload-results \
+                --run-dir "$RESULTS_ROOT/$RUN_ID/training/$phase" \
+                --destination "$RESULTS_S3_PREFIX" \
+                --run-id "$RUN_ID/training/$phase" \
+                ${BIDOZE_UPLOAD_OVERWRITE:+--overwrite} || echo "upload failed (exit $?)"
+        done
     fi
     return $status
 }

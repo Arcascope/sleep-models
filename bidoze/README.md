@@ -12,8 +12,9 @@ Versions (starting at `v0.1.0`) are tags in that repository.
 `arcascope/arcasleep-bidoze` is the family landing page; it lists the variants.
 
 This directory holds the model's run configs (`config/`), release info and
-cards (`cards/`), and the training image and harness (`docker/`, `scripts/`,
-`deploy/`). Commands below run from here.
+cards (`cards/`), and the training image and harness (`docker/`, `scripts/`).
+Training on AWS GPUs is described in [`deploy/`](../deploy/README.md).
+Commands below run from here.
 
 Scoring adult nights (the release's sleep/wake calls with light/deep/REM from a model
 trained on adult nights) is described in [ADULT.md](ADULT.md).

@@ -1,4 +1,5 @@
-# The BiDoze feature cache as an immutable, content-addressed image layer.
+# A feature cache as an immutable, content-addressed image layer, shared by
+# every model family that reads the same cache prefix.
 #
 # This image is *only* a COPY --from source. It has no shell, no libc and no
 # entrypoint, so it cannot be run; that is deliberate. It carries bytes and a
@@ -10,27 +11,27 @@
 # finds, so a manifest stored alongside the data would change the very hash it
 # records.
 #
-# Both commands run from the bidoze/ directory, as harness.sh does.
+# deploy/scripts/build_data_image.sh runs both steps:
 #
 #   arcasleep manifest-local \
-#       --root feature_cache/12Hz_log_PSD \
-#       --output build/manifest/manifest.jsonl
+#       --root <cache>/12Hz_log_PSD_aligned \
+#       --output build/manifest/12Hz_log_PSD_aligned/manifest.jsonl
 #
 #   docker buildx build \
-#       -f docker/data.Dockerfile \
-#       --build-context manifest=build/manifest \
-#       --build-arg CACHE_PREFIX=12Hz_log_PSD \
-#       -t bidoze-data:12Hz_log_PSD-<digest[:12]> \
-#       feature_cache/12Hz_log_PSD
+#       -f deploy/docker/data.Dockerfile \
+#       --build-context manifest=build/manifest/12Hz_log_PSD_aligned \
+#       --build-arg CACHE_PREFIX=12Hz_log_PSD_aligned \
+#       -t arcasleep-data:12Hz_log_PSD_aligned-<digest[:12]> \
+#       <cache>/12Hz_log_PSD_aligned
 #
-# BuildKit reads bidoze/docker/data.Dockerfile.dockerignore next to this file,
+# BuildKit reads data.Dockerfile.dockerignore next to this file,
 # so nothing has to be dropped inside the cache directory itself either.
 
 # CACHE_PREFIX names the subdirectory training looks in. It is the same string
-# as "cache_prefix" in config/inputs.json, and `arcasleep bidoze train` derives
+# as "cache_prefix" in config/inputs.json, and `arcasleep <family> train` derives
 # the path from that config, so a mismatch here surfaces as a missing-cache
 # error rather than a silently empty run.
-ARG CACHE_PREFIX=12Hz_log_PSD
+ARG CACHE_PREFIX=12Hz_log_PSD_aligned
 
 FROM scratch
 
@@ -51,6 +52,6 @@ COPY *_features.npz  /data/feature_cache/${CACHE_PREFIX}/
 # the tag is a claim about the bytes, the manifest is a checkable record of them.
 COPY --from=manifest manifest.jsonl /data/manifest.jsonl
 
-LABEL org.opencontainers.image.title="bidoze-data" \
-      org.opencontainers.image.description="BiDoze NUFFT feature cache, data only" \
-      io.arcascope.bidoze.cache_prefix="${CACHE_PREFIX}"
+LABEL org.opencontainers.image.title="arcasleep-data" \
+      org.opencontainers.image.description="Arcasleep NUFFT feature cache, data only" \
+      io.arcascope.arcasleep.cache_prefix="${CACHE_PREFIX}"

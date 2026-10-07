@@ -1,0 +1,12 @@
+**/feature_cache/
+**/build/
+**/results/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/*.npz
+**/*.pisces
+**/*.safetensors
