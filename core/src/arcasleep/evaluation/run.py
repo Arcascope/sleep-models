@@ -39,6 +39,7 @@ from arcasleep.artifacts.provenance import (
 )
 from arcasleep.data.batching import recording_input
 from arcasleep.evaluation import staging_metrics  # noqa: F401  (registers the metrics)
+from arcasleep.evaluation.predictions import PREDICTIONS_DIRNAME, write_scored_prediction
 from arcasleep.evaluation.staging_metrics import (
     GAP_STAGE_INDEX,
     ThresholdSearch,
@@ -201,11 +202,9 @@ def apply_sib_filter(
     real epochs rather than padding. Returns the filtered copy and the number
     of epochs demoted.
     """
-    from arcasleep.ggir import EPOCH_SECONDS, bins_from_epochs, evaluate_bins
+    from arcasleep.ggir import evaluate_epoch_grid
 
-    total = anglez_5s.shape[0]
-    bin_start_s, anglez = bins_from_epochs(anglez_5s)
-    ggir = evaluate_bins(bin_start_s, anglez, EPOCH_SECONDS * np.arange(total), total)
+    ggir = evaluate_epoch_grid(anglez_5s)
     is_sib = ggir.is_sib[:n_epochs]
     is_spt = ggir.is_spt[:n_epochs]
     filtered = np.array(proba, copy=True)
@@ -291,6 +290,7 @@ class ScoredCohort:
     hypnograms: Dict[str, str]
     ggir_sib_filter: bool
     sib_demoted: Dict[str, int]
+    predictions: Dict[str, str]
 
 
 def prepare_output(config: RunConfig, output_dir: Path | str, overwrite: bool) -> Path:
@@ -298,7 +298,9 @@ def prepare_output(config: RunConfig, output_dir: Path | str, overwrite: bool) -
 
     The metrics logger skips identity rows it has already written, so a second
     run into the same file would quietly score nothing rather than duplicate
-    anything. Run before any scoring, so a refusal costs nothing.
+    anything. Run before any scoring, so a refusal costs nothing. Replacing a
+    run also clears its per-subject predictions, so none are left from subjects
+    the new run does not score.
     """
     csv_path = results_csv_path(output_dir, config)
     if csv_path.exists() and not overwrite:
@@ -306,6 +308,8 @@ def prepare_output(config: RunConfig, output_dir: Path | str, overwrite: bool) -
             f"{csv_path} already exists; pass --overwrite to replace it, or "
             "point --output-dir somewhere else"
         )
+    for stale in (Path(output_dir) / PREDICTIONS_DIRNAME).glob("*.csv"):
+        stale.unlink()
     return csv_path
 
 
@@ -323,6 +327,10 @@ def score_cohort(
     ``render_hypnograms`` draws one per-subject PNG into
     ``<output_dir>/``:data:`HYPNOGRAM_DIRNAME` from the arrays that were
     scored, using :mod:`arcasleep.reporting.hypnogram`.
+
+    Each subject's per-epoch prediction is written to
+    ``<output_dir>/``:data:`PREDICTIONS_DIRNAME` (:mod:`arcasleep.evaluation.predictions`),
+    from the model's probabilities before any SIB filtering.
 
     ``ggir_sib_filter`` demotes predicted sleep outside the main sleep window
     that is not a sustained inactivity bout to wake (:func:`apply_sib_filter`)
@@ -354,6 +362,7 @@ def score_cohort(
     num_classes = config.model.num_classes
     datasets = sorted({ref.dataset_name for ref in subjects})
     hypnogram_dir = output_dir / HYPNOGRAM_DIRNAME
+    predictions_dir = output_dir / PREDICTIONS_DIRNAME
 
     _banner(
         f"EVALUATE: {checkpoint}\n"
@@ -368,6 +377,7 @@ def score_cohort(
     truncated: list[str] = []
     hypnograms: Dict[str, str] = {}
     sib_demoted: Dict[str, int] = {}
+    predictions: Dict[str, str] = {}
     for ref, bundle in subjects.items():
         name = f"{ref.dataset_name}/{ref.subject_id}"
         epochs = int(bundle.y.shape[1])
@@ -391,6 +401,11 @@ def score_cohort(
             y_true, y_pred_proba, inputs, labels = scored
         else:
             y_true, y_pred_proba = scored
+        predictions[name] = str(
+            write_scored_prediction(
+                predictions_dir, ref, bundle, y_true, y_pred_proba, num_classes
+            )
+        )
         if ggir_sib_filter:
             try:
                 y_pred_proba, sib_demoted[name] = apply_sib_filter(
@@ -416,6 +431,7 @@ def score_cohort(
         hypnograms=hypnograms,
         ggir_sib_filter=ggir_sib_filter,
         sib_demoted=sib_demoted,
+        predictions=predictions,
     )
 
 
@@ -502,6 +518,7 @@ def write_cohort(
             "subjects": by_dataset,
             "truncated": cohort.truncated,
             "hypnograms": cohort.hypnograms,
+            "predictions": cohort.predictions,
             "ggir_sib_filter": cohort.ggir_sib_filter,
             "sib_demoted_epochs": cohort.sib_demoted,
             "operating_point": operating,
