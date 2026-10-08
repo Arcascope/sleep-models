@@ -198,22 +198,25 @@ def main(run: Path, adult_root: Path) -> None:
     arms: dict[str, tuple[dict[int, list[dict]], list[list[Path]]]] = {}
     for arm in json.loads((run / "setup/arms.json").read_text()):
         cache = run / "setup/cache" / arm / CACHE_NAME
-        if not all(seed_predictions(run / arm, k, s).is_dir() for k in FOLDS for s in SEEDS):
+        # Every seed of SEEDS, or a one-seed arm (a distilled student): seed 0 only.
+        seeds = next((c for c in (SEEDS, SEEDS[:1])
+                      if all(seed_predictions(run / arm, k, s).is_dir() for k in FOLDS for s in c)), None)
+        if seeds is None:
             print(f"{arm}: incomplete, skipped")
             continue
         preds = {s: [load_predictions(seed_predictions(run / arm, k, s), plan.fold_names[k])
-                     for k in FOLDS] for s in SEEDS}
+                     for k in FOLDS] for s in seeds}
         train = []
         for k in FOLDS:
             cv = json.loads((run / f"setup/cv/{arm}/cv_fold{k}.json").read_text())
             train.append([p for d in cv["train_sets"] for p in sorted(cache.glob(f"{d}_subject_*"))])
         arms[arm] = (preds, train)
         stalled = [(s, k) for k in FOLDS
-                   for s, kappa in zip(SEEDS, fold_best_eval_kappas(run / arm, k))
+                   for s, kappa in zip(seeds, fold_best_eval_kappas(run / arm, k))
                    if kappa < STALLED_KAPPA]
         if stalled:
             print(f"{arm}: stalled fold models (seed, fold): {stalled}")
-            kept = {s: [None if (s, k) in stalled else preds[s][k] for k in FOLDS] for s in SEEDS}
+            kept = {s: [None if (s, k) in stalled else preds[s][k] for k in FOLDS] for s in seeds}
             arms[f"{arm} (stalled out)"] = (kept, train)
     mix = results / "bidoze-weaver-mix-0"
     arms[REFERENCE] = (
@@ -237,8 +240,8 @@ def main(run: Path, adult_root: Path) -> None:
 
     for arm, (preds, train) in arms.items():
         divisors = [adult_stage_divisor(night_counts(paths), bidsleep, BETA) for paths in train]
-        models = {f"seed{s}": preds[s] for s in SEEDS}
-        models["ensemble"] = [mean_over_seeds([preds[s][k] for s in SEEDS]) for k in FOLDS]
+        models = {f"seed{s}": preds[s] for s in preds}
+        models["ensemble"] = [mean_over_seeds([preds[s][k] for s in preds]) for k in FOLDS]
         for model, per_fold in models.items():
             combined = combine_folds(per_fold)
             # Each subject's adult and adjusted calls use the divisor of the fold model(s) that
