@@ -20,3 +20,10 @@ all of SleepAccel. No input describes time since recording start or position in 
 
 **Running.** `setup/run.sh` in the results directory reproduces the run.
 `release_divisors.py` needs the `adult-formulation` checkout on `PYTHONPATH`.
+
+**Temporal CNN readout** (`cnn_readout.py`). One centred Conv1d over a night's epochs, kernel
+k ∈ {1, 9, 21, 41} (k = 21, 10.5 min, is the primary comparison). Inputs are the release's
+log-probabilities, plus either the raw HR relative to the night's median and a missing flag, or
+the 7 hand features. Nights are padded by replicating their edge epochs, never with zeros, so the
+head cannot tell where the recording starts or ends. 5 seeds per configuration, probabilities
+averaged; decoding and cross-validation as for the logistic readout.
