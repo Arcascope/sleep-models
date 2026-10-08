@@ -223,6 +223,45 @@ def test_a_fit_can_start_from_a_release_bundles_weights(tmp_path: Path) -> None:
         np.testing.assert_array_equal(a, b)
 
 
+def test_a_fit_can_start_from_a_checkpoints_weights(tmp_path: Path) -> None:
+    import jax
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    config = _configs(tmp_path / "config").model
+    source = BiDozeNetModel(config)
+    source._ensure_built((16, 5, 2), seed=3)
+    source.savez(tmp_path / "teacher.pisces")
+    model = BiDozeNetModel(config)
+
+    _load_init_weights(model, tmp_path / "teacher.pisces", (16, 5, 2))
+
+    for a, b in zip(jax.tree_util.tree_leaves(model.params),
+                    jax.tree_util.tree_leaves(source.params), strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_a_fit_scored_from_its_start_keeps_the_best_of_start_and_epochs(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    config = _configs(tmp_path / "config").model
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(4, 16, 5, 2)).astype(np.float32)
+    y = rng.integers(0, 4, size=(4, 16)).astype(np.int32)
+    model = BiDozeNetModel(config)
+    model._ensure_built(x.shape[1:], seed=0)
+
+    history = model.fit_balanced(
+        x, y, x, y, batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.0,
+        patience=TrainingConfig.from_dict(BALANCED_TRAINING).patience, max_epochs=2, fit_seed=0,
+        score_start=True,
+    )
+
+    assert 0 <= history["best_epoch"] <= 2
+    assert history["best_eval_kappa"] >= max(history["eval_kappa"])
+
+
 def test_starting_weights_from_another_architecture_are_refused(tmp_path: Path) -> None:
     from arcasleep_bidoze.model import BiDozeNetModel
     from arcasleep_bidoze.training import _load_init_weights

@@ -92,7 +92,9 @@ class TrainingConfig:
     eval_smoothing_steps: int = 0
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
-    # A release bundle whose weights the fit starts from; None starts from random weights.
+    # A release bundle or a checkpoint (.pisces) whose weights the fit starts from; None starts
+    # from random weights. The starting weights are scored as epoch 0, so the fit keeps them
+    # unless an epoch beats them.
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
@@ -357,7 +359,7 @@ def _train_fold_balanced(
 
     model = BiDozeNetModel(config.model)
     if training.init_weights is not None:
-        _load_init_weights(model, Path(training.init_weights))
+        _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")
     history = model.fit_balanced(
         X_fit,
@@ -372,6 +374,7 @@ def _train_fold_balanced(
         max_epochs=training.epochs,
         fit_seed=fit_seed,
         soft_targets=soft_targets,
+        score_start=training.init_weights is not None,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
@@ -409,18 +412,32 @@ def _run_final_deblip(
     )
 
 
-def _load_init_weights(model, bundle_dir: Path) -> None:
-    """Load a release bundle's weights into ``model``, whose architecture must be the bundle's."""
+def _load_init_weights(model, source: Path, input_shape: tuple[int, ...] | None = None) -> None:
+    """Load a release bundle's or a checkpoint's (.pisces) weights into ``model``, whose
+    architecture must be the source's."""
+    import dataclasses
     import json
 
     from arcasleep.models import MODEL_TYPE_KEY
-    from arcasleep_bidoze.model import BiDozeNetConfig
+    from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
 
-    bundle_config = json.loads((bundle_dir / "config.json").read_text())
+    if source.suffix == ".pisces":
+        loaded = BiDozeNetModel.loadz(source, input_shape=input_shape)
+        # Compared as JSON: a checkpoint's config holds lists where model.json's may hold tuples.
+        def as_json(config) -> dict:
+            return json.loads(json.dumps(dataclasses.asdict(config)))
+
+        if as_json(loaded.config) != as_json(model.config):
+            raise ValueError(f"model.json differs from the architecture of {source}")
+        model.input_shape = loaded.input_shape
+        model.params = loaded.params
+        model.model = {"params": model.params}
+        return
+    bundle_config = json.loads((source / "config.json").read_text())
     bundle_config.pop(MODEL_TYPE_KEY, None)
     if BiDozeNetConfig.from_dict(bundle_config) != model.config:
-        raise ValueError(f"model.json differs from the architecture of {bundle_dir}")
-    model.load_weights_safetensors(bundle_dir / "model.safetensors")
+        raise ValueError(f"model.json differs from the architecture of {source}")
+    model.load_weights_safetensors(source / "model.safetensors")
 
 
 def teacher_probabilities(teacher_dir: Path, X: np.ndarray, batch_size: int = 4) -> np.ndarray:

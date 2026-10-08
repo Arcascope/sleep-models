@@ -3180,6 +3180,7 @@ class BiDozeNetModel(CVModel):
         class_sample_max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
+        score_start: bool = False,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3198,6 +3199,9 @@ class BiDozeNetModel(CVModel):
         step draws whole rows uniformly and the loss is the cross-entropy against
         those probabilities over every epoch of the row, scored or not. The labels
         then serve only the eval kappa.
+
+        With ``score_start`` the starting parameters are scored as epoch 0 and kept
+        unless a later epoch has a higher eval kappa.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3288,6 +3292,12 @@ class BiDozeNetModel(CVModel):
         history: dict[str, Any] = {
             "train_loss": [], "eval_kappa": [], "smoothed_eval_kappa": [], "lr": []
         }
+        if score_start:
+            # Starting weights are a candidate: epoch 0, outside the patience schedule.
+            best_kappa = eval_kappa(params)
+            best_params = params
+            best_epoch = 0
+            print(f"    epoch   0  eval_kappa {best_kappa:.4f}  (starting weights)", flush=True)
 
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
