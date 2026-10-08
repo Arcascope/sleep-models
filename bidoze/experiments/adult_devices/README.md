@@ -19,6 +19,7 @@ can train on one device or on all of them. This experiment asks:
 | `garmin-119` | 121 | 119 |
 | `matched` | 202 | 201 |
 | `matched-actigraph` | 201 | 200 |
+| `earlier` | 202 Weaver nights | 202 |
 | `weaver-2026-10-06` (reference, already trained) | 202 Weaver nights | 202 |
 
 - The `-119` arms draw 119 children per device (seed 0), the number of children with a Fitbit
@@ -31,11 +32,15 @@ can train on one device or on all of them. This experiment asks:
   spectra are identical to the earlier cache, so `matched` should reproduce the reference within
   seed variation.
 - `matched-actigraph` keeps those children and nights but uses each one's ActiGraph recording.
+- `earlier` trains on the earlier `weaver` cache itself, as the reference did.
 
 **Recipe.**
 - `config/training-balanced.json` with `run_seed 0, seed_count 3`.
 - Folds: `config/splits/sleepaccel_5fold.json`.
 - The early-stopping holdout keeps every recording of a participant on one side.
+- Phase `<arm>/fold<k>` draws the holdout with split seed 0; phase `<arm>/split<s>/fold<k>`
+  draws it with split seed s. Repeating an arm over split seeds measures how much the holdout
+  draw moves the scores.
 
 **Scoring** (`score.py`): mean over subjects; p: paired Wilcoxon over subjects.
 - SleepAccel subjects are scored by the fold model that held them out (28 subjects).

@@ -14,10 +14,13 @@ Arms (revised Weaver part of the training set):
                  night of the earlier ``weaver`` cache, the revised recording with the same PSG
                  labels and the same spectra (202 recordings, 201 children; see match_weaver).
 - matched-actigraph: the same nights, each child's ActiGraph recording instead.
+- earlier:       the earlier ``weaver`` cache itself, as dataset ``weaver``: the October 6
+                 training set as it was trained then.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
-                                      ``weaver<Arm>``, SleepAccel by fold, SleepAccel-Clinical
+                                      ``weaver<Arm>`` (``weaver`` for earlier), SleepAccel by
+                                      fold, SleepAccel-Clinical
 - cv/<arm>/cv_fold<k>.json            train on weaver<Arm> + the other 4 SleepAccel folds
 - arms.json                           the subject ids of every arm
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
@@ -44,6 +47,7 @@ CACHE_NAME = "12Hz_log_PSD_aligned"
 MATCHED_CHILDREN = 119
 SEEDS = 3
 DEVICES = ["actigraph", "apple", "fitbit", "garmin"]
+EARLIER = "earlier"
 
 
 def device_of(subject_id: str) -> str:
@@ -106,6 +110,8 @@ def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, lis
 
 
 def dataset_name(arm: str) -> str:
+    if arm == EARLIER:
+        return "weaver"
     return "weaver" + "".join(part.capitalize() for part in arm.split("-"))
 
 
@@ -127,6 +133,8 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
 
     chosen = arms(sorted(weaver))
     chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
+    earlier = {s.subject_id: s.path for s in adult["weaver"]}
+    chosen[EARLIER] = sorted(earlier)
     setup.mkdir(parents=True, exist_ok=True)
     (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
 
@@ -137,8 +145,9 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
     for arm, ids in chosen.items():
         name = dataset_name(arm)
         cache = setup / "cache" / arm / CACHE_NAME
+        sources = earlier if arm == EARLIER else weaver
         for sid in ids:
-            link(weaver[sid], cache / f"{name}_subject_{sid}_features.npz")
+            link(sources[sid], cache / f"{name}_subject_{sid}_features.npz")
         for fold, sids in plan.folds.items():
             for sid in sids:
                 link(sleepaccel[sid], cache / f"{fold}_subject_{sid}_features.npz")
