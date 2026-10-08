@@ -22,6 +22,8 @@ Writes, under ``<run>/setup/``:
                                       ``weaver<Arm>`` (``weaver`` for earlier), SleepAccel by
                                       fold, SleepAccel-Clinical
 - cv/<arm>/cv_fold<k>.json            train on weaver<Arm> + the other 4 SleepAccel folds
+- cv/<arm>/cv_final.json             train on weaver<Arm> + all of SleepAccel: the stage source
+                                      that is released; scored on SleepAccel-Clinical only
 - arms.json                           the subject ids of every arm
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
 
@@ -164,6 +166,14 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
             path = setup / "cv" / arm / f"cv_fold{k}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(cv, indent=2) + "\n")
+        final = {
+            "mode": "transfer",
+            "train_sets": [name] + list(plan.fold_names),
+            "test_sets": ["SleepAccel-Clinical"],
+            "validation_sets": [],
+            "fold_label": "final",
+        }
+        (setup / "cv" / arm / "cv_final.json").write_text(json.dumps(final, indent=2) + "\n")
         children = len({participant_id(s) for s in ids})
         print(f"{arm}: {name}, {len(ids)} recordings, {children} children")
 
