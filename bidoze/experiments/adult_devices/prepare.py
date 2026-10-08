@@ -26,6 +26,8 @@ Arms (revised Weaver part of the training set):
                  of matched's three seeds for that fold (task.sh fetches them).
 - distill-warm:  as distill, but the student starts from the weights of the fold's seed-0
                  teacher, at a tenth of the recipe's learning rate.
+- distill-warm-half, distill-warm-full: as distill-warm, at half and all of the recipe's
+                 learning rate.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
@@ -40,7 +42,7 @@ Writes, under ``<run>/setup/``:
 - training-finetune*.json             training.json at a tenth of the learning rate, starting
                                       from the pediatric bundle's weights
 - training-distill.json               training.json with one seed; task.sh adds distill_from
-- training-distill-warm.json          training-distill.json at a tenth of the learning rate; task.sh
+- training-distill-warm*.json         training-distill.json at the arm's learning rate; task.sh
                                       also adds init_weights
 
 Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root> [pediatric bundle]
@@ -67,13 +69,13 @@ SEEDS = 3
 DEVICES = ["actigraph", "apple", "fitbit", "garmin"]
 EARLIER = "earlier"
 DISTILL = "distill"
-DISTILL_WARM = "distill-warm"
 FINETUNE = "finetune"
 FINETUNE_BIDSLEEP = "finetune-bidsleep"
 # The arms that start from the pediatric release, and their validation datasets.
 FINETUNE_ARMS = {FINETUNE: "weaverUnseen", FINETUNE_BIDSLEEP: "bidsleepVal"}
 FINETUNE_LR_FACTOR = 0.1
-DISTILL_WARM_LR_FACTOR = 0.1
+# The arms whose student starts from a teacher's weights, and their learning-rate factors.
+DISTILL_WARM_ARMS = {"distill-warm": 0.1, "distill-warm-half": 0.5, "distill-warm-full": 1.0}
 
 
 def device_of(subject_id: str) -> str:
@@ -173,7 +175,8 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
     earlier = {s.subject_id: s.path for s in adult["weaver"]}
     chosen[EARLIER] = sorted(earlier)
-    chosen[DISTILL] = chosen[DISTILL_WARM] = chosen["matched"]
+    for arm in [DISTILL, *DISTILL_WARM_ARMS]:
+        chosen[arm] = chosen["matched"]
     if pediatric is not None:
         # The release trained on every earlier night, which are the matched children.
         seen = {participant_id(s) for s in chosen["matched"]}
@@ -188,8 +191,9 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     (setup / "training.json").write_text(json.dumps(training, indent=2) + "\n")
     student = {**training, "seed_count": 1}
     (setup / f"training-{DISTILL}.json").write_text(json.dumps(student, indent=2) + "\n")
-    warm = {**student, "lr": training["lr"] * DISTILL_WARM_LR_FACTOR}
-    (setup / f"training-{DISTILL_WARM}.json").write_text(json.dumps(warm, indent=2) + "\n")
+    for arm, factor in DISTILL_WARM_ARMS.items():
+        warm = {**student, "lr": training["lr"] * factor}
+        (setup / f"training-{arm}.json").write_text(json.dumps(warm, indent=2) + "\n")
     if pediatric is not None:
         finetune = {**training, "lr": training["lr"] * FINETUNE_LR_FACTOR, "init_weights": str(pediatric)}
         for arm in FINETUNE_ARMS:

@@ -9,7 +9,7 @@
 # for a wiring check. ADULT_DEVICES_PEDIATRIC is the pediatric release bundle,
 # which the finetune arm starts from. ADULT_DEVICES_TEACHERS is the run directory
 # (local or s3://) whose <phase>/model_outputs/ the distill arms' students learn from;
-# distill-warm also starts from the phase's seed-0 teacher.
+# the distill-warm arms also start from the phase's seed-0 teacher.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -43,12 +43,12 @@ S=$WORK/setup
 RECIPE=$S/training.json
 [[ -f "$S/training-$ARM.json" ]] && RECIPE=$S/training-$ARM.json
 TRAINING=${ADULT_DEVICES_TRAINING:-$RECIPE}
-if [[ "$ARM" == distill || "$ARM" == distill-warm ]]; then
+if [[ "$ARM" == distill || "$ARM" == distill-warm* ]]; then
   TEACHER_PHASE=$([[ $K == final ]] && echo final || echo fold$K)
   TEACHERS=$WORK/teachers/$TEACHER_PHASE
   python "$HERE/fetch.py" "${ADULT_DEVICES_TEACHERS:?the distill arms need ADULT_DEVICES_TEACHERS}/$TEACHER_PHASE/model_outputs" "$TEACHERS"
   INIT=
-  if [[ "$ARM" == distill-warm ]]; then
+  if [[ "$ARM" == distill-warm* ]]; then
     INIT=$(ls "$TEACHERS"/*_seed_0.pisces)
     [[ $(wc -l <<< "$INIT") == 1 ]] || { echo "need exactly one seed-0 teacher in $TEACHERS" >&2; exit 2; }
   fi
