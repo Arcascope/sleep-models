@@ -5,7 +5,8 @@
 # Called by scripts/harness.sh with BIDOZE_EXPERIMENT=experiments/adult_devices;
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # ADULT_DEVICES_TRAINING overrides the recipe, e.g. config/training-smoke.json
-# for a wiring check.
+# for a wiring check. ADULT_DEVICES_PEDIATRIC is the pediatric release bundle,
+# which the finetune arm starts from.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,10 +28,12 @@ fi
   || { echo "phase must be <arm>/fold<0-4>, <arm>/split<s>/fold<0-4> or <arm>/final: $PHASE" >&2; exit 2; }
 
 WORK=${BIDOZE_WORK_DIR:-${TMPDIR:-/tmp}/adult-devices}
-python "$HERE/prepare.py" "$WORK" "$FEATURE_CACHE_DIR" "$FEATURE_CACHE_DIR"
+python "$HERE/prepare.py" "$WORK" "$FEATURE_CACHE_DIR" "$FEATURE_CACHE_DIR" ${ADULT_DEVICES_PEDIATRIC:+"$ADULT_DEVICES_PEDIATRIC"}
 S=$WORK/setup
 [[ -d "$S/cache/$ARM" ]] || { echo "unknown arm: $ARM" >&2; exit 2; }
-TRAINING=${ADULT_DEVICES_TRAINING:-$S/training.json}
+RECIPE=$S/training.json
+[[ -f "$S/training-$ARM.json" ]] && RECIPE=$S/training-$ARM.json
+TRAINING=${ADULT_DEVICES_TRAINING:-$RECIPE}
 CV=$S/cv/$ARM/cv_$([[ $K == final ]] && echo final || echo fold$K).json
 mkdir -p "$OUT/setup"
 cp "$S/arms.json" "$TRAINING" "$CV" "$OUT/setup/"

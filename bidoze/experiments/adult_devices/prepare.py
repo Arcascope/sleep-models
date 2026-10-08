@@ -16,6 +16,10 @@ Arms (revised Weaver part of the training set):
 - matched-actigraph: the same nights, each child's ActiGraph recording instead.
 - earlier:       the earlier ``weaver`` cache itself, as dataset ``weaver``: the October 6
                  training set as it was trained then.
+- finetune:      no Weaver training data. The pediatric release's weights are trained further on
+                 4/5 SleepAccel at a tenth of the recipe's learning rate, early-stopping on the
+                 revised Weaver recordings of the children the release never saw (dataset
+                 ``weaverUnseen``). Written only when the pediatric bundle is given.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
@@ -24,10 +28,13 @@ Writes, under ``<run>/setup/``:
 - cv/<arm>/cv_fold<k>.json            train on weaver<Arm> + the other 4 SleepAccel folds
 - cv/<arm>/cv_final.json             train on weaver<Arm> + all of SleepAccel: the stage source
                                       that is released; scored on SleepAccel-Clinical only
-- arms.json                           the subject ids of every arm
+- arms.json                           the subject ids of every arm (for finetune, its
+                                      validation recordings)
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
+- training-finetune.json              training.json at a tenth of the learning rate, starting
+                                      from the pediatric bundle's weights
 
-Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root>
+Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root> [pediatric bundle]
 (cache roots are the directories that hold ``12Hz_log_PSD_aligned/``; the adult root holds
 SleepAccel, SleepAccel-Clinical and the earlier ``weaver`` cache).
 """
@@ -50,6 +57,8 @@ MATCHED_CHILDREN = 119
 SEEDS = 3
 DEVICES = ["actigraph", "apple", "fitbit", "garmin"]
 EARLIER = "earlier"
+FINETUNE = "finetune"
+FINETUNE_LR_FACTOR = 0.1
 
 
 def device_of(subject_id: str) -> str:
@@ -114,6 +123,8 @@ def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, lis
 def dataset_name(arm: str) -> str:
     if arm == EARLIER:
         return "weaver"
+    if arm == FINETUNE:
+        return "weaverUnseen"
     return "weaver" + "".join(part.capitalize() for part in arm.split("-"))
 
 
@@ -124,7 +135,7 @@ def link(source: Path, destination: Path) -> None:
     destination.symlink_to(source.resolve())
 
 
-def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
+def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | None = None) -> None:
     setup = run_dir / "setup"
     weaver = {s.subject_id: s.path
               for s in discover_cached_subjects(["weaver_revised"], weaver_root / CACHE_NAME)["weaver_revised"]}
@@ -137,12 +148,19 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
     chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
     earlier = {s.subject_id: s.path for s in adult["weaver"]}
     chosen[EARLIER] = sorted(earlier)
+    if pediatric is not None:
+        # The release trained on every earlier night, which are the matched children.
+        seen = {participant_id(s) for s in chosen["matched"]}
+        chosen[FINETUNE] = sorted(s for s in weaver if participant_id(s) not in seen)
     setup.mkdir(parents=True, exist_ok=True)
     (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
 
     training = json.loads((BIDOZE / "config/training-balanced.json").read_text())
     training.update(run_seed=0, seed_count=SEEDS)
     (setup / "training.json").write_text(json.dumps(training, indent=2) + "\n")
+    if pediatric is not None:
+        finetune = {**training, "lr": training["lr"] * FINETUNE_LR_FACTOR, "init_weights": str(pediatric)}
+        (setup / f"training-{FINETUNE}.json").write_text(json.dumps(finetune, indent=2) + "\n")
 
     for arm, ids in chosen.items():
         name = dataset_name(arm)
@@ -155,12 +173,14 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
                 link(sleepaccel[sid], cache / f"{fold}_subject_{sid}_features.npz")
         for subject in clinical:
             link(subject.path, cache / subject.path.name)
+        # The finetune arm's Weaver recordings are its validation set, not training data.
+        weaver_sets, validation_sets = ([], [name]) if arm == FINETUNE else ([name], [])
         for k, held_out in enumerate(plan.fold_names):
             cv = {
                 "mode": "transfer",
-                "train_sets": [name] + [f for f in plan.fold_names if f != held_out],
+                "train_sets": weaver_sets + [f for f in plan.fold_names if f != held_out],
                 "test_sets": [held_out, "SleepAccel-Clinical"],
-                "validation_sets": [],
+                "validation_sets": validation_sets,
                 "fold_label": f"fold{k}",
             }
             path = setup / "cv" / arm / f"cv_fold{k}.json"
@@ -168,9 +188,9 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
             path.write_text(json.dumps(cv, indent=2) + "\n")
         final = {
             "mode": "transfer",
-            "train_sets": [name] + list(plan.fold_names),
+            "train_sets": weaver_sets + list(plan.fold_names),
             "test_sets": ["SleepAccel-Clinical"],
-            "validation_sets": [],
+            "validation_sets": validation_sets,
             "fold_label": "final",
         }
         (setup / "cv" / arm / "cv_final.json").write_text(json.dumps(final, indent=2) + "\n")
@@ -179,4 +199,4 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(*(Path(a).resolve() for a in sys.argv[1:4]))
+    main(*(Path(a).resolve() for a in sys.argv[1:5]))

@@ -20,7 +20,8 @@ LR_SCHEDULES = frozenset({"cosine", "constant", "exponential"})
 TRAINABLE_SCOPES = frozenset({"all", "gate_head"})
 # "curriculum" is the staged focal-loss fit with deblip and SWA; "balanced" is
 # the class-balanced cross-entropy fit with plateau drops and early stopping on
-# a held-out share of the training subjects (Olsen et al., Section II-E).
+# a held-out share of the training subjects, or on cv.json's validation sets
+# when it names any (Olsen et al., Section II-E).
 RECIPES = frozenset({"curriculum", "balanced"})
 CURRICULUM_ONLY_KEYS = (
     "sliding_copies",
@@ -44,6 +45,7 @@ BALANCED_ONLY_KEYS = (
     "early_stop_patience",
     "eval_smoothing_steps",
     "eval_fraction",
+    "init_weights",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -89,6 +91,8 @@ class TrainingConfig:
     eval_smoothing_steps: int = 0
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
+    # A release bundle whose weights the fit starts from; None starts from random weights.
+    init_weights: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -299,7 +303,6 @@ def _check_balanced_cv(config: RunConfig) -> None:
     cv = config.cv
     unused = {
         "deblip_sets": bool(cv.deblip_sets),
-        "validation_sets": bool(cv.validation_sets),
         "train_batch_sampling": cv.train_batch_sampling.mode != "disabled",
         "subsample_to_smallest": cv.subsample_to_smallest,
     }
@@ -316,18 +319,22 @@ def _train_fold_balanced(
     split_seed: int,
     features: Mapping[SubjectRef, ModelIOBundle],
 ):
-    """The ``recipe='balanced'`` fit, early-stopping on a held-out share of the subjects."""
+    """The ``recipe='balanced'`` fit, early-stopping on the validation sets or a held-out share."""
     from arcasleep_bidoze.model import BiDozeNetModel
 
     _check_balanced_cv(config)
     training: TrainingConfig = config.training
-    fit_refs, eval_refs = split_train_eval(
-        fold.train_subjects, training.eval_fraction, split_seed
-    )
-    print(
-        f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
-        f"(fraction {training.eval_fraction}, seed {split_seed})"
-    )
+    if fold.val_subjects:
+        fit_refs, eval_refs = sorted(fold.train_subjects), sorted(fold.val_subjects)
+        print(f"  train/eval: {len(fit_refs)} fit, {len(eval_refs)} eval (validation sets)")
+    else:
+        fit_refs, eval_refs = split_train_eval(
+            fold.train_subjects, training.eval_fraction, split_seed
+        )
+        print(
+            f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
+            f"(fraction {training.eval_fraction}, seed {split_seed})"
+        )
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
     X_fit, y_fit = assemble_batch(
@@ -342,6 +349,9 @@ def _train_fold_balanced(
     print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
 
     model = BiDozeNetModel(config.model)
+    if training.init_weights is not None:
+        _load_init_weights(model, Path(training.init_weights))
+        print(f"  starting from the weights of {training.init_weights}")
     history = model.fit_balanced(
         X_fit,
         y_fit,
@@ -389,3 +399,17 @@ def _run_final_deblip(
         target_logits=target_logits,
         target_logit_pairing_weight=training.deblip_logit_weight,
     )
+
+
+def _load_init_weights(model, bundle_dir: Path) -> None:
+    """Load a release bundle's weights into ``model``, whose architecture must be the bundle's."""
+    import json
+
+    from arcasleep.models import MODEL_TYPE_KEY
+    from arcasleep_bidoze.model import BiDozeNetConfig
+
+    bundle_config = json.loads((bundle_dir / "config.json").read_text())
+    bundle_config.pop(MODEL_TYPE_KEY, None)
+    if BiDozeNetConfig.from_dict(bundle_config) != model.config:
+        raise ValueError(f"model.json differs from the architecture of {bundle_dir}")
+    model.load_weights_safetensors(bundle_dir / "model.safetensors")

@@ -135,7 +135,7 @@ def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> 
 
 @pytest.mark.parametrize(
     "cv_overrides",
-    [{"deblip_sets": ["CohortA"]}, {"validation_sets": ["CohortC"]}],
+    [{"deblip_sets": ["CohortA"]}],
 )
 def test_cv_options_the_balanced_recipe_does_not_use_are_refused(
     tmp_path: Path, cv_overrides: dict
@@ -173,4 +173,70 @@ def test_a_fit_with_no_finite_eval_kappa_refuses_to_pick_an_epoch(tmp_path: Path
             x, y, x[:2], no_scored_epochs,
             batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
             patience=Patience(lr_drop=1, early_stop=2), max_epochs=3, fit_seed=0,
+        )
+
+
+def test_balanced_recipe_early_stops_on_validation_sets(tmp_path: Path) -> None:
+    config = _configs(tmp_path / "config", cv_overrides={"validation_sets": ["CohortC"]})
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(3)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0"], epochs=9)
+    _write_cache(cache_root / "test", "CohortC", ["c0", "c1"], epochs=10)
+    results = tmp_path / "results" / "training"
+
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="test")
+
+    (checkpoint,) = (results / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def _release(directory: Path, config) -> Path:
+    from arcasleep.models import MODEL_TYPE_KEY
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    model = BiDozeNetModel(config)
+    model._ensure_built((16, 5, 2), seed=7)
+    directory.mkdir(parents=True)
+    model.save_weights_safetensors(directory / "model.safetensors")
+    model_json = json.loads((directory.parent / "config" / "model.json").read_text())
+    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **model_json}))
+    return directory
+
+
+def test_a_fit_can_start_from_a_release_bundles_weights(tmp_path: Path) -> None:
+    import jax
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    config = _configs(tmp_path / "config").model
+    bundle = _release(tmp_path / "release", config)
+    model = BiDozeNetModel(config)
+
+    _load_init_weights(model, bundle)
+
+    source = BiDozeNetModel(config)
+    source.load_weights_safetensors(bundle / "model.safetensors")
+    for a, b in zip(jax.tree_util.tree_leaves(model.params),
+                    jax.tree_util.tree_leaves(source.params), strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_starting_weights_from_another_architecture_are_refused(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    bundle = _release(tmp_path / "release", _configs(tmp_path / "config").model)
+    wider = _configs(tmp_path / "wider", {"d_model": 32}).model
+
+    with pytest.raises(ValueError):
+        _load_init_weights(BiDozeNetModel(wider), bundle)
+
+
+def test_init_weights_is_a_balanced_recipe_option() -> None:
+    TrainingConfig.from_dict({**BALANCED_TRAINING, "init_weights": "release"})
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict(
+            {**BALANCED_TRAINING, "recipe": "curriculum", "init_weights": "release"}
         )
