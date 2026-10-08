@@ -4,8 +4,9 @@
 - The divisor comes from the final phase's training nights (the arm's Weaver recordings and
   all of SleepAccel) and BIDsleep, the adult reference.
 
-The bundle's README.md is ``cards/bidoze-adult.md``; each seed's card starts with
-``cards/bidoze-adult-seed.md``.
+The bundle's README.md is ``cards/bidoze-adult.md``. Each seed's README.md is
+``cards/bidoze-adult-seed.md``: the generated card would score the seed by itself, without the
+divisor, so its figure is dropped and its checksums recomputed.
 
 Run from ``bidoze/`` with a relative run dir, so provenance records ``results/...``.
 
@@ -21,12 +22,12 @@ from pathlib import Path
 
 import numpy as np
 
-from arcasleep.artifacts.publish import build_release_bundle
+from arcasleep.artifacts.provenance import sha256_file
+from arcasleep.artifacts.publish import ASSETS_DIR, BUNDLE_FILES, build_release_bundle
 from arcasleep.data.cache import discover_cached_subjects
 from arcasleep_bidoze.adult import adult_stage_divisor, build_adult_bundle, stage_counts
 
 CACHE_NAME = "12Hz_log_PSD_aligned"
-REPO_ID = "arcascope/arcasleep-bidoze-adult"
 BIDOZE = Path(__file__).resolve().parents[2]
 
 
@@ -53,8 +54,12 @@ def main(run: Path, arm: str, adult_root: Path, output: Path, version: str) -> N
     staging = output.parent / f"{output.name}-seeds"
     for checkpoint in sorted((final / "model_outputs").glob("*.pisces")):
         bundle = build_release_bundle(final, staging / checkpoint.stem, version=version,
-                                      checkpoint=checkpoint, family="bidoze", overwrite=True,
-                                      repo_id=REPO_ID, card=BIDOZE / "cards/bidoze-adult-seed.md")
+                                      checkpoint=checkpoint, family="bidoze", overwrite=True)
+        shutil.copy(BIDOZE / "cards/bidoze-adult-seed.md", bundle.directory / "README.md")
+        shutil.rmtree(bundle.directory / ASSETS_DIR, ignore_errors=True)
+        files = sorted(f for f in BUNDLE_FILES if f != "checksums.sha256")
+        (bundle.directory / "checksums.sha256").write_text(
+            "".join(f"{sha256_file(bundle.directory / f)}  {f}\n" for f in files))
         seeds.append(bundle.directory)
     build_adult_bundle(
         output, seeds, divisor, version=version, overwrite=True,
