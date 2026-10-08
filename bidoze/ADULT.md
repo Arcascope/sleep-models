@@ -68,9 +68,18 @@ scored by the released model.
 | Cohort | Model | κ 4-stage | κ sleep/wake | Wake spec. at 95% sens. | Deep % (PSG) |
 |:---|:---|--:|--:|--:|--:|
 | SleepAccel | pediatric release | 0.397 | 0.578 | 69.1% | 29.6 (14.7) |
+| SleepAccel | pediatric release + divisor | 0.412 | 0.578 | 69.1% | 24.7 |
 | SleepAccel | adult, v0.1.0 recipe | 0.437 (p = 0.060) | 0.562 (p = 0.13) | 68.2% | 21.5 |
 | SleepAccel-Clinical | pediatric release | 0.261 | 0.548 | 54.0% | 33.2 (8.7) |
+| SleepAccel-Clinical | pediatric release + divisor | 0.282 | 0.548 | 54.0% | 27.7 |
 | SleepAccel-Clinical | adult v0.1.0 | 0.302 (p = 0.011) | 0.555 (p = 0.90) | 53.9% | 21.8 |
+
+- **Against the release with a divisor** computed from its own training nights, the adult model's
+  4-stage κ is +0.024 on SleepAccel (95% CI −0.009 to +0.057, p = 0.21) and +0.020 on
+  SleepAccel-Clinical (−0.012 to +0.052, p = 0.37); neither is significant. About half of the gain
+  over the release comes from the divisor alone.
+- **SleepAccel-Clinical is not an independent test:** its scores were used to choose between
+  design options.
 
 - v0.1.0 trains on 202 revised-Weaver recordings, the same nights as the earlier Weaver cache
   (111 Fitbit, 70 Apple Watch, 21 ActiGraph), plus SleepAccel.

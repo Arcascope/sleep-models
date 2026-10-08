@@ -91,6 +91,8 @@ subjects against the pediatric release,
   fold.
 - **SleepAccel-Clinical** [4] (32 adults: no diagnosis, or mild, moderate or severe obstructive
   sleep apnea) is not in the training data. It is scored by the released model.
+- **SleepAccel-Clinical is not an independent test.** Its scores were used to choose between
+  design options during development, so its results are likely somewhat optimistic.
 
 | Metric | SleepAccel (cross-validation) | p | SleepAccel-Clinical | p |
 |:---|---:|---:|---:|---:|
@@ -104,43 +106,63 @@ subjects against the pediatric release,
 | TST error (min) | −4.2 (−11.4 to +3.0) | 0.14 | +19.0 (+3.6 to +34.4) | 0.065 |
 | WASO error (min) | +2.4 (−3.6 to +8.4) | 0.50 | −12.3 (−23.9 to −0.8) | 0.037 |
 | Deep sleep, % of epochs (PSG) | 21.5 (14.7) | < 0.001 | 21.8 (8.7) | < 0.001 |
-| Light-sleep time, absolute error (%) | 16.5 (12.3 to 20.7) | 0.013 | 22.8 (17.5 to 28.2) | < 0.001 |
-| Deep-sleep time, absolute error (%) | 107 (45 to 168) | < 0.001 | 244 (83 to 405) | < 0.001 |
-| REM-sleep time, absolute error (%) | 41.7 (27.3 to 56.0) | 0.20 | 115 (62 to 168) | 0.79 |
+| Light-sleep time, absolute error (min) | 36 (28 to 45) | 0.002 | 50 (35 to 64) | < 0.001 |
+| Deep-sleep time, absolute error (min) | 34 (24 to 45) | < 0.001 | 49 (39 to 59) | < 0.001 |
+| REM-sleep time, absolute error (min) | 33 (25 to 41) | 0.21 | 28 (19 to 36) | 0.76 |
 
-The pediatric release on the same subjects:
+**Per-night agreement.** The TST and WASO rows above are means over nights; single nights
+differ much more. 95% limits of agreement (mean error ± 1.96 SD over nights):
 
-| Metric | SleepAccel | SleepAccel-Clinical |
+| | SleepAccel (cross-validation) | SleepAccel-Clinical |
 |:---|---:|---:|
-| Cohen's κ, sleep/wake | 0.58 | 0.55 |
-| Cohen's κ, 4 stages | 0.40 | 0.26 |
-| 4-stage accuracy (%) | 59.5 | 48.9 |
-| Balanced 4-stage accuracy (%) | 66.0 | 50.0 |
-| Sleep sensitivity (%) | 96.3 | 95.2 |
-| Wake specificity (%) | 69.3 | 59.2 |
-| Wake specificity at 95% sleep sensitivity (%) | 69.1 | 54.0 |
-| TST error (min) | −1.8 | +26.6 |
-| Deep sleep, % of epochs | 29.6 | 33.2 |
+| TST error (min) | −41 to +32 | −65 to +103 |
+| WASO error (min) | −28 to +33 | −75 to +50 |
+| Deep-sleep time error (min) | −18 to +86 | −7 to +105 |
+
+The pediatric release on the same subjects, by itself and with this model's labeling rule and a
+stage divisor computed from its own training nights:
+
+| Metric | SleepAccel: release | SleepAccel: release + divisor | SleepAccel-Clinical: release | SleepAccel-Clinical: release + divisor |
+|:---|---:|---:|---:|---:|
+| Cohen's κ, sleep/wake | 0.58 | 0.58 | 0.55 | 0.55 |
+| Cohen's κ, 4 stages | 0.40 | 0.41 | 0.26 | 0.28 |
+| 4-stage accuracy (%) | 59.5 | 62.4 | 48.9 | 53.3 |
+| Balanced 4-stage accuracy (%) | 66.0 | 65.9 | 50.0 | 50.7 |
+| Sleep sensitivity (%) | 96.3 | 96.3 | 95.2 | 95.2 |
+| Wake specificity (%) | 69.3 | 69.3 | 59.2 | 59.2 |
+| Wake specificity at 95% sleep sensitivity (%) | 69.1 | 69.1 | 54.0 | 54.0 |
+| TST error (min) | −1.8 | −1.8 | +26.6 | +26.6 |
+| Deep sleep, % of epochs | 29.6 | 24.7 | 33.2 | 27.7 |
+| Deep-sleep time, absolute error (min) | 64 | 43 | 83 | 64 |
+
+The divisor changes only light, deep and REM, so the sleep/wake rows are the same with and
+without it.
 
 Metric definitions:
 
 - **4-stage accuracy:** the percentage of a night's PSG-scored epochs labeled with PSG's stage.
 - **Balanced 4-stage accuracy:** the mean over wake, light, deep and REM of the percentage of
   that stage's PSG epochs labeled correctly, so each stage counts equally.
-- **Stage-time absolute error:** |model − PSG| minutes in the stage, as a percentage of PSG's
-  minutes.
+- **Stage-time absolute error:** |model − PSG| minutes in the stage, per night.
 - **Wake specificity at 95% sleep sensitivity:** the threshold on P(sleep) is set so that 95%
   of PSG sleep epochs, pooled over the cohort's subjects, are labeled sleep. This compares the
   two models at the same sleep sensitivity; it is one pooled value, so it has no paired test.
 
 Compared with the pediatric release:
 
-- **4-stage κ is higher:** 0.30 vs 0.26 on SleepAccel-Clinical (p = 0.011); 0.44 vs 0.40 on
-  SleepAccel (p = 0.060, not significant).
+- **4-stage κ:** 0.30 vs 0.26 on SleepAccel-Clinical (p = 0.011); 0.44 vs 0.40 on SleepAccel
+  (p = 0.060, not significant).
+- **About half of that difference comes from the divisor alone.** Against the release with a
+  divisor, the difference in 4-stage κ is +0.02 on SleepAccel-Clinical (95% CI −0.01 to +0.05,
+  p = 0.37) and +0.02 on SleepAccel (−0.01 to +0.06, p = 0.21); neither is significant.
+  Deep-sleep time error is lower than for the release with a divisor: 49 vs 64 minutes on
+  SleepAccel-Clinical (p < 0.001) and 34 vs 43 on SleepAccel (p = 0.016).
 - **Less deep sleep is labeled:** 21.5% vs 29.6% of epochs on SleepAccel (PSG 14.7%); 21.8% vs
   33.2% on SleepAccel-Clinical (PSG 8.7%).
-- **Sleep/wake κ does not differ significantly** (p ≥ 0.13). At 95% sleep sensitivity, wake
-  specificity is 68.2% vs 69.1% on SleepAccel and 53.9% vs 54.0% on SleepAccel-Clinical.
+- **Sleep/wake κ:** the difference is −0.016 on SleepAccel (95% CI −0.036 to +0.004, p = 0.13)
+  and +0.007 on SleepAccel-Clinical (−0.028 to +0.042, p = 0.90); neither is significant. At 95%
+  sleep sensitivity, wake specificity is 68.2% vs 69.1% on SleepAccel and 53.9% vs 54.0% on
+  SleepAccel-Clinical.
 - **Balanced accuracy differs less than accuracy** (67.0% vs 66.0%, p = 0.37; 52.3% vs 50.0%,
   p = 0.057), because light-sleep recall rises while deep-sleep recall falls:
   - Light: 67.1% vs 55.0% on SleepAccel; 57.9% vs 44.8% on SleepAccel-Clinical.
@@ -177,6 +199,14 @@ model's accuracy on your own cohort.
 Sleep/wake is the primary output. Stage estimates are less accurate; report them as cohort
 means, not as per-night measurements.
 
+- **Do not use deep-sleep time as an outcome,** per night or to compare groups. On
+  SleepAccel-Clinical the model labels 21.8% of epochs deep sleep on average whatever the PSG
+  amount: 17 of the 32 nights have < 5% PSG deep sleep, and the model labels a median of 19.1% of
+  those nights deep. The Spearman correlation between predicted and PSG deep-sleep percentage is
+  0.06 (95% CI −0.34 to 0.47) on SleepAccel-Clinical and 0.28 on SleepAccel.
+- **Single-night TST can be off by more than an hour** (limits of agreement above), even where
+  the cohort mean error is small.
+
 **Not a medical device.** Do not use it to diagnose sleep disorders (including obstructive
 sleep apnea), to screen individuals, or to make clinical decisions.
 
@@ -189,7 +219,11 @@ sleep apnea), to screen individuals, or to make clinical decisions.
   on SleepAccel-Clinical. The divisor assumes BIDSleep's 18.9% deep sleep; cohorts with less
   deep sleep, such as older adults or people with sleep apnea, are overestimated more.
 - **60 adults have been evaluated,** in two cohorts. Only SleepAccel-Clinical (32 adults) is
-  outside the training data.
+  outside the training data, and it was used to compare design options during development.
+- **Only the PSG night has been evaluated.** Daytime, naps and non-wear periods in multi-day
+  recordings have not been compared against a reference.
+- **Adult evaluation devices.** SleepAccel was recorded with an Apple Watch. Fitbit and
+  ActiGraph recordings have been evaluated only in children.
 - **Devices and placement.** Trained on wrist recordings from Apple Watch, Fitbit and ActiGraph
   devices at ≥ 12 Hz. Hip, ankle and upper-arm placements have not been evaluated.
 - **Recording length.** Up to 25 hours are scored in one pass; longer recordings are scored in
