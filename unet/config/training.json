@@ -1,12 +1,14 @@
 {
   "run_seed": 0,
   "seed_count": 1,
-  "max_epochs": 300,
+  "max_epochs": 3000,
   "batch_size": 2,
   "lr": 0.001,
   "segment_epochs": 1024,
   "balance_beta": 0.999,
-  "lr_drop_patience": 10,
-  "early_stop_patience": 25,
+  "patience_unit": "steps",
+  "lr_drop_patience": 700,
+  "early_stop_patience": 1750,
+  "eval_smoothing_steps": 350,
   "eval_fraction": 0.30
 }
