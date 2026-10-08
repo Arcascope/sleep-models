@@ -5,9 +5,12 @@ Reads ``<run>/analysis/runs.csv`` and ``paired.csv`` (from score.py) and writes:
                    † against ``matched`` (paired Wilcoxon over subjects).
 - ``devices.png``: one panel per metric; bars are the ensembles, dots the single seeds.
 
-Arms with a stalled fold model are shown with it left out.
+Arms with a stalled fold model are shown with it left out. Each arm is scored two ways:
+- release + arm: the pediatric release's sleep/wake calls, the arm's light/deep/REM after the
+                 adult stage divisor (score.py's ``adult`` scoring);
+- arm only:      the arm's own most probable stage (score.py's ``alone`` scoring).
 
-Usage: python summary.py <run dir> [figure copy path]
+Usage: python summary.py <run dir> [figure copy path] [arm,arm,...]
 """
 from __future__ import annotations
 
@@ -33,20 +36,22 @@ COHORTS = {"SleepAccel": "#2a78d6", "SleepAccel-Clinical": "#eb6834"}
 PSG_DEEP = {"SleepAccel": 14.7, "SleepAccel-Clinical": 8.7}
 # (column, scoring, title, scale)
 METRICS = [
-    ("kappa_4stage", "adult", "κ 4-stage, adult scoring", 1),
-    ("kappa_4stage", "alone", "κ 4-stage, stage source alone", 1),
-    ("kappa_sleep_wake", "alone", "κ sleep/wake, stage source alone", 1),
-    ("wake_specificity", "alone", "Wake specificity (%), stage source alone", 100),
-    ("auroc", "alone", "Sleep vs wake AUROC, stage source alone", 1),
-    ("deep%", "adult", "Deep sleep (% of epochs), adult scoring", 1),
+    ("kappa_4stage", "adult", "κ 4-stage, release + arm", 1),
+    ("kappa_4stage", "alone", "κ 4-stage, arm only", 1),
+    ("kappa_sleep_wake", "alone", "κ sleep/wake, arm only", 1),
+    ("wake_specificity", "alone", "Wake specificity (%), arm only", 100),
+    ("auroc", "alone", "Sleep vs wake AUROC, arm only", 1),
+    ("deep%", "adult", "Deep sleep (% of epochs), release + arm", 1),
 ]
 INK, MUTED, GRID, BASE, SURFACE = "#0b0b0b", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 
 
-def arm_rows(runs: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def arm_rows(runs: pd.DataFrame, only: list[str] | None = None) -> dict[str, pd.DataFrame]:
     """Per displayed arm, its rows; an arm with a stalled model uses the stalled-out rows."""
     out = {}
     for arm in ORDER:
+        if only is not None and arm not in only and arm not in (RELEASE, REFERENCE):
+            continue
         name = f"{arm} (stalled out)" if (runs.arm == f"{arm} (stalled out)").any() else arm
         rows = runs[runs.arm == name]
         if len(rows):
@@ -69,14 +74,14 @@ def significant(paired: pd.DataFrame, arm_name: str, scoring: str, cohort: str, 
 
 
 def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame]) -> str:
-    cols = [("SleepAccel", "kappa_4stage", "adult", "SleepAccel κ 4-stage, adult"),
-            ("SleepAccel", "kappa_4stage", "alone", "SleepAccel κ 4-stage, alone"),
-            ("SleepAccel", "kappa_sleep_wake", "alone", "SleepAccel κ sleep/wake, alone"),
-            ("SleepAccel", "wake_specificity", "alone", "SleepAccel wake spec., alone"),
-            ("SleepAccel", "deep%", "adult", "SleepAccel deep %, adult"),
-            ("SleepAccel-Clinical", "kappa_4stage", "adult", "Clinical κ 4-stage, adult"),
-            ("SleepAccel-Clinical", "kappa_sleep_wake", "alone", "Clinical κ sleep/wake, alone"),
-            ("SleepAccel-Clinical", "deep%", "adult", "Clinical deep %, adult")]
+    cols = [("SleepAccel", "kappa_4stage", "adult", "SleepAccel κ 4-stage, release + arm"),
+            ("SleepAccel", "kappa_4stage", "alone", "SleepAccel κ 4-stage, arm only"),
+            ("SleepAccel", "kappa_sleep_wake", "alone", "SleepAccel κ sleep/wake, arm only"),
+            ("SleepAccel", "wake_specificity", "alone", "SleepAccel wake spec., arm only"),
+            ("SleepAccel", "deep%", "adult", "SleepAccel deep %, release + arm"),
+            ("SleepAccel-Clinical", "kappa_4stage", "adult", "Clinical κ 4-stage, release + arm"),
+            ("SleepAccel-Clinical", "kappa_sleep_wake", "alone", "Clinical κ sleep/wake, arm only"),
+            ("SleepAccel-Clinical", "deep%", "adult", "Clinical deep %, release + arm")]
     lines = ["| Arm | " + " | ".join(c[3] for c in cols) + " |",
              "|:---|" + "--:|" * len(cols)]
     for arm, rows in arms.items():
@@ -154,11 +159,11 @@ def figure(arms: dict[str, pd.DataFrame], path: Path) -> None:
     fig.savefig(path, dpi=150, facecolor=SURFACE)
 
 
-def main(run: Path, copy_to: Path | None) -> None:
+def main(run: Path, copy_to: Path | None, only: list[str] | None = None) -> None:
     analysis = run / "analysis"
     runs = pd.read_csv(analysis / "runs.csv")
     paired = pd.read_csv(analysis / "paired.csv")
-    arms = arm_rows(runs)
+    arms = arm_rows(runs, only)
     (analysis / "summary.md").write_text(table(runs, paired, arms))
     figure(arms, analysis / "devices.png")
     if copy_to is not None:
@@ -168,4 +173,5 @@ def main(run: Path, copy_to: Path | None) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None)
+    main(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None,
+         sys.argv[3].split(",") if len(sys.argv) > 3 else None)
