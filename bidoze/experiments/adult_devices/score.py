@@ -107,6 +107,20 @@ def best_eval_kappas(log: Path) -> list[float]:
             if line.strip().startswith("best eval kappa")]
 
 
+def seed_predictions(arm_dir: Path, k: int, seed: int) -> Path:
+    """One seed's predictions: in the fold's directory, or its own seed<n> phase directory."""
+    whole = arm_dir / f"fold{k}/predictions/fold{k}_seed_{seed}"
+    return whole if whole.is_dir() else arm_dir / f"fold{k}/seed{seed}/predictions/fold{k}_seed_{seed}"
+
+
+def fold_best_eval_kappas(arm_dir: Path, k: int) -> list[float]:
+    """Best eval κ per seed of one fold, from one training log or one per seed."""
+    log = arm_dir / f"fold{k}/training.log"
+    if log.is_file():
+        return best_eval_kappas(log)
+    return [kappa for s in SEEDS for kappa in best_eval_kappas(arm_dir / f"fold{k}/seed{s}/training.log")]
+
+
 def night_counts(paths: list[Path]) -> np.ndarray:
     return np.array([stage_counts(np.load(p)["y"]) for p in paths])
 
@@ -158,10 +172,10 @@ def main(run: Path, adult_root: Path) -> None:
     arms: dict[str, tuple[dict[int, list[dict]], list[list[Path]]]] = {}
     for arm in json.loads((run / "setup/arms.json").read_text()):
         cache = run / "setup/cache" / arm / CACHE_NAME
-        if not all((run / arm / f"fold{k}/predictions/fold{k}_seed_{s}").is_dir() for k in FOLDS for s in SEEDS):
+        if not all(seed_predictions(run / arm, k, s).is_dir() for k in FOLDS for s in SEEDS):
             print(f"{arm}: incomplete, skipped")
             continue
-        preds = {s: [load_predictions(run / arm / f"fold{k}/predictions/fold{k}_seed_{s}", plan.fold_names[k])
+        preds = {s: [load_predictions(seed_predictions(run / arm, k, s), plan.fold_names[k])
                      for k in FOLDS] for s in SEEDS}
         train = []
         for k in FOLDS:
@@ -169,7 +183,7 @@ def main(run: Path, adult_root: Path) -> None:
             train.append([p for d in cv["train_sets"] for p in sorted(cache.glob(f"{d}_subject_*"))])
         arms[arm] = (preds, train)
         stalled = [(s, k) for k in FOLDS
-                   for s, kappa in zip(SEEDS, best_eval_kappas(run / arm / f"fold{k}/training.log"))
+                   for s, kappa in zip(SEEDS, fold_best_eval_kappas(run / arm, k))
                    if kappa < STALLED_KAPPA]
         if stalled:
             print(f"{arm}: stalled fold models (seed, fold): {stalled}")

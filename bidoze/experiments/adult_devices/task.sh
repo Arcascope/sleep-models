@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One phase of the device ablation in a training image: PHASE is <arm>/fold<k>
 # (early-stopping split seed 0) or <arm>/split<s>/fold<k>; <arm>/final trains the
-# released stage source on all of SleepAccel.
+# released stage source on all of SleepAccel. A trailing /seed<n> trains only that
+# seed, so the seeds of one fold can run as separate tasks.
 # Called by scripts/harness.sh with BIDOZE_EXPERIMENT=experiments/adult_devices;
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # ADULT_DEVICES_TRAINING overrides the recipe, e.g. config/training-smoke.json
@@ -12,6 +13,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PHASE=$1
 OUT=$2
+SEED=
+if [[ "$PHASE" == */seed* ]]; then
+  SEED=${PHASE##*/seed}
+  PHASE=${PHASE%/seed*}
+  [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "seed must be a number: $SEED" >&2; exit 2; }
+fi
 if [[ "$PHASE" == */final ]]; then
   K=final
   ARM=${PHASE%/final}
@@ -34,6 +41,12 @@ S=$WORK/setup
 RECIPE=$S/training.json
 [[ -f "$S/training-$ARM.json" ]] && RECIPE=$S/training-$ARM.json
 TRAINING=${ADULT_DEVICES_TRAINING:-$RECIPE}
+if [[ -n "$SEED" ]]; then
+  mkdir -p "$OUT/setup"
+  python -c "import json,sys;t=json.load(open(sys.argv[1]));t.update(run_seed=int(sys.argv[2]),seed_count=1);json.dump(t,open(sys.argv[3],'w'),indent=2)" \
+    "$TRAINING" "$SEED" "$OUT/setup/training-seed$SEED.json"
+  TRAINING=$OUT/setup/training-seed$SEED.json
+fi
 CV=$S/cv/$ARM/cv_$([[ $K == final ]] && echo final || echo fold$K).json
 mkdir -p "$OUT/setup"
 cp "$S/arms.json" "$TRAINING" "$CV" "$OUT/setup/"
