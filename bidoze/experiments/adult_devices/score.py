@@ -11,6 +11,10 @@ well as the reference), plus ``weaver-2026-10-06``, the October 6 §2 mix runs
 
 Scorings:
 - alone:  the stage source's argmax (sleep/wake and stages).
+- adjusted: the stage source's argmax after wake, light, deep and REM are each divided by the
+          adult stage divisor; the same as subtracting log(divisor) from the logits.
+- stages adjusted: the adult rule with the arm as its own wake source: the arm's own wake and
+          gap calls; on its sleep epochs, its light/deep/REM divided by the divisor.
 - adult:  `arcasleep_bidoze.adult.hybrid_calls`: the pediatric release's wake and gap calls; on
           its sleep epochs, the stage source's light/deep/REM divided by the adult stage divisor.
           The divisor is computed per fold model from its own training nights; adult reference:
@@ -139,6 +143,16 @@ def score(logger: MetricsLogger, subjects: dict, calls: dict | None) -> pd.DataF
     return pd.DataFrame(rows)
 
 
+def divided_calls(proba: np.ndarray, divisor: np.ndarray) -> np.ndarray:
+    """The arm's own calls with wake, light, deep and REM each divided by the divisor.
+
+    The same argmax as subtracting log(divisor) from those four logits; gap is left as is.
+    """
+    p = np.array(proba, dtype=float)
+    p[:, :4] = p[:, :4] / np.asarray(divisor)[:4]
+    return p.argmax(axis=1)
+
+
 def pooled_sleep_scores(subjects: dict) -> tuple[np.ndarray, np.ndarray]:
     """``(is_sleep, P(sleep))`` over every scored epoch of every subject."""
     y = np.concatenate([s[0] for s in subjects.values()])
@@ -227,20 +241,29 @@ def main(run: Path, adult_root: Path) -> None:
         models["ensemble"] = [mean_over_seeds([preds[s][k] for s in SEEDS]) for k in FOLDS]
         for model, per_fold in models.items():
             combined = combine_folds(per_fold)
-            # Each subject's adult calls use the divisor of the fold model(s) that scored it.
+            # Each subject's adult and adjusted calls use the divisor of the fold model(s) that
+            # scored it.
             adult_calls: dict[str, dict] = {c: {} for c in COHORTS}
+            adjusted_calls: dict[str, dict] = {c: {} for c in COHORTS}
+            staged_calls: dict[str, dict] = {c: {} for c in COHORTS}
             for k, fold in enumerate(per_fold):
                 if fold is None:
                     continue
                 for sid, (_, p) in fold["SleepAccel"].items():
                     adult_calls["SleepAccel"][sid] = hybrid_calls(ped["SleepAccel"][sid][1], p, divisors[k])
+                    adjusted_calls["SleepAccel"][sid] = divided_calls(p, divisors[k])
+                    staged_calls["SleepAccel"][sid] = hybrid_calls(p, p, divisors[k])
             used = [d for d, fold in zip(divisors, per_fold) if fold is not None]
             mean_divisor = np.exp(np.mean(np.log(used), axis=0))
             for sid, (_, p) in combined["SleepAccel-Clinical"].items():
                 adult_calls["SleepAccel-Clinical"][sid] = hybrid_calls(ped["SleepAccel-Clinical"][sid][1], p,
                                                                       mean_divisor)
+                adjusted_calls["SleepAccel-Clinical"][sid] = divided_calls(p, mean_divisor)
+                staged_calls["SleepAccel-Clinical"][sid] = hybrid_calls(p, p, mean_divisor)
             for c in COHORTS:
                 record(arm, model, "alone", c, combined[c], None)
+                record(arm, model, "adjusted", c, combined[c], adjusted_calls[c])
+                record(arm, model, "stages adjusted", c, combined[c], staged_calls[c])
                 wake_source = {sid: ped[c][sid] for sid in combined[c]}
                 record(arm, model, "adult", c, wake_source, adult_calls[c])
         print(f"{arm}: scored", flush=True)
@@ -260,7 +283,7 @@ def main(run: Path, adult_root: Path) -> None:
     paired = []
     names = [a for a in arms if a != REFERENCE]
     for cohort in COHORTS:
-        for scoring in ["alone", "adult"]:
+        for scoring in ["alone", "adjusted", "stages adjusted", "adult"]:
             for kind in ["seed mean", "ensemble"]:
                 for a in names + [REFERENCE]:
                     for b in [REFERENCE, "matched", "all", "pediatric release"]:
