@@ -10,6 +10,10 @@ Arms (revised Weaver part of the training set):
 - <device>-119:  119 children drawn per device (seed 0), all of their recordings with that
                  device. 119 is the number of children with a Fitbit recording, so the four
                  device arms differ in device and children, not in training-set size.
+- matched:       the October 6 Weaver training set as it appears in revised Weaver. For each
+                 night of the earlier ``weaver`` cache, the revised recording with the same PSG
+                 labels and the same spectra (202 recordings, 201 children; see match_weaver).
+- matched-actigraph: the same nights, each child's ActiGraph recording instead.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
@@ -18,8 +22,9 @@ Writes, under ``<run>/setup/``:
 - arms.json                           the subject ids of every arm
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
 
-Usage: python prepare.py <run dir> <weaver_revised cache root> <SleepAccel cache root>
-(cache roots are the directories that hold ``12Hz_log_PSD_aligned/``).
+Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root>
+(cache roots are the directories that hold ``12Hz_log_PSD_aligned/``; the adult root holds
+SleepAccel, SleepAccel-Clinical and the earlier ``weaver`` cache).
 """
 from __future__ import annotations
 
@@ -57,6 +62,49 @@ def arms(weaver_ids: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def epoch_spectra(path: Path) -> np.ndarray:
+    """Per-epoch mean of the frame spectra, (epochs, frequencies, channels)."""
+    z = np.load(path)
+    X, epochs = z["X"][0], z["y"].shape[1]
+    frames = X.shape[0] // epochs
+    return X[: epochs * frames].reshape(epochs, frames, *X.shape[1:]).mean(axis=1)
+
+
+def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, list[str]]:
+    """The revised recordings that hold the earlier ``weaver`` nights.
+
+    A revised recording holds an earlier night when their PSG labels agree epoch for epoch
+    from the first epoch over the shorter of the two, and that covers ≥ 90% of the longer.
+    Other devices of the same night can match too (one PSG per night), so the recording is the
+    candidate whose epoch spectra are closest. Returns ``matched`` (that recording per night)
+    and ``matched-actigraph`` (the ActiGraph recording of the same child and night, where there
+    is one).
+    """
+    labels = {sid: np.load(path)["y"].ravel() for sid, path in revised.items()}
+    matched, actigraph = [], []
+    for path in earlier:
+        y = np.load(path)["y"].ravel()
+        candidates = [sid for sid, other in labels.items()
+                      if min(len(y), len(other)) >= 0.9 * max(len(y), len(other))
+                      and np.array_equal(y[: len(other)], other[: len(y)])]
+        nights = {sid.split("_", 1)[0] + "_" + sid.rsplit("_", 1)[1] for sid in candidates}
+        if len(nights) != 1:
+            raise ValueError(f"{path.name}: {len(nights)} revised nights match its labels")
+        spectra = epoch_spectra(path)
+
+        def distance(sid: str) -> float:
+            other = epoch_spectra(revised[sid])
+            n = min(len(spectra), len(other))
+            return float(np.mean(np.abs(spectra[:n] - other[:n])))
+
+        best = min(candidates, key=distance)
+        matched.append(best)
+        child, _, night = best.split("_")
+        if f"{child}_actigraph_{night}" in revised:
+            actigraph.append(f"{child}_actigraph_{night}")
+    return {"matched": sorted(matched), "matched-actigraph": sorted(actigraph)}
+
+
 def dataset_name(arm: str) -> str:
     return "weaver" + "".join(part.capitalize() for part in arm.split("-"))
 
@@ -72,12 +120,13 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path) -> None:
     setup = run_dir / "setup"
     weaver = {s.subject_id: s.path
               for s in discover_cached_subjects(["weaver_revised"], weaver_root / CACHE_NAME)["weaver_revised"]}
-    adult = discover_cached_subjects(["SleepAccel", "SleepAccel-Clinical"], adult_root / CACHE_NAME)
+    adult = discover_cached_subjects(["SleepAccel", "SleepAccel-Clinical", "weaver"], adult_root / CACHE_NAME)
     sleepaccel = {s.subject_id: s.path for s in adult["SleepAccel"]}
     clinical = adult["SleepAccel-Clinical"]
     plan = read_plan(BIDOZE / "config/splits/sleepaccel_5fold.json")
 
     chosen = arms(sorted(weaver))
+    chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
     setup.mkdir(parents=True, exist_ok=True)
     (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
 

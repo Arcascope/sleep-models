@@ -17,6 +17,8 @@ can train on one device or on all of them. This experiment asks:
 | `apple-119` | 120 | 119 |
 | `fitbit-119` | 119 | 119 |
 | `garmin-119` | 121 | 119 |
+| `matched` | 202 | 201 |
+| `matched-actigraph` | 201 | 200 |
 | `weaver-2026-10-06` (reference, already trained) | 202 Weaver nights | 202 |
 
 - The `-119` arms draw 119 children per device (seed 0), the number of children with a Fitbit
@@ -24,6 +26,11 @@ can train on one device or on all of them. This experiment asks:
   training-set size.
 - `actigraph` against `actigraph-119` shows the effect of training-set size for one device.
 - The reference arm is the research log's October 6 §2 mix runs, seeds 0–2.
+- `matched` is the reference's Weaver nights as they appear in revised Weaver: 111 Fitbit, 70
+  Apple and 21 ActiGraph recordings, found by identical PSG labels and spectra. Their labels and
+  spectra are identical to the earlier cache, so `matched` should reproduce the reference within
+  seed variation.
+- `matched-actigraph` keeps those children and nights but uses each one's ActiGraph recording.
 
 **Recipe.**
 - `config/training-balanced.json` with `run_seed 0, seed_count 3`.

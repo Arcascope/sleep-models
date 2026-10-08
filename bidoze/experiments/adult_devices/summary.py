@@ -23,10 +23,12 @@ import pandas as pd  # noqa: E402
 
 REFERENCE = "weaver-2026-10-06"
 RELEASE = "pediatric release"
-ORDER = [RELEASE, REFERENCE, "all", "actigraph", "actigraph-119", "apple-119", "fitbit-119", "garmin-119"]
+ORDER = [RELEASE, REFERENCE, "matched", "matched-actigraph", "all", "actigraph", "actigraph-119", "apple-119",
+         "fitbit-119", "garmin-119"]
 LABELS = {RELEASE: "pediatric\nrelease", REFERENCE: "Weaver\n(Oct 6)", "all": "all\ndevices",
           "actigraph": "ActiGraph\n236", "actigraph-119": "ActiGraph\n119", "apple-119": "Apple\n119",
-          "fitbit-119": "Fitbit\n119", "garmin-119": "Garmin\n119"}
+          "fitbit-119": "Fitbit\n119", "garmin-119": "Garmin\n119", "matched": "matched\n(revised)",
+          "matched-actigraph": "matched,\nActiGraph"}
 COHORTS = {"SleepAccel": "#2a78d6", "SleepAccel-Clinical": "#eb6834"}
 PSG_DEEP = {"SleepAccel": 14.7, "SleepAccel-Clinical": 8.7}
 # (column, scoring, title, scale)
@@ -102,7 +104,7 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
 def figure(arms: dict[str, pd.DataFrame], path: Path) -> None:
     plt.rcParams.update({"font.size": 9, "axes.edgecolor": BASE, "axes.labelcolor": INK,
                          "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK})
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8.2), facecolor=SURFACE)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8.2), facecolor=SURFACE)
     names = list(arms)
     width = 0.38
     for ax, (column, scoring, title, scale) in zip(axes.ravel(), METRICS):
