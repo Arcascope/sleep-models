@@ -127,4 +127,5 @@ def test_stacked_seeds_give_the_mean_of_their_probabilities(tmp_path: Path) -> N
     stacked = np.asarray(jax.nn.softmax(StackedModel(models).infer(x), axis=-1))
 
     mean = np.mean([np.asarray(jax.nn.softmax(m.infer(x), axis=-1)) for m in models], axis=0)
-    np.testing.assert_allclose(stacked, mean, rtol=1e-4, atol=1e-6)
+    # A vmapped batch and separate calls round differently on GPU.
+    np.testing.assert_allclose(stacked, mean, rtol=0, atol=1e-4)
