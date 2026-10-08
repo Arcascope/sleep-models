@@ -28,9 +28,9 @@ can train on one device or on all of them. This experiment asks:
 - `actigraph` against `actigraph-119` shows the effect of training-set size for one device.
 - The reference arm is the research log's October 6 §2 mix runs, seeds 0–2.
 - `matched` is the reference's Weaver nights as they appear in revised Weaver: 111 Fitbit, 70
-  Apple and 21 ActiGraph recordings, found by identical PSG labels and spectra. Their labels and
-  spectra are identical to the earlier cache, so `matched` should reproduce the reference within
-  seed variation.
+  Apple and 21 ActiGraph recordings, found by identical PSG labels and the closest spectra. Their
+  labels are identical to the earlier cache's; their spectra differ in about 2% of frames per
+  night, mostly by less than 10⁻³.
 - `matched-actigraph` keeps those children and nights but uses each one's ActiGraph recording.
 - `earlier` trains on the earlier `weaver` cache itself, as the reference did.
 
