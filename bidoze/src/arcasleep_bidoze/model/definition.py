@@ -3179,6 +3179,7 @@ class BiDozeNetModel(CVModel):
         lr_drop_factor: float = LR_DROP_FACTOR,
         class_sample_max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
         eval_batch_size: int = 4,
+        soft_targets: np.ndarray | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3192,6 +3193,11 @@ class BiDozeNetModel(CVModel):
         is divided by ``lr_drop_factor`` and the fit stops as ``patience``
         decides, and the parameters of the epoch with the best eval kappa are
         kept. The eval kappa counts a scored epoch predicted as gap as a miss.
+
+        With ``soft_targets`` ``(B, T, output_classes)``, the fit distills: each
+        step draws whole rows uniformly and the loss is the cross-entropy against
+        those probabilities over every epoch of the row, scored or not. The labels
+        then serve only the eval kappa.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3227,6 +3233,25 @@ class BiDozeNetModel(CVModel):
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), opt_state, loss
+
+        @jax.jit
+        def distill_step(params, opt_state, xb, mb, qb, key):
+            def loss_fn(p):
+                logits = module.apply(
+                    {"params": p}, xb, mb, train=True, rngs={"dropout": key, "augment": key}
+                )
+                return -(qb * jax.nn.log_softmax(logits, axis=-1)).sum(axis=-1).mean()
+
+            loss, grads = jax.value_and_grad(loss_fn)(params)
+            updates, opt_state = tx.update(grads, opt_state, params)
+            return optax.apply_updates(params, updates), opt_state, loss
+
+        if soft_targets is not None:
+            soft_targets = np.asarray(soft_targets, dtype=np.float32)
+            if soft_targets.shape != (*train_y.shape, output_classes):
+                raise ValueError(
+                    f"soft_targets must be {(*train_y.shape, output_classes)}, got {soft_targets.shape}"
+                )
 
         @jax.jit
         def eval_logits(params, xb, mb):
@@ -3266,29 +3291,37 @@ class BiDozeNetModel(CVModel):
 
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
-            # Rows are already the fit length, so each draw is a whole row.
-            xs, ys = sample_balanced_segments(
-                rows,
-                rng,
-                n_segments=steps_per_epoch * batch_size,
-                segment_epochs=train_y.shape[1],
-                num_classes=num_classes,
-                frames_per_epoch=fpe,
-                max_attempts=class_sample_max_attempts,
-            )
-            # The model pools the mask with its frames, so it runs per frame.
-            ms = np.repeat(valid_mask(ys), fpe, axis=1)
-            ys = np.where(ys <= GAP_LABEL, gap_class, ys)
+            if soft_targets is not None:
+                # Whole rows, drawn uniformly; the loss covers every epoch of a row.
+                drawn = rng.integers(train_x.shape[0], size=steps_per_epoch * batch_size)
+                xs, targets = train_x[drawn], soft_targets[drawn]
+                ms = np.ones((len(drawn), train_y.shape[1] * fpe), dtype=np.float32)
+                step_fn = distill_step
+            else:
+                # Rows are already the fit length, so each draw is a whole row.
+                xs, ys = sample_balanced_segments(
+                    rows,
+                    rng,
+                    n_segments=steps_per_epoch * batch_size,
+                    segment_epochs=train_y.shape[1],
+                    num_classes=num_classes,
+                    frames_per_epoch=fpe,
+                    max_attempts=class_sample_max_attempts,
+                )
+                # The model pools the mask with its frames, so it runs per frame.
+                ms = np.repeat(valid_mask(ys), fpe, axis=1)
+                targets = np.where(ys <= GAP_LABEL, gap_class, ys)
+                step_fn = train_step
             epoch_loss = 0.0
             for step in range(steps_per_epoch):
                 batch = slice(step * batch_size, (step + 1) * batch_size)
                 rng_key, step_key = jax.random.split(rng_key)
-                params, opt_state, loss = train_step(
+                params, opt_state, loss = step_fn(
                     params,
                     opt_state,
                     jnp.asarray(xs[batch]),
                     jnp.asarray(ms[batch]),
-                    jnp.asarray(ys[batch]),
+                    jnp.asarray(targets[batch]),
                     step_key,
                 )
                 epoch_loss += float(loss)

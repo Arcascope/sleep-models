@@ -46,6 +46,7 @@ BALANCED_ONLY_KEYS = (
     "eval_smoothing_steps",
     "eval_fraction",
     "init_weights",
+    "distill_from",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -93,6 +94,8 @@ class TrainingConfig:
     eval_fraction: float = 0.3
     # A release bundle whose weights the fit starts from; None starts from random weights.
     init_weights: str | None = None
+    # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
+    distill_from: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -347,6 +350,10 @@ def _train_fold_balanced(
     )
     print(f"  fit  X: {X_fit.shape}  y: {y_fit.shape}")
     print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
+    soft_targets = None
+    if training.distill_from is not None:
+        soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
+        print(f"  distilling the mean output of the teachers in {training.distill_from}")
 
     model = BiDozeNetModel(config.model)
     if training.init_weights is not None:
@@ -364,6 +371,7 @@ def _train_fold_balanced(
         patience=training.patience,
         max_epochs=training.epochs,
         fit_seed=fit_seed,
+        soft_targets=soft_targets,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
@@ -413,3 +421,16 @@ def _load_init_weights(model, bundle_dir: Path) -> None:
     if BiDozeNetConfig.from_dict(bundle_config) != model.config:
         raise ValueError(f"model.json differs from the architecture of {bundle_dir}")
     model.load_weights_safetensors(bundle_dir / "model.safetensors")
+
+
+def teacher_probabilities(teacher_dir: Path, X: np.ndarray, batch_size: int = 4) -> np.ndarray:
+    """The mean 5-way output of every checkpoint in ``teacher_dir`` on the rows of ``X``."""
+    from arcasleep_bidoze.adult import StackedModel
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    paths = sorted(teacher_dir.glob("*.pisces"))
+    if not paths:
+        raise ValueError(f"no teacher checkpoints (*.pisces) in {teacher_dir}")
+    teachers = StackedModel([BiDozeNetModel.loadz(p, input_shape=X.shape[1:]) for p in paths])
+    log_mean = [teachers.infer(X[i : i + batch_size]) for i in range(0, X.shape[0], batch_size)]
+    return np.exp(np.concatenate(log_mean, axis=0))

@@ -7,7 +7,8 @@
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # ADULT_DEVICES_TRAINING overrides the recipe, e.g. config/training-smoke.json
 # for a wiring check. ADULT_DEVICES_PEDIATRIC is the pediatric release bundle,
-# which the finetune arm starts from.
+# which the finetune arm starts from. ADULT_DEVICES_TEACHERS is the run directory
+# (local or s3://) whose <phase>/model_outputs/ the distill arm's student learns from.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,6 +42,15 @@ S=$WORK/setup
 RECIPE=$S/training.json
 [[ -f "$S/training-$ARM.json" ]] && RECIPE=$S/training-$ARM.json
 TRAINING=${ADULT_DEVICES_TRAINING:-$RECIPE}
+if [[ "$ARM" == distill ]]; then
+  TEACHER_PHASE=$([[ $K == final ]] && echo final || echo fold$K)
+  TEACHERS=$WORK/teachers/$TEACHER_PHASE
+  python "$HERE/fetch.py" "${ADULT_DEVICES_TEACHERS:?the distill arm needs ADULT_DEVICES_TEACHERS}/$TEACHER_PHASE/model_outputs" "$TEACHERS"
+  mkdir -p "$OUT/setup"
+  python -c "import json,sys;t=json.load(open(sys.argv[1]));t['distill_from']=sys.argv[2];json.dump(t,open(sys.argv[3],'w'),indent=2)" \
+    "$TRAINING" "$TEACHERS" "$OUT/setup/training-distill.json"
+  TRAINING=$OUT/setup/training-distill.json
+fi
 if [[ -n "$SEED" ]]; then
   mkdir -p "$OUT/setup"
   python -c "import json,sys;t=json.load(open(sys.argv[1]));t.update(run_seed=int(sys.argv[2]),seed_count=1);json.dump(t,open(sys.argv[3],'w'),indent=2)" \

@@ -240,3 +240,46 @@ def test_init_weights_is_a_balanced_recipe_option() -> None:
         TrainingConfig.from_dict(
             {**BALANCED_TRAINING, "recipe": "curriculum", "init_weights": "release"}
         )
+
+
+def test_a_fit_distills_the_mean_output_of_teacher_checkpoints(tmp_path: Path) -> None:
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
+    teachers = tmp_path / "teachers" / "training"
+    run_training(_configs(tmp_path / "teacher-config"), RunPaths(results=teachers, feature_cache=cache_root),
+                 run_id="teacher")
+
+    config = _configs(tmp_path / "config")
+    training = {**BALANCED_TRAINING, "distill_from": str(teachers / "model_outputs")}
+    (tmp_path / "config" / "training.json").write_text(json.dumps(training))
+    config = RunConfig.from_paths(
+        family=BIDOZE,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    student = tmp_path / "student" / "training"
+    run_training(config, RunPaths(results=student, feature_cache=cache_root), run_id="student")
+
+    (checkpoint,) = (student / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def test_teacher_probabilities_are_a_distribution(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import teacher_probabilities
+
+    config = _configs(tmp_path / "config").model
+    for seed in range(2):
+        model = BiDozeNetModel(config)
+        model._ensure_built((16, 5, 2), seed=seed)
+        model.savez(tmp_path / f"model_seed_{seed}.pisces")
+    x = np.random.default_rng(0).normal(size=(3, 16, 5, 2)).astype(np.float32)
+
+    p = teacher_probabilities(tmp_path, x)
+
+    assert p.shape == (3, 16, config.output_classes)
+    np.testing.assert_allclose(p.sum(axis=-1), 1.0, rtol=1e-5)

@@ -22,6 +22,8 @@ Arms (revised Weaver part of the training set):
                  ``weaverUnseen``). Written only when the pediatric bundle is given.
 - finetune-bidsleep: as finetune, but early-stopping on one BIDsleep night per participant
                  (47 nights, drawn with seed 0; dataset ``bidsleepVal``).
+- distill:       matched's training nights; one student per fold, trained on the mean output
+                 of matched's three seeds for that fold (task.sh fetches them).
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
@@ -35,6 +37,7 @@ Writes, under ``<run>/setup/``:
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
 - training-finetune*.json             training.json at a tenth of the learning rate, starting
                                       from the pediatric bundle's weights
+- training-distill.json               training.json with one seed; task.sh adds distill_from
 
 Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root> [pediatric bundle]
 (cache roots are the directories that hold ``12Hz_log_PSD_aligned/``; the adult root holds
@@ -59,6 +62,7 @@ MATCHED_CHILDREN = 119
 SEEDS = 3
 DEVICES = ["actigraph", "apple", "fitbit", "garmin"]
 EARLIER = "earlier"
+DISTILL = "distill"
 FINETUNE = "finetune"
 FINETUNE_BIDSLEEP = "finetune-bidsleep"
 # The arms that start from the pediatric release, and their validation datasets.
@@ -163,6 +167,7 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
     earlier = {s.subject_id: s.path for s in adult["weaver"]}
     chosen[EARLIER] = sorted(earlier)
+    chosen[DISTILL] = chosen["matched"]
     if pediatric is not None:
         # The release trained on every earlier night, which are the matched children.
         seen = {participant_id(s) for s in chosen["matched"]}
@@ -175,6 +180,7 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     training = json.loads((BIDOZE / "config/training-balanced.json").read_text())
     training.update(run_seed=0, seed_count=SEEDS)
     (setup / "training.json").write_text(json.dumps(training, indent=2) + "\n")
+    (setup / f"training-{DISTILL}.json").write_text(json.dumps({**training, "seed_count": 1}, indent=2) + "\n")
     if pediatric is not None:
         finetune = {**training, "lr": training["lr"] * FINETUNE_LR_FACTOR, "init_weights": str(pediatric)}
         for arm in FINETUNE_ARMS:
