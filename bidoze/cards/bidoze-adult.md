@@ -16,8 +16,12 @@ tags:
 |:---|:---|
 | **For** | Adults |
 | **Input** | Timestamped triaxial accelerometer, 12 Hz or faster |
-| **Score** | Cohen's κ **0.56** sleep/wake · **0.44** 4-stage (SleepAccel cross-validation, 28 adults) · **0.56** · **0.30** (SleepAccel-Clinical, 32 adults, not in training) |
 | **License** | MIT |
+
+| Test set | Cohen's κ, sleep/wake | Cohen's κ, 4 stages |
+|:---|---:|---:|
+| SleepAccel (28 adults, cross-validated) | **0.56** | **0.44** |
+| SleepAccel-Clinical (32 adults, not in training) | **0.56** | **0.30** |
 
 ## Quickstart
 
@@ -44,43 +48,49 @@ result.summary         # subject_id, tst_minutes, missing_data_minutes, nap_minu
 result.to_csv("night_stages.csv")
 ```
 
-The GGIR-style sleep filter, `origin=`, `--no-ggir-sleep-filter` and the output columns work as
-for [arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric).
-For recordings of ≤ 9 hours, such as a single night, the filter changes nothing.
+The GGIR-style sleep filter, `origin=`, `--no-ggir-sleep-filter` and the output columns are
+the same as for [arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric).
+
+- ≤ 9 hours, such as a single night: the filter changes nothing.
 
 ## How it scores a recording
 
 The bundle holds three networks of one architecture, trained with different random seeds. They
-run as one batched call and their outputs are averaged. Each 30-s epoch is then scored in two
+run as one batched call; their outputs are averaged. Each 30-s epoch is then labeled in two
 steps:
 
-1. **Sleep or wake:** the epoch is wake when wake is the most probable of wake, light, deep
-   and REM in the averaged output; otherwise it is sleep.
+1. **Sleep or wake:** the epoch is wake when wake is the most probable of wake, light, deep and
+   REM in the averaged output; otherwise it is sleep.
 2. **Light, deep or REM**, on sleep epochs only: the light, deep and REM probabilities are each
-   divided by a fixed *stage divisor* before the most probable is chosen.
+   divided by a fixed *stage divisor*; the largest quotient gives the stage.
 
-The divisor (in `composite.json`) corrects for how the model was trained. Training weights rare
-stages up, and the training nights include children, who spend far more of the night in deep
-sleep than adults. Without the divisor the model calls 27.5% of SleepAccel epochs deep sleep;
-with it, 21.5% (PSG: 14.7%). The divisor is set from the stage proportions of 249 adult PSG
-nights (BIDsleep) and does not use the evaluation cohorts.
+The divisor, stored in `composite.json`, corrects two properties of the training: the loss
+weights rare stages up, and the training nights include children, who spend more of the night
+in deep sleep than adults. On SleepAccel the model labels 27.5% of epochs deep sleep without the
+divisor and 21.5% with it (PSG: 14.7%).
 
-The `wake` column of the CSV is the averaged probability of wake. The `light`, `deep` and `rem`
-columns share the rest in proportion to their divided probabilities. The `stage` column comes
-from the two steps above, so it is not always the largest of the four columns.
+The divisor is computed from the stage proportions of 249 nights of BIDSleep [1], 47 healthy
+adults recorded at home with expert-reviewed EEG-headband staging. BIDSleep is not used for
+training or evaluation.
+
+Output columns:
+
+- `wake`: the averaged probability of wake.
+- `light`, `deep`, `rem`: 1 − `wake`, split in proportion to the divided probabilities.
+- `stage`: the label from steps 1 and 2. It is not always the largest of the four columns.
 
 ## Performance
 
-Metrics compare the model's stages with PSG scoring, averaged over subjects, with 95%
-confidence intervals of the mean. p: paired Wilcoxon signed-rank test over subjects, against
-the pediatric release ([arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric)
-v0.1.0) on the same subjects.
+Each metric compares the model's labels with PSG scoring per subject; the table gives the mean
+over subjects and its 95% confidence interval. p is a paired Wilcoxon signed-rank test over
+subjects against the pediatric release,
+[arcasleep-bidoze-pediatric](https://huggingface.co/arcascope/arcasleep-bidoze-pediatric) v0.1.0.
 
-- **SleepAccel** (28 healthy adults) was part of the training data, so its column is
-  cross-validated: SleepAccel was split into five folds by subject, and each subject is scored
-  by models trained without its fold.
-- **SleepAccel-Clinical** (32 adults with no diagnosis or mild, moderate or severe obstructive
-  sleep apnea) was never used in training. It is scored by the released model.
+- **SleepAccel** [3] (28 healthy adults) is in the training data, so it is cross-validated:
+  the subjects are split into five folds; each subject is scored by models trained without its
+  fold.
+- **SleepAccel-Clinical** [4] (32 adults: no diagnosis, or mild, moderate or severe obstructive
+  sleep apnea) is not in the training data. It is scored by the released model.
 
 | Metric | SleepAccel (cross-validation) | p | SleepAccel-Clinical | p |
 |:---|---:|---:|---:|---:|
@@ -94,11 +104,11 @@ v0.1.0) on the same subjects.
 | TST error (min) | −4.2 (−11.4 to +3.0) | 0.14 | +19.0 (+3.6 to +34.4) | 0.065 |
 | WASO error (min) | +2.4 (−3.6 to +8.4) | 0.50 | −12.3 (−23.9 to −0.8) | 0.037 |
 | Deep sleep, % of epochs (PSG) | 21.5 (14.7) | < 0.001 | 21.8 (8.7) | < 0.001 |
-| Light-sleep error (%) | 16.5 (12.3 to 20.7) | 0.013 | 22.8 (17.5 to 28.2) | < 0.001 |
-| Deep-sleep error (%) | 107 (45 to 168) | < 0.001 | 244 (83 to 405) | < 0.001 |
-| REM-sleep error (%) | 41.7 (27.3 to 56.0) | 0.20 | 115 (62 to 168) | 0.79 |
+| Light-sleep time, absolute error (%) | 16.5 (12.3 to 20.7) | 0.013 | 22.8 (17.5 to 28.2) | < 0.001 |
+| Deep-sleep time, absolute error (%) | 107 (45 to 168) | < 0.001 | 244 (83 to 405) | < 0.001 |
+| REM-sleep time, absolute error (%) | 41.7 (27.3 to 56.0) | 0.20 | 115 (62 to 168) | 0.79 |
 
-The same metrics for the pediatric release on these subjects:
+The pediatric release on the same subjects:
 
 | Metric | SleepAccel | SleepAccel-Clinical |
 |:---|---:|---:|
@@ -112,83 +122,112 @@ The same metrics for the pediatric release on these subjects:
 | TST error (min) | −1.8 | +26.6 |
 | Deep sleep, % of epochs | 29.6 | 33.2 |
 
-- **Stages are more accurate than the pediatric release's**: 4-stage κ 0.30 vs 0.26 on
-  SleepAccel-Clinical (p = 0.011) and 0.44 vs 0.40 on SleepAccel (p = 0.060).
-- **Deep sleep is overestimated less**: 21.5% vs 29.6% of epochs on SleepAccel (PSG 14.7%), and
-  21.8% vs 33.2% on SleepAccel-Clinical (PSG 8.7%).
-- **Sleep/wake does not differ significantly from the pediatric release** on either cohort. At
-  the same 95% sleep sensitivity, wake specificity is 68.2% vs 69.1% (SleepAccel) and 53.9% vs
-  54.0% (SleepAccel-Clinical).
-- **4-stage accuracy** is the share of a night's PSG-scored epochs given PSG's stage (wake,
-  light, deep or REM). **Balanced 4-stage accuracy** is the mean of the four stages' recall, so
-  each stage counts equally however much of the night it fills.
-- **Balanced accuracy changes little because light and deep trade off.** Light-sleep recall
-  rises from 55.0% to 67.1% on SleepAccel and from 44.8% to 57.9% on SleepAccel-Clinical; deep
-  recall falls from 89.1% to 81.2% and from 69.2% to 58.2%, because the pediatric release calls
-  much of the night deep. Light sleep fills about half the night and deep sleep 9–15%, so
-  4-stage accuracy and κ improve while the stage-weighted mean barely moves.
-- "Wake specificity at 95% sleep sensitivity" sets the threshold on P(sleep) so that 95% of PSG
-  sleep epochs, pooled over a cohort's subjects, are called sleep. It compares models at the
-  same operating point; it has no paired test.
+Metric definitions:
 
-**What the κ gain means in a night.** Against the pediatric release on the same nights:
+- **4-stage accuracy:** the percentage of a night's PSG-scored epochs labeled with PSG's stage.
+- **Balanced 4-stage accuracy:** the mean over wake, light, deep and REM of the percentage of
+  that stage's PSG epochs labeled correctly, so each stage counts equally.
+- **Stage-time absolute error:** |model − PSG| minutes in the stage, as a percentage of PSG's
+  minutes.
+- **Wake specificity at 95% sleep sensitivity:** the threshold on P(sleep) is set so that 95%
+  of PSG sleep epochs, pooled over the cohort's subjects, are labeled sleep. This compares the
+  two models at the same sleep sensitivity; it is one pooled value, so it has no paired test.
+
+Compared with the pediatric release:
+
+- **4-stage κ is higher:** 0.30 vs 0.26 on SleepAccel-Clinical (p = 0.011); 0.44 vs 0.40 on
+  SleepAccel (p = 0.060, not significant).
+- **Less deep sleep is labeled:** 21.5% vs 29.6% of epochs on SleepAccel (PSG 14.7%); 21.8% vs
+  33.2% on SleepAccel-Clinical (PSG 8.7%).
+- **Sleep/wake κ does not differ significantly** (p ≥ 0.13). At 95% sleep sensitivity, wake
+  specificity is 68.2% vs 69.1% on SleepAccel and 53.9% vs 54.0% on SleepAccel-Clinical.
+- **Balanced accuracy differs less than accuracy** (67.0% vs 66.0%, p = 0.37; 52.3% vs 50.0%,
+  p = 0.057), because light-sleep recall rises while deep-sleep recall falls:
+  - Light: 67.1% vs 55.0% on SleepAccel; 57.9% vs 44.8% on SleepAccel-Clinical.
+  - Deep: 81.2% vs 89.1% on SleepAccel; 58.2% vs 69.2% on SleepAccel-Clinical.
+
+  Light sleep is about half of the night and deep sleep 9–15%, so accuracy, which weights
+  stages by their time, rises more than balanced accuracy, which weights them equally.
+
+**Per night.** Against the pediatric release on the same nights:
 
 | | SleepAccel (median night 7.8 h) | SleepAccel-Clinical (median night 5.7 h) |
 |:---|---:|---:|
 | 4-stage accuracy | 64.6% vs 59.5% | 56.4% vs 48.9% |
-| More time staged correctly, per night | 22 min | 27 min |
-| Light sleep the pediatric release called deep, now scored light (net, per night) | 22 min | 23 min |
-| Time the two models label differently, per night | 91 min | 93 min |
-| … of which sleep vs wake | 13 min | 21 min |
+| Additional minutes labeled correctly | 22 | 27 |
+| Light sleep labeled deep by the pediatric release and light by this model (net minutes) | 22 | 23 |
+| Minutes the two models label differently | 91 | 93 |
+| … of which one model labels sleep and the other wake | 13 | 21 |
 
-Most of the gain is light sleep that the pediatric release scored as deep. The two models
-disagree on more time than the net gain, because many epochs are borderline between stages.
+Most of the additional correct minutes are light sleep that the pediatric release labels deep.
+The two models label 91–93 minutes differently, more than the net gain of 22–27 minutes,
+because some of those epochs move to PSG's stage and others move away from it.
 
-**Whole recordings.** The table scores each night's PSG period. Scored from the whole raw
-recording, which can run hours before and after it, the SleepAccel-Clinical results do not
-differ significantly: 4-stage κ 0.30 (p = 0.71) and sleep/wake κ 0.54 (p = 0.43), on the same
-PSG epochs.
+**Whole recordings.** The tables score the PSG period of each night. Scoring the whole
+recording, which can extend hours before and after the PSG period, and then comparing on the
+same PSG epochs, SleepAccel-Clinical gives 4-stage κ 0.30 (p = 0.71) and sleep/wake κ 0.54
+(p = 0.43); neither differs significantly from the PSG-period scores.
 
 ## Intended use
 
 Research estimates of sleep and wake, and of light, deep and REM sleep, from a wrist-worn
-accelerometer in adults. You need no PSG to run it; PSG may be used to check its accuracy on
-your own cohort.
+accelerometer in adults. PSG is not required to run the model; it can be used to check the
+model's accuracy on your own cohort.
 
-Sleep/wake is the primary task. Stage estimates are less accurate and are best read as
-cohort-level trends, not night-by-night measurements.
+Sleep/wake is the primary output. Stage estimates are less accurate; report them as cohort
+means, not as per-night measurements.
 
 **Not a medical device.** Do not use it to diagnose sleep disorders (including obstructive
 sleep apnea), to screen individuals, or to make clinical decisions.
 
 ## Limitations
 
-- **Wake is harder to detect than sleep.** The model finds 95.7% of PSG sleep epochs but 69.9%
-  of wake epochs in healthy adults, and 94.1% and 63.1% in adults with sleep apnea. Total sleep
-  time is overestimated by about 19 minutes in adults with sleep apnea.
-- **Deep sleep is still overestimated**, by about 7 percentage points of the night in healthy
-  adults and 13 in adults with sleep apnea. The divisor is set from adults with 18.9% deep
-  sleep; cohorts with less deep sleep, such as older adults or people with sleep apnea, are
-  overestimated more.
-- **Few adults have been evaluated:** 60, in two cohorts. Only SleepAccel-Clinical (32) was
-  never used in training.
-- **Device and placement.** Trained on wrist data from Apple Watch, Fitbit and ActiGraph
-  devices, sampled at 12 Hz or faster. Hip, ankle and upper-arm placements have not been
-  evaluated.
+- **Wake is detected less often than sleep.** The model labels 95.7% of PSG sleep epochs sleep
+  but 69.9% of PSG wake epochs wake on SleepAccel; 94.1% and 63.1% on SleepAccel-Clinical.
+  Total sleep time is overestimated by 19.0 minutes on SleepAccel-Clinical.
+- **Deep sleep is overestimated** by 6.8 percentage points of the night on SleepAccel and 13.1
+  on SleepAccel-Clinical. The divisor assumes BIDSleep's 18.9% deep sleep; cohorts with less
+  deep sleep, such as older adults or people with sleep apnea, are overestimated more.
+- **60 adults have been evaluated,** in two cohorts. Only SleepAccel-Clinical (32 adults) is
+  outside the training data.
+- **Devices and placement.** Trained on wrist recordings from Apple Watch, Fitbit and ActiGraph
+  devices at ≥ 12 Hz. Hip, ankle and upper-arm placements have not been evaluated.
 - **Recording length.** Up to 25 hours are scored in one pass; longer recordings are scored in
   consecutive passes.
 
 ## Training data
 
-- **Weaver _et al_** ([PubMed 40676371](https://pubmed.ncbi.nlm.nih.gov/40676371/)): 202
-  pediatric nights from 201 children (111 Fitbit, 70 Apple Watch and 21 ActiGraph recordings),
-  a clinical sample spanning no, mild, moderate and severe obstructive sleep apnea.
-- **[SleepAccel](https://pubmed.ncbi.nlm.nih.gov/31579900/)**: 28 healthy adults, Apple Watch.
+- **Weaver _et al._** [2]: 202 nights from 201 children (111 Fitbit, 70 Apple Watch and 21
+  ActiGraph recordings); a clinical sample with no, mild, moderate or severe obstructive sleep
+  apnea.
+- **SleepAccel** [3]: 28 healthy adults, Apple Watch.
 
-Evaluation only: [SleepAccel-Clinical](https://doi.org/10.1093/sleepadvances/zpag051), 32 adults
-with no diagnosis or mild, moderate or severe obstructive sleep apnea.
+Not trained on:
 
-**Protocol.** Three seeds were trained with a class-balanced loss, early-stopping on 30% of the
-training subjects held out by participant. The released networks trained on all of Weaver and
-SleepAccel; the SleepAccel column comes from five sets of three, each trained without one
-SleepAccel fold.
+- **SleepAccel-Clinical** [4]: evaluation only.
+- **BIDSleep** [1]: stage proportions only, to compute the stage divisor.
+
+**Protocol.** Three seeds were trained with a class-balanced loss; each stopped early on 30% of
+its training subjects, held out by participant. The released networks are trained on all of
+Weaver and SleepAccel. The SleepAccel column comes from five sets of three networks, each set
+trained without one SleepAccel fold.
+
+## References
+
+1. Song T, Zhang Y, Zhou Z, Dutta J. A Multi-Night Instantaneous Heart Rate and Accelerometry
+   Dataset with EEG Sleep Stage Labels (version 1.0.1). PhysioNet; 2026.
+   [doi:10.13026/rees-1092](https://doi.org/10.13026/rees-1092). Described in: Song T-A, Zhang
+   Y, Zhou Z, Hou L, Malekzadeh M, Behzad A, Dutta J. AI-driven sleep staging using
+   instantaneous heart rate and accelerometry: insights from an Apple Watch study. *IEEE Trans
+   Biomed Eng*. 2025. [doi:10.1109/TBME.2025.3612158](https://doi.org/10.1109/TBME.2025.3612158).
+2. Weaver RG, White JW, Finnegan O, et al. Predicting sleep and sleep stage in children using
+   actigraphy and heartrate via a long short-term memory deep learning algorithm: a performance
+   evaluation. *J Sleep Res*. 2026;35(1):e70149.
+   [doi:10.1111/jsr.70149](https://doi.org/10.1111/jsr.70149).
+3. Walch O, Huang Y, Forger D, Goldstein C. Sleep stage prediction with raw acceleration and
+   photoplethysmography heart rate data derived from a consumer wearable device. *Sleep*. 2019;
+   42(12):zsz180. [doi:10.1093/sleep/zsz180](https://doi.org/10.1093/sleep/zsz180).
+4. Canton E, Tavella F, Drake C, Walch O, Cheng P. What matters beyond model choice for wearable
+   sleep staging? How personalization, evaluation choices, and easy-to-classify wake impact
+   performance. *SLEEP Adv*. 2026;7:zpag051.
+   [doi:10.1093/sleepadvances/zpag051](https://doi.org/10.1093/sleepadvances/zpag051).

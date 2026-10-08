@@ -99,8 +99,10 @@ def combine_folds(per_fold: list[dict | None]) -> dict[str, dict[str, tuple]]:
     }
 
 
-def mean_over_seeds(per_seed: list[dict | None]) -> dict:
+def mean_over_seeds(per_seed: list[dict | None]) -> dict | None:
     per_seed = [s for s in per_seed if s is not None]
+    if not per_seed:
+        return None
     return {c: {sid: (y, np.mean([s[c][sid][1] for s in per_seed], axis=0))
                 for sid, (y, _) in per_seed[0][c].items()} for c in COHORTS}
 

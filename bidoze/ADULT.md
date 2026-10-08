@@ -23,7 +23,7 @@ with an adult stage divisor applied when it labels sleep epochs. Its card is
 
    - w_c is the stage's effective loss weight in the class-balanced training batches.
    - π_train,c is the stage's share of the training epochs.
-   - π_adult,c is its share of adult PSG epochs. BIDsleep is the reference, because it is not a
+   - π_adult,c is its share of the epochs of BIDSleep, an adult cohort that is not a
      test cohort.
    - The divisor removes the up-weighting of rare stages by the balanced loss, and the training
      cohort's stage mix.
@@ -94,7 +94,7 @@ Alternatives that were tested and scored lower or the same:
 - **Readouts on the pediatric release's frozen features** (relative-to-night inputs,
   within-night contrast, cohort-specific heads): none beats 3 per-class biases on the release's
   own output (SleepAccel 0.418).
-- **BIDsleep nights in the training data:** SleepAccel sleep/wake κ 0.530 vs 0.563 for Weaver
+- **BIDSleep nights in the training data:** SleepAccel sleep/wake κ 0.530 vs 0.563 for Weaver
   alone.
 - **60-s spectrogram windows:** SleepAccel sleep/wake κ 0.521 vs 0.572.
 
@@ -110,7 +110,7 @@ Alternatives that were tested and scored lower or the same:
 
 ## Open questions
 
-- **The divisor's adult reference.** It is BIDsleep, an adult cohort with 18.9% deep sleep.
+- **The divisor's adult reference.** It is BIDSleep, an adult cohort with 18.9% deep sleep.
   SleepAccel-Clinical PSG has 8.7%, so one adult prior does not fit every adult cohort.
 - **One network instead of three.** A student trained on the three seeds' mean output could
   keep most of their gain over one seed.
