@@ -8,6 +8,10 @@ light/deep/REM are divided by the adult stage divisor (``hybrid_calls(mean, mean
 - SleepAccel-Clinical: the released model (``<arm>/final``), with the bundle's divisor.
 - The pediatric release is scored alongside, by itself (argmax).
 
+Per night, 4-stage accuracy is the share of PSG-scored epochs with PSG's stage, and balanced
+4-stage accuracy the mean recall of the stages present in that night's PSG; a predicted gap
+counts as a miss.
+
 Writes ``<out>/subjects.csv`` (per subject) and ``<out>/summary.csv`` (mean and 95% CI of the
 mean per cohort, model and metric; paired Wilcoxon p against the pediatric release), and prints
 the summary.
@@ -45,9 +49,14 @@ def subject_metrics(logger: MetricsLogger, y: np.ndarray, proba: np.ndarray, cal
         recorded = logger.record(Path(tmp) / "m.csv", y_true=y, y_pred_proba=proba, y_pred=calls, run_id="",
                                  fold="", epoch=0, subject_id="", dataset="", training_dataset="")
     r = {m["metric"]: m["value"] for m in recorded}
+    pred = np.asarray(proba).argmax(axis=1) if calls is None else np.asarray(calls)
+    scored = (y >= 0) & (y < len(STAGES))
+    recalls = [np.mean(pred[scored & (y == c)] == c) for c in range(len(STAGES)) if np.any(scored & (y == c))]
     total = sum(r[f"pred_{s}_count"] for s in STAGES)
     psg_total = sum(r[f"true_{s}_count"] for s in STAGES[1:])
     return {**{m: r[m] for m in METRICS},
+            "balanced_accuracy_4stage": float(np.mean(recalls)),
+            "accuracy_4stage": float(np.mean(pred[scored] == y[scored])),
             "deep%": 100 * r["pred_deep_count"] / total,
             "psg_deep%": 100 * r["true_deep_count"] / max(psg_total + r["true_wake_count"], 1)}
 
@@ -102,7 +111,7 @@ def main(run: Path, arm: str, bundle: Path, adult_root: Path, out: Path) -> None
         base = per_subject[(per_subject.model == "pediatric release") & (per_subject.cohort == cohort)]
         base = base.set_index("subject_id").loc[g.subject_id]
         pooled = {sid: (y, p) for sid, (y, p, _) in (adult if model == "adult" else release)[cohort].items()}
-        for metric in [*METRICS, "deep%", "psg_deep%"]:
+        for metric in [*METRICS, "balanced_accuracy_4stage", "accuracy_4stage", "deep%", "psg_deep%"]:
             x = g[metric].to_numpy(float)
             x = x[np.isfinite(x)]
             half = stats.t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))

@@ -86,6 +86,8 @@ v0.1.0) on the same subjects.
 |:---|---:|---:|---:|---:|
 | Cohen's κ, sleep/wake | 0.56 (0.50 to 0.63) | 0.13 | 0.56 (0.48 to 0.63) | 0.90 |
 | Cohen's κ, 4 stages | 0.44 (0.39 to 0.49) | 0.060 | 0.30 (0.24 to 0.36) | 0.011 |
+| 4-stage accuracy (%) | 64.6 (61.7 to 67.6) | 0.001 | 56.4 (52.5 to 60.3) | < 0.001 |
+| Balanced 4-stage accuracy (%) | 67.0 (63.3 to 70.8) | 0.37 | 52.3 (45.9 to 58.7) | 0.057 |
 | Sleep sensitivity (%) | 95.7 (94.7 to 96.7) | 0.055 | 94.1 (91.8 to 96.4) | 0.22 |
 | Wake specificity (%) | 69.9 (62.2 to 77.7) | 0.68 | 63.1 (55.0 to 71.3) | 0.19 |
 | Wake specificity at 95% sleep sensitivity (%) | 68.2 | | 53.9 | |
@@ -102,6 +104,8 @@ The same metrics for the pediatric release on these subjects:
 |:---|---:|---:|
 | Cohen's κ, sleep/wake | 0.58 | 0.55 |
 | Cohen's κ, 4 stages | 0.40 | 0.26 |
+| 4-stage accuracy (%) | 59.5 | 48.9 |
+| Balanced 4-stage accuracy (%) | 66.0 | 50.0 |
 | Sleep sensitivity (%) | 96.3 | 95.2 |
 | Wake specificity (%) | 69.3 | 59.2 |
 | Wake specificity at 95% sleep sensitivity (%) | 69.1 | 54.0 |
@@ -115,6 +119,14 @@ The same metrics for the pediatric release on these subjects:
 - **Sleep/wake does not differ significantly from the pediatric release** on either cohort. At
   the same 95% sleep sensitivity, wake specificity is 68.2% vs 69.1% (SleepAccel) and 53.9% vs
   54.0% (SleepAccel-Clinical).
+- **4-stage accuracy** is the share of a night's PSG-scored epochs given PSG's stage (wake,
+  light, deep or REM). **Balanced 4-stage accuracy** is the mean of the four stages' recall, so
+  each stage counts equally however much of the night it fills.
+- **Balanced accuracy changes little because light and deep trade off.** Light-sleep recall
+  rises from 55.0% to 67.1% on SleepAccel and from 44.8% to 57.9% on SleepAccel-Clinical; deep
+  recall falls from 89.1% to 81.2% and from 69.2% to 58.2%, because the pediatric release calls
+  much of the night deep. Light sleep fills about half the night and deep sleep 9–15%, so
+  4-stage accuracy and κ improve while the stage-weighted mean barely moves.
 - "Wake specificity at 95% sleep sensitivity" sets the threshold on P(sleep) so that 95% of PSG
   sleep epochs, pooled over a cohort's subjects, are called sleep. It compares models at the
   same operating point; it has no paired test.
@@ -123,7 +135,7 @@ The same metrics for the pediatric release on these subjects:
 
 | | SleepAccel (median night 7.8 h) | SleepAccel-Clinical (median night 5.7 h) |
 |:---|---:|---:|
-| 4-stage accuracy: epochs with the same stage as PSG (wake, light, deep or REM) | 64.6% vs 59.5% | 56.4% vs 48.9% |
+| 4-stage accuracy | 64.6% vs 59.5% | 56.4% vs 48.9% |
 | More time staged correctly, per night | 22 min | 27 min |
 | Light sleep the pediatric release called deep, now scored light (net, per night) | 22 min | 23 min |
 | Time the two models label differently, per night | 91 min | 93 min |
