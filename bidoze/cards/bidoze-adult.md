@@ -119,6 +119,19 @@ The same metrics for the pediatric release on these subjects:
   sleep epochs, pooled over a cohort's subjects, are called sleep. It compares models at the
   same operating point; it has no paired test.
 
+**What the κ gain means in a night.** Against the pediatric release on the same nights:
+
+| | SleepAccel (median night 7.8 h) | SleepAccel-Clinical (median night 5.7 h) |
+|:---|---:|---:|
+| Epochs whose stage matches PSG | 64.6% vs 59.5% | 56.4% vs 48.9% |
+| More time staged correctly, per night | 22 min | 27 min |
+| Light sleep the pediatric release called deep, now scored light (net, per night) | 22 min | 23 min |
+| Time the two models label differently, per night | 91 min | 93 min |
+| … of which sleep vs wake | 13 min | 21 min |
+
+Most of the gain is light sleep that the pediatric release scored as deep. The two models
+disagree on more time than the net gain, because many epochs are borderline between stages.
+
 **Whole recordings.** The table scores each night's PSG period. Scored from the whole raw
 recording, which can run hours before and after it, the SleepAccel-Clinical results do not
 differ significantly: 4-stage κ 0.30 (p = 0.71) and sleep/wake κ 0.54 (p = 0.43), on the same
