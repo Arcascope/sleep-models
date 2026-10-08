@@ -63,8 +63,10 @@ aws = ["boto3>=1.34"]
 publish = ["safetensors", "matplotlib", "pandas"]
 # Render a built bundle's model card to standalone HTML for local review.
 preview = ["markdown-it-py>=3"]
+# Shell tab completion of commands, model families and options.
+completion = ["argcomplete>=3"]
 all = [
-    "arcasleep[bidoze,unet,inference,hub,prep,train,report,aws,publish,preview]",
+    "arcasleep[bidoze,unet,inference,hub,prep,train,report,aws,publish,preview,completion]",
 ]
 dev = ["pytest>=8", "ruff>=0.8"]
 
