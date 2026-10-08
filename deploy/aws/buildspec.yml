@@ -1,0 +1,34 @@
+# CodeBuild spec for the arcasleep-train build project. The work is in
+# deploy/scripts/codebuild.sh; remote_build.sh starts a build and sets
+# BUILD_KIND, GIT_COMMIT and the kind's own variables.
+version: 0.2
+
+env:
+  shell: bash
+  exported-variables:
+    - IMAGE_REF
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      # buildx provides the named build contexts the Dockerfiles use.
+      - |
+        if ! docker buildx version >/dev/null 2>&1; then
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL -o ~/.docker/cli-plugins/docker-buildx \
+            https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64
+          chmod +x ~/.docker/cli-plugins/docker-buildx
+        fi
+        docker buildx version
+      # The base install has no dependencies; it supplies `arcasleep
+      # manifest-local` for data images. The source archive has no .git.
+      - SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --quiet .
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${DEPS_REPO%%/*}"
+  build:
+    commands:
+      - IMAGE_REF_FILE="$PWD/image-ref.txt" bash deploy/scripts/codebuild.sh
+      - IMAGE_REF=$(cat image-ref.txt)

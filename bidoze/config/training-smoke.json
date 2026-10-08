@@ -1,0 +1,15 @@
+{
+  "recipe": "balanced",
+  "run_seed": 0,
+  "seed_count": 1,
+  "epochs": 2,
+  "batch_size": 2,
+  "lr": 0.001,
+  "weight_decay": 0.0,
+  "x_length": 3000,
+  "y_length": 3000,
+  "balance_beta": 0.999,
+  "lr_drop_patience": 10,
+  "early_stop_patience": 25,
+  "eval_fraction": 0.3
+}
