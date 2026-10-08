@@ -5,7 +5,9 @@ Reads ``<run>/analysis/runs.csv`` and ``paired.csv`` (from score.py) and writes:
                    † against ``matched`` (paired Wilcoxon over subjects).
 - ``devices.png``: one panel per metric; bars are the ensembles, dots the single seeds.
 
-Arms with a stalled fold model are shown with it left out. Each arm is scored two ways:
+Wake specificity at 95% sleep sensitivity uses each arm's P(sleep) pooled over a cohort's
+subjects, so it has no paired test. Arms with a stalled fold model are shown with it left out.
+Each arm is scored two ways:
 - release + arm: the pediatric release's sleep/wake calls, the arm's light/deep/REM after the
                  adult stage divisor (score.py's ``adult`` scoring);
 - arm only:      the arm's own most probable stage (score.py's ``alone`` scoring).
@@ -27,11 +29,12 @@ import pandas as pd  # noqa: E402
 REFERENCE = "weaver-2026-10-06"
 RELEASE = "pediatric release"
 ORDER = [RELEASE, REFERENCE, "matched", "matched-actigraph", "all", "actigraph", "actigraph-119", "apple-119",
-         "fitbit-119", "garmin-119"]
+         "fitbit-119", "garmin-119", "finetune", "finetune-bidsleep"]
 LABELS = {RELEASE: "pediatric\nrelease", REFERENCE: "Weaver\n(Oct 6)", "all": "all\ndevices",
           "actigraph": "ActiGraph\n236", "actigraph-119": "ActiGraph\n119", "apple-119": "Apple\n119",
           "fitbit-119": "Fitbit\n119", "garmin-119": "Garmin\n119", "matched": "matched\n(revised)",
-          "matched-actigraph": "matched,\nActiGraph"}
+          "matched-actigraph": "matched,\nActiGraph", "finetune": "tuned,\nWeaver stop",
+          "finetune-bidsleep": "tuned,\nBIDsleep stop"}
 COHORTS = {"SleepAccel": "#2a78d6", "SleepAccel-Clinical": "#eb6834"}
 PSG_DEEP = {"SleepAccel": 14.7, "SleepAccel-Clinical": 8.7}
 # (column, scoring, title, scale)
@@ -40,6 +43,8 @@ METRICS = [
     ("kappa_4stage", "alone", "κ 4-stage, arm only", 1),
     ("kappa_sleep_wake", "alone", "κ sleep/wake, arm only", 1),
     ("wake_specificity", "alone", "Wake specificity (%), arm only", 100),
+    ("sleep_sensitivity", "alone", "Sleep sensitivity (%), arm only", 100),
+    ("wake_spec_at_95", "alone", "Wake specificity (%) at 95% sleep sensitivity, arm only", 100),
     ("auroc", "alone", "Sleep vs wake AUROC, arm only", 1),
     ("deep%", "adult", "Deep sleep (% of epochs), release + arm", 1),
 ]
@@ -78,9 +83,14 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
             ("SleepAccel", "kappa_4stage", "alone", "SleepAccel κ 4-stage, arm only"),
             ("SleepAccel", "kappa_sleep_wake", "alone", "SleepAccel κ sleep/wake, arm only"),
             ("SleepAccel", "wake_specificity", "alone", "SleepAccel wake spec., arm only"),
+            ("SleepAccel", "sleep_sensitivity", "alone", "SleepAccel sleep sens., arm only"),
+            ("SleepAccel", "wake_spec_at_95", "alone", "SleepAccel wake spec. at 95% sens., arm only"),
             ("SleepAccel", "deep%", "adult", "SleepAccel deep %, release + arm"),
             ("SleepAccel-Clinical", "kappa_4stage", "adult", "Clinical κ 4-stage, release + arm"),
             ("SleepAccel-Clinical", "kappa_sleep_wake", "alone", "Clinical κ sleep/wake, arm only"),
+            ("SleepAccel-Clinical", "wake_specificity", "alone", "Clinical wake spec., arm only"),
+            ("SleepAccel-Clinical", "sleep_sensitivity", "alone", "Clinical sleep sens., arm only"),
+            ("SleepAccel-Clinical", "wake_spec_at_95", "alone", "Clinical wake spec. at 95% sens., arm only"),
             ("SleepAccel-Clinical", "deep%", "adult", "Clinical deep %, release + arm")]
     lines = ["| Arm | " + " | ".join(c[3] for c in cols) + " |",
              "|:---|" + "--:|" * len(cols)]
@@ -92,7 +102,7 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
                 cells.append("")
                 continue
             v = value(rows, arm, "ensemble", scoring, cohort, metric)
-            if metric == "wake_specificity":
+            if metric in ("wake_specificity", "sleep_sensitivity", "wake_spec_at_95"):
                 text = f"{100 * v:.1f}%"
             elif metric == "deep%":
                 text = f"{v:.1f}"
@@ -113,7 +123,7 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
 def figure(arms: dict[str, pd.DataFrame], path: Path) -> None:
     plt.rcParams.update({"font.size": 9, "axes.edgecolor": BASE, "axes.labelcolor": INK,
                          "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK})
-    fig, axes = plt.subplots(3, 2, figsize=(18, 12.5), facecolor=SURFACE)
+    fig, axes = plt.subplots(4, 2, figsize=(20, 16.5), facecolor=SURFACE)
     names = list(arms)
     width = 0.38
     for ax, (column, scoring, title, scale) in zip(axes.ravel(), METRICS):

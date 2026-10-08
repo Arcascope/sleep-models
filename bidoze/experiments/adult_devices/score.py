@@ -139,12 +139,24 @@ def score(logger: MetricsLogger, subjects: dict, calls: dict | None) -> pd.DataF
     return pd.DataFrame(rows)
 
 
-def auroc(subjects: dict) -> float:
-    from sklearn.metrics import roc_auc_score
+def pooled_sleep_scores(subjects: dict) -> tuple[np.ndarray, np.ndarray]:
+    """``(is_sleep, P(sleep))`` over every scored epoch of every subject."""
     y = np.concatenate([s[0] for s in subjects.values()])
     p = np.concatenate([s[1][:, 1:4].sum(axis=1) for s in subjects.values()])
     keep = (y >= 0) & (y < 4)
-    return float(roc_auc_score(y[keep] > 0, p[keep]))
+    return y[keep] > 0, p[keep]
+
+
+def auroc(subjects: dict) -> float:
+    from sklearn.metrics import roc_auc_score
+    return float(roc_auc_score(*pooled_sleep_scores(subjects)))
+
+
+def wake_specificity_at(subjects: dict, sensitivity: float) -> float:
+    """Wake specificity at the P(sleep) threshold that gives this pooled sleep sensitivity."""
+    sleep, p = pooled_sleep_scores(subjects)
+    threshold = np.quantile(p[sleep], 1.0 - sensitivity)
+    return float(np.mean(p[~sleep] < threshold))
 
 
 def main(run: Path, adult_root: Path) -> None:
@@ -203,7 +215,8 @@ def main(run: Path, adult_root: Path) -> None:
         subjects.append(m.assign(arm=arm, model=model, scoring=scoring, cohort=cohort))
         rows.append({"arm": arm, "model": model, "scoring": scoring, "cohort": cohort, "n": len(m),
                      **m.drop(columns="subject_id").mean().to_dict(),
-                     "auroc": auroc(data) if scoring == "alone" else np.nan})
+                     "auroc": auroc(data) if scoring == "alone" else np.nan,
+                     "wake_spec_at_95": wake_specificity_at(data, 0.95) if scoring == "alone" else np.nan})
 
     for c in COHORTS:
         record("pediatric release", "release", "alone", c, ped[c], None)
