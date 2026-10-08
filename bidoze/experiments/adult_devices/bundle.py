@@ -4,7 +4,10 @@
 - The divisor comes from the final phase's training nights (the arm's Weaver recordings and
   all of SleepAccel) and BIDsleep, the adult reference.
 
-The bundle's README.md is ``cards/bidoze-adult.md``.
+The bundle's README.md is ``cards/bidoze-adult.md``; each seed's card starts with
+``cards/bidoze-adult-seed.md``.
+
+Run from ``bidoze/`` with a relative run dir, so provenance records ``results/...``.
 
 Usage: python bundle.py <run dir> <arm> <adult cache root> <output dir> <version>
 (the adult cache root holds ``12Hz_log_PSD_aligned/`` with BIDsleep).
@@ -23,6 +26,7 @@ from arcasleep.data.cache import discover_cached_subjects
 from arcasleep_bidoze.adult import adult_stage_divisor, build_adult_bundle, stage_counts
 
 CACHE_NAME = "12Hz_log_PSD_aligned"
+REPO_ID = "arcascope/arcasleep-bidoze-adult"
 BIDOZE = Path(__file__).resolve().parents[2]
 
 
@@ -49,7 +53,8 @@ def main(run: Path, arm: str, adult_root: Path, output: Path, version: str) -> N
     staging = output.parent / f"{output.name}-seeds"
     for checkpoint in sorted((final / "model_outputs").glob("*.pisces")):
         bundle = build_release_bundle(final, staging / checkpoint.stem, version=version,
-                                      checkpoint=checkpoint, family="bidoze", overwrite=True)
+                                      checkpoint=checkpoint, family="bidoze", overwrite=True,
+                                      repo_id=REPO_ID, card=BIDOZE / "cards/bidoze-adult-seed.md")
         seeds.append(bundle.directory)
     build_adult_bundle(
         output, seeds, divisor, version=version, overwrite=True,
@@ -69,4 +74,4 @@ def main(run: Path, arm: str, adult_root: Path, output: Path, version: str) -> N
 
 if __name__ == "__main__":
     run, arm, adult_root, output, version = sys.argv[1:6]
-    main(Path(run).resolve(), arm, Path(adult_root).resolve(), Path(output).resolve(), version)
+    main(Path(run), arm, Path(adult_root).resolve(), Path(output).resolve(), version)
