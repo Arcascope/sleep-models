@@ -123,7 +123,7 @@ The same metrics for the pediatric release on these subjects:
 
 | | SleepAccel (median night 7.8 h) | SleepAccel-Clinical (median night 5.7 h) |
 |:---|---:|---:|
-| Epochs whose stage matches PSG | 64.6% vs 59.5% | 56.4% vs 48.9% |
+| 4-stage accuracy: epochs with the same stage as PSG (wake, light, deep or REM) | 64.6% vs 59.5% | 56.4% vs 48.9% |
 | More time staged correctly, per night | 22 min | 27 min |
 | Light sleep the pediatric release called deep, now scored light (net, per night) | 22 min | 23 min |
 | Time the two models label differently, per night | 91 min | 93 min |
