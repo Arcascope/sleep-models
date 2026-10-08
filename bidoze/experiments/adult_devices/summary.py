@@ -25,7 +25,7 @@ REFERENCE = "weaver-2026-10-06"
 RELEASE = "pediatric release"
 ORDER = [RELEASE, REFERENCE, "all", "actigraph", "actigraph-119", "apple-119", "fitbit-119", "garmin-119"]
 LABELS = {RELEASE: "pediatric\nrelease", REFERENCE: "Weaver\n(Oct 6)", "all": "all\ndevices",
-          "actigraph": "ActiGraph", "actigraph-119": "ActiGraph\n119", "apple-119": "Apple\n119",
+          "actigraph": "ActiGraph\n236", "actigraph-119": "ActiGraph\n119", "apple-119": "Apple\n119",
           "fitbit-119": "Fitbit\n119", "garmin-119": "Garmin\n119"}
 COHORTS = {"SleepAccel": "#2a78d6", "SleepAccel-Clinical": "#eb6834"}
 PSG_DEEP = {"SleepAccel": 14.7, "SleepAccel-Clinical": 8.7}
