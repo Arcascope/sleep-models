@@ -38,6 +38,8 @@ from arcasleep.models import (
 
 #: Hand-edited Markdown that ships with the package (``quickstart.md``).
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+#: A composite bundle's description, in place of ``config.json``.
+COMPOSITE_FILENAME = "composite.json"
 
 
 def _template_path(name: str) -> Path:
@@ -1382,8 +1384,15 @@ def load_bundle_model(bundle_dir: Path | str):
 
 
 def bundle_family(bundle_dir: Path | str) -> str:
-    """The model family a release bundle's ``config.json`` names."""
+    """The model family a release bundle's ``config.json`` names.
+
+    A composite bundle (several bundles scored together) has
+    ``composite.json`` instead, naming the family that scores it.
+    """
     config_path = Path(bundle_dir) / "config.json"
+    composite_path = Path(bundle_dir) / COMPOSITE_FILENAME
+    if not config_path.is_file() and composite_path.is_file():
+        return release_family(_read_json(composite_path))
     if not config_path.is_file():
         raise FileNotFoundError(f"{bundle_dir} is not a release bundle; missing config.json")
     return release_family(_read_json(config_path))

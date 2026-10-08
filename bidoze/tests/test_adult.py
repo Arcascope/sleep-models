@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from arcasleep_bidoze.adult import (
     DEEP,
@@ -8,11 +12,15 @@ from arcasleep_bidoze.adult import (
     LIGHT,
     REM,
     WAKE,
+    adult_probabilities,
     adult_stage_divisor,
+    build_adult_bundle,
     effective_weights,
     hybrid_calls,
     stage_counts,
 )
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 
 
 def _proba(calls: list[int], rng: np.random.Generator) -> np.ndarray:
@@ -57,3 +65,53 @@ def test_a_rarer_stage_gets_a_larger_effective_weight() -> None:
 
 def test_stage_counts_merge_n1_and_n2_into_light() -> None:
     assert stage_counts(np.array([0, 1, 2, 2, 3, 5, 5, -1])).tolist() == [1, 3, 1, 2]
+
+
+def test_adult_probabilities_keep_the_wake_source_wake_and_sum_to_one() -> None:
+    rng = np.random.default_rng(1)
+    wake = rng.dirichlet(np.ones(4), size=6)
+    stage = rng.dirichlet(np.ones(5), size=6)
+
+    p = adult_probabilities(wake, stage, np.array([1.0, 2.0, 0.5, 1.0]))
+
+    np.testing.assert_allclose(p[:, WAKE], wake[:, WAKE])
+    np.testing.assert_allclose(p.sum(axis=1), 1.0)
+
+
+def _release(directory: Path, seed: int) -> Path:
+    from arcasleep.models import MODEL_TYPE_KEY
+    from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
+
+    config = {"num_classes": 4, "score_gap": True, "d_model": 16, "n_heads": 2,
+              "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0}
+    model = BiDozeNetModel(BiDozeNetConfig.from_dict(config))
+    model._ensure_built((120, 61, 2), seed=seed)
+    directory.mkdir(parents=True)
+    model.save_weights_safetensors(directory / "model.safetensors")
+    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **config}))
+    (directory / "preprocessing.json").write_text((CONFIG_DIR / "inputs.json").read_text())
+    return directory
+
+
+def test_an_adult_bundle_predicts_a_recording(tmp_path: Path, monkeypatch) -> None:
+    pytest.importorskip("senpy")
+    pytest.importorskip("safetensors")
+    import arcasleep.artifacts.publish as publish
+    from arcasleep.predict import load_predictor
+
+    monkeypatch.setattr(publish, "verify_bundle", lambda directory: None)
+    bundle = build_adult_bundle(
+        tmp_path / "adult",
+        _release(tmp_path / "wake", 0),
+        [_release(tmp_path / "s0", 1), _release(tmp_path / "s1", 2)],
+        [1.0, 0.8, 1.6, 0.9],
+        version="v0.0.0",
+    )
+
+    fs, minutes = 25.0, 47
+    t = np.arange(int(fs * 60 * minutes)) / fs
+    xyz = np.random.default_rng(5).normal(scale=0.05, size=(t.size, 3)) + [0.0, 0.0, 1.0]
+    result = load_predictor(bundle).predict(np.column_stack([t, xyz]))
+
+    assert result.probabilities.shape == (minutes * 2, 4)
+    assert len(result.labels) == minutes * 2

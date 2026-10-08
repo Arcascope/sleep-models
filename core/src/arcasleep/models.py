@@ -134,6 +134,15 @@ class ModelFamily(ABC):
         scores the whole recording, padded to a multiple of ``multiple``.
         """
 
+    def load_predictor(self, bundle_dir: Path | str):
+        """The predictor for one of this family's bundles.
+
+        A family with composite bundles returns its own predictor for them.
+        """
+        from arcasleep.predict import Predictor
+
+        return Predictor(bundle_dir)
+
     @abstractmethod
     def describe_length(self, input_shape: Sequence[int]) -> str:
         """Model card text on how long a recording one pass scores."""

@@ -19,8 +19,18 @@ where w_c is the stage's effective weight in the training batches, π_train its
 prevalence in the training nights and π_adult its prevalence in adult PSG.
 
 Stage indices are the model's: 0 wake, 1 light, 2 deep, 3 REM, 4 gap.
+
+An *adult bundle* packages the formulation for ``arcasleep bidoze predict``: a
+directory holding the wake source's release bundle, one release bundle per
+stage-source seed, and ``composite.json`` naming them and the divisor.
 """
 from __future__ import annotations
+
+import json
+import shutil
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -90,3 +100,146 @@ def hybrid_calls(
         stages = stages / np.asarray(divisor)[LIGHT : REM + 1]
     calls[sleep] = LIGHT + stages.argmax(axis=1)
     return calls
+
+
+ADULT_KIND = "adult"
+SLEEP_STAGE_NAMES = ("light", "deep", "rem")
+
+
+def adult_probabilities(
+    wake_proba: np.ndarray, stage_proba: np.ndarray, divisor: np.ndarray
+) -> np.ndarray:
+    """Per-epoch (wake, light, deep, REM) probabilities reported for an adult prediction.
+
+    Wake is the wake source's probability. The rest, 1 − P(wake), is shared among
+    light, deep and REM in proportion to the stage source's probabilities divided by
+    the divisor. The calls come from :func:`hybrid_calls`, not from the argmax of these.
+    """
+    wake = np.asarray(wake_proba)[:, WAKE]
+    sleep = np.asarray(stage_proba)[:, LIGHT : REM + 1] / np.asarray(divisor)[LIGHT : REM + 1]
+    sleep = sleep / sleep.sum(axis=1, keepdims=True)
+    return np.column_stack([wake, (1.0 - wake)[:, None] * sleep])
+
+
+def build_adult_bundle(
+    output_dir: Path | str,
+    wake_bundle: Path | str,
+    stage_bundles: Sequence[Path | str],
+    divisor: Sequence[float],
+    *,
+    version: str,
+    provenance: Mapping[str, Any] | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Copy the wake source and stage-source release bundles into one adult bundle.
+
+    ``divisor`` is (wake, light, deep, REM), as :func:`adult_stage_divisor` returns
+    it; the wake entry is not used. ``provenance`` is recorded in ``composite.json``.
+    """
+    from arcasleep.artifacts.publish import COMPOSITE_FILENAME, verify_bundle
+    from arcasleep.models import MODEL_TYPE_KEY
+
+    output_dir = Path(output_dir)
+    if output_dir.exists():
+        if not overwrite:
+            raise FileExistsError(f"{output_dir} exists; pass overwrite=True to replace it")
+        shutil.rmtree(output_dir)
+    for source in (wake_bundle, *stage_bundles):
+        verify_bundle(source)
+    shutil.copytree(wake_bundle, output_dir / "wake")
+    stage_paths = []
+    for k, source in enumerate(stage_bundles):
+        stage_paths.append(f"stage/seed{k}")
+        shutil.copytree(source, output_dir / stage_paths[-1])
+    spec = {
+        MODEL_TYPE_KEY: "bidoze",
+        "kind": ADULT_KIND,
+        "version": version,
+        "wake_source": "wake",
+        "stage_sources": stage_paths,
+        "stage_divisor": {
+            name: float(value)
+            for name, value in zip(SLEEP_STAGE_NAMES, list(divisor)[LIGHT : REM + 1], strict=True)
+        },
+        "provenance": dict(provenance or {}),
+    }
+    (output_dir / COMPOSITE_FILENAME).write_text(json.dumps(spec, indent=2) + "\n")
+    return output_dir
+
+
+class AdultPredictor:
+    """Scores recordings with an adult bundle, as ``arcasleep.predict.Predictor`` does a release.
+
+    The wake source decides wake and sleep; on its sleep epochs the stage is the
+    argmax of the stage sources' mean light/deep/REM probabilities divided by the
+    divisor. Each stage source's probabilities are scaled by 1 − its gap head before
+    the mean, as in evaluation.
+    """
+
+    def __init__(self, bundle_dir: Path | str):
+        from arcasleep.artifacts.publish import COMPOSITE_FILENAME
+        from arcasleep.predict import Predictor
+
+        self.bundle_dir = Path(bundle_dir)
+        spec = json.loads((self.bundle_dir / COMPOSITE_FILENAME).read_text())
+        if spec.get("kind") != ADULT_KIND:
+            raise ValueError(f"{bundle_dir} is not an adult bundle (kind {spec.get('kind')!r})")
+        self.wake = Predictor(self.bundle_dir / spec["wake_source"])
+        self.stages = [Predictor(self.bundle_dir / path) for path in spec["stage_sources"]]
+        if not self.stages:
+            raise ValueError(f"{bundle_dir} names no stage source")
+        wake_processing = (self.bundle_dir / spec["wake_source"] / "preprocessing.json").read_text()
+        for path in spec["stage_sources"]:
+            if (self.bundle_dir / path / "preprocessing.json").read_text() != wake_processing:
+                raise ValueError(f"{path} preprocesses recordings differently from the wake source")
+        stage_divisor = spec["stage_divisor"]
+        self.divisor = np.array([1.0] + [float(stage_divisor[n]) for n in SLEEP_STAGE_NAMES])
+        self.stage_names = self.wake.stage_names
+        self.min_sampling_hz = self.wake.min_sampling_hz
+
+    def predict(
+        self,
+        accel: np.ndarray,
+        origin: float | str | None = None,
+        return_gap_head: bool = False,
+        *,
+        ggir_sleep_filter: bool = True,
+        ggir_error_fails: bool = False,
+        subject_id: str | None = None,
+    ):
+        """Score one recording; the arguments are those of ``arcasleep.predict.predict``.
+
+        ``gap_head``, when asked for, is the wake source's.
+        """
+        from arcasleep.predict import GAP_LABEL_NAME, finish_prediction
+
+        wake = self.wake.predict(
+            accel, origin, return_gap_head=return_gap_head, ggir_sleep_filter=False
+        )
+        stage = np.mean([self._stage_proba(s, accel, origin) for s in self.stages], axis=0)
+        calls = hybrid_calls(wake.probabilities, stage, self.divisor)
+        stage_raw = np.asarray(self.stage_names, dtype=object)[calls]
+        stage_raw[wake.is_gap] = GAP_LABEL_NAME
+        return finish_prediction(
+            accel,
+            float(wake.epoch_start_s[0]),
+            wake.epoch_start_s,
+            adult_probabilities(wake.probabilities, stage, self.divisor),
+            self.stage_names,
+            wake.is_gap,
+            stage_raw,
+            gap_head=wake.gap_head,
+            ggir_sleep_filter=ggir_sleep_filter,
+            ggir_error_fails=ggir_error_fails,
+            subject_id=subject_id,
+        )
+
+    @staticmethod
+    def _stage_proba(source, accel: np.ndarray, origin: float | str | None) -> np.ndarray:
+        has_gap_head = source.model.config.output_classes > len(source.stage_names)
+        result = source.predict(
+            accel, origin, return_gap_head=has_gap_head, ggir_sleep_filter=False
+        )
+        if result.gap_head is None:
+            return result.probabilities
+        return result.probabilities * (1.0 - result.gap_head)[:, None]
