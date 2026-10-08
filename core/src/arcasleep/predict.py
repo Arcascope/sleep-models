@@ -121,6 +121,10 @@ class Prediction:
     kept, not removed. ``is_sib`` and ``is_spt`` are GGIR's per-epoch
     sustained-inactivity and sleep-period judgements, ``None`` without the
     filter.
+
+    ``psg`` is the PSG stage name per epoch, ``""`` where the epoch is not
+    scored. Only a recording scored against its PSG has one
+    (:mod:`arcasleep.evaluation.predictions`); ``predict`` never sets it.
     """
 
     epoch_start_s: np.ndarray
@@ -134,6 +138,7 @@ class Prediction:
     summary: Summary | None = None
     is_sib: np.ndarray | None = None
     is_spt: np.ndarray | None = None
+    psg: np.ndarray | None = None
 
     @property
     def stages(self) -> np.ndarray:
@@ -167,7 +172,8 @@ class Prediction:
         """One row per epoch: probabilities, corrected and raw stage, GGIR flags, gap.
 
         A :data:`GAP_HEAD_COLUMN` column follows the stage probabilities when requested.
-        ``is_sib`` and ``is_spt`` are empty when the filter did not run.
+        ``is_sib`` and ``is_spt`` are empty when the filter did not run. A
+        ``psg`` column is last, and only when :attr:`psg` is set.
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +188,7 @@ class Prediction:
             "is_sib",
             "is_spt",
             "is_gap",
+            *(["psg"] if self.psg is not None else []),
         ]
         n = self.epoch_start_s.shape[0]
         sib = _flag_text(self.is_sib, n)
@@ -214,6 +221,7 @@ class Prediction:
                         sib[k],
                         spt[k],
                         int(gap),
+                        *([self.psg[k]] if self.psg is not None else []),
                     ]
                 )
         return path
@@ -278,6 +286,7 @@ def read_prediction_csv(path: Path | str) -> Prediction:
         is_nap=None if is_nap is None else is_nap.astype(np.int8),
         is_sib=flags("is_sib"),
         is_spt=flags("is_spt"),
+        psg=np.array([row["psg"] for row in rows], dtype=object) if "psg" in columns else None,
     )
 
 

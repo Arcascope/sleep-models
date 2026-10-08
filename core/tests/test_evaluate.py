@@ -340,6 +340,43 @@ def test_evaluate_draws_hypnograms_into_a_subdirectory(tmp_path: Path, monkeypat
     assert provenance["hypnograms"] == {"CohortB/s1": str(png)}
 
 
+def test_evaluate_saves_each_subjects_predictions_and_overwriting_clears_old_ones(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _configs(tmp_path / "cfg", x_length=8)
+    checkpoint = tmp_path / "model.pisces"
+    checkpoint.write_bytes(b"not really a zip")
+    subjects = load_bundles(
+        [
+            _save(tmp_path / "a_features.npz", _bundle("CohortB", "long", 12)),
+            _save(tmp_path / "b_features.npz", _bundle("CohortB", "short", 4)),
+        ]
+    )
+    monkeypatch.setattr(BIDOZE, "load_checkpoint", _fake_load_checkpoint)
+    monkeypatch.setattr(run_module, "evaluate_subject", _fake_evaluate_subject)
+    output_dir = tmp_path / "validation"
+    stale = output_dir / "predictions" / "CohortB_gone.csv"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("epoch\n")
+    (output_dir / "cv_results_4_stages.csv").write_text("")
+
+    with pytest.warns(RuntimeWarning):
+        run_evaluation(
+            config, subjects=subjects, checkpoint=checkpoint, output_dir=output_dir,
+            identity=RunIdentity("id", "final_seed_0", 200, "CohortA"), overwrite=True,
+        )
+
+    saved = sorted(p.name for p in (output_dir / "predictions").iterdir())
+    assert saved == ["CohortB_long.csv", "CohortB_short.csv"]
+    for name, epochs in (("long", 8), ("short", 4)):
+        with (output_dir / "predictions" / f"CohortB_{name}.csv").open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert len(rows) == epochs
+        assert {row["psg"] for row in rows} == {"wake"}
+    provenance = json.loads((output_dir / "evaluation.json").read_text())
+    assert set(provenance["predictions"]) == {"CohortB/long", "CohortB/short"}
+
+
 def test_evaluate_refuses_to_reuse_a_csv_unless_overwritten(tmp_path: Path, monkeypatch) -> None:
     config = _configs(tmp_path / "cfg")
     checkpoint = tmp_path / "model.pisces"

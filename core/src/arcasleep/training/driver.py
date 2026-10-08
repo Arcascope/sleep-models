@@ -30,6 +30,7 @@ from arcasleep.data.cache import (
     resolve_feature_cache_dir,
 )
 from arcasleep.data.constants import GAP_LABEL
+from arcasleep.evaluation.predictions import PREDICTIONS_DIRNAME, write_scored_prediction
 from arcasleep.evaluation.staging_metrics import GAP_STAGE_INDEX, labels_for_metric_scoring
 from arcasleep.training.config import RunConfig
 from arcasleep.training.folds import build_dataset_index, build_folds
@@ -245,6 +246,7 @@ def _run_fold(
         config, [int(features[ref].y.shape[1]) for ref in fold.test_subjects]
     )
     train_dataset_desc = "+".join(sorted({r.dataset_name for r in fold.train_subjects}))
+    predictions_dir = paths.results / PREDICTIONS_DIRNAME / seed_fold_id
     for test_ref in fold.test_subjects:
         y_true, y_pred_proba = evaluate_subject(
             model,
@@ -264,4 +266,8 @@ def _run_fold(
             dataset=test_ref.dataset_name,
             training_dataset=train_dataset_desc,
         )
+        write_scored_prediction(
+            predictions_dir, test_ref, features[test_ref], y_true, y_pred_proba, num_classes
+        )
     print(f"  scored {len(fold.test_subjects)} held-out subjects -> {csv_path.name}")
+    print(f"  per-epoch predictions -> {predictions_dir}")
