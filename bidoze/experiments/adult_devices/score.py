@@ -5,7 +5,8 @@ Models per arm (seeds 0-2):
   SleepAccel-Clinical by the mean output of the 5 fold models.
 - ensemble: the mean output of the 3 seeds, per fold model; then as above.
 
-Arms: every arm in ``setup/arms.json``, plus ``weaver-2026-10-06``, the October 6 §2 mix runs
+Arms: every arm in ``setup/arms.json`` (paired comparisons against ``matched`` and ``all`` as
+well as the reference), plus ``weaver-2026-10-06``, the October 6 §2 mix runs
 (`bidoze-weaver-mix-0/mix{k}-seed{s}`, 202 Weaver nights + 4/5 SleepAccel), seeds 0-2.
 
 Scorings:
@@ -235,8 +236,8 @@ def main(run: Path, adult_root: Path) -> None:
         for scoring in ["alone", "adult"]:
             for kind in ["seed mean", "ensemble"]:
                 for a in names + [REFERENCE]:
-                    for b in [REFERENCE, "all", "pediatric release"]:
-                        if a == b or (b == "all" and "all" not in arms) or (a == REFERENCE and b == "all"):
+                    for b in [REFERENCE, "matched", "all", "pediatric release"]:
+                        if a == b or (b in ("all", "matched") and (b not in arms or a == REFERENCE)):
                             continue
                         x, y = arm_scores(a, kind, scoring, cohort).align(
                             arm_scores(b, kind, "alone" if b == "pediatric release" else scoring, cohort),

@@ -1,8 +1,8 @@
 """One table and one figure across every scored arm of the device ablation.
 
 Reads ``<run>/analysis/runs.csv`` and ``paired.csv`` (from score.py) and writes:
-- ``summary.md``:  one row per arm, 3-seed ensembles; * marks p < 0.05 against the reference
-                   (paired Wilcoxon over subjects).
+- ``summary.md``:  one row per arm, 3-seed ensembles; * marks p < 0.05 against the reference,
+                   † against ``matched`` (paired Wilcoxon over subjects).
 - ``devices.png``: one panel per metric; bars are the ensembles, dots the single seeds.
 
 Arms with a stalled fold model are shown with it left out.
@@ -61,8 +61,9 @@ def value(rows: pd.DataFrame, arm: str, model: str, scoring: str, cohort: str, c
     return float(sel[column].iloc[0]) if len(sel) else float("nan")
 
 
-def significant(paired: pd.DataFrame, arm_name: str, scoring: str, cohort: str, metric: str) -> bool:
-    sel = paired[(paired.a == arm_name) & (paired.b == REFERENCE) & (paired.kind == "ensemble")
+def significant(paired: pd.DataFrame, arm_name: str, scoring: str, cohort: str, metric: str,
+                against: str = REFERENCE) -> bool:
+    sel = paired[(paired.a == arm_name) & (paired.b == against) & (paired.kind == "ensemble")
                  & (paired.scoring == scoring) & (paired.cohort == cohort) & (paired.metric == metric)]
     return bool(len(sel)) and float(sel.p.iloc[0]) < 0.05
 
@@ -95,6 +96,9 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
             exact = arm == RELEASE or (scoring == "adult" and metric == "kappa_sleep_wake")
             if not exact and arm != REFERENCE and significant(paired, name, scoring, cohort, metric):
                 text += "*"
+            if not exact and arm not in (REFERENCE, "matched") and significant(
+                    paired, name, scoring, cohort, metric, against="matched"):
+                text += "†"
             cells.append(text)
         label = LABELS[arm].replace("\n", " ") + (" (stalled model out)" if name.endswith("(stalled out)") else "")
         lines.append(f"| {label} | " + " | ".join(cells) + " |")
@@ -104,7 +108,7 @@ def table(runs: pd.DataFrame, paired: pd.DataFrame, arms: dict[str, pd.DataFrame
 def figure(arms: dict[str, pd.DataFrame], path: Path) -> None:
     plt.rcParams.update({"font.size": 9, "axes.edgecolor": BASE, "axes.labelcolor": INK,
                          "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK})
-    fig, axes = plt.subplots(2, 3, figsize=(18, 8.2), facecolor=SURFACE)
+    fig, axes = plt.subplots(3, 2, figsize=(18, 12.5), facecolor=SURFACE)
     names = list(arms)
     width = 0.38
     for ax, (column, scoring, title, scale) in zip(axes.ravel(), METRICS):
@@ -146,7 +150,7 @@ def figure(arms: dict[str, pd.DataFrame], path: Path) -> None:
     fig.legend(handles, ["SleepAccel (28 subjects)", "SleepAccel-Clinical (32 subjects)",
                          "single seed (bar: 3-seed ensemble)", "PSG deep %, in the cohort's color"],
                loc="upper center", ncol=4, frameon=False, fontsize=9)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0, 1, 0.965))
     fig.savefig(path, dpi=150, facecolor=SURFACE)
 
 
