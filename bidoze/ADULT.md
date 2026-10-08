@@ -35,6 +35,27 @@ An adult night is scored by two models.
 `adult_stage_divisor` computes the divisor from the training and adult nights' stage counts.
 `hybrid_calls` applies the decoding.
 
+## Scoring recordings (beta)
+
+An *adult bundle* is a directory with the pediatric release (`wake/`), one release bundle per
+stage-source seed (`stage/seed<k>/`) and `composite.json` (the divisor and provenance). Score
+recordings with it as with any release:
+
+```bash
+arcasleep bidoze predict <adult bundle> night.csv -o out/
+```
+
+- The `stage` column is the formulation's call: the release decides wake or sleep, and the
+  stage source stages the release's sleep epochs.
+- The `wake` probability is the release's. The `light`, `deep` and `rem` probabilities share
+  1 − P(wake) in the stage source's proportions after the divisor.
+- The calls are not the argmax of these probabilities: an epoch is wake when wake is the
+  release's most probable stage.
+- The GGIR sleep filter and the summaries work as for the release.
+
+`experiments/adult_devices/bundle.py` builds the bundle from an arm's `final` phase: the stage
+source trained on the arm's Weaver recordings and all of SleepAccel.
+
 ## Evidence
 
 All results come from the research log, October 6–7, 2026. They are means over subjects.
