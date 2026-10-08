@@ -1,109 +1,118 @@
 # Adult scoring with BiDoze
 
 The pediatric release (`arcasleep-bidoze-pediatric` v0.1.0) is trained on Weaver, a pediatric
-clinical cohort. On adult PSG nights its sleep/wake calls are as good as any retrained model,
-but it calls far too much deep sleep: 29.6% of scored epochs on SleepAccel (PSG: 14.7%) and
-33.2% on SleepAccel-Clinical (PSG: 8.7%).
+clinical cohort. On adult PSG nights its sleep/wake calls hold up, but it calls far too much
+deep sleep: 29.6% of scored epochs on SleepAccel (PSG: 14.7%) and 33.2% on SleepAccel-Clinical
+(PSG: 8.7%).
 
-The adult formulation keeps the release's sleep/wake calls and replaces only its light/deep/REM
-calls. The code is `arcasleep_bidoze.adult`.
+The adult model, `arcasleep-bidoze-adult`, is BiDoze trained on Weaver plus adult PSG nights,
+with an adult stage divisor applied when it labels sleep epochs. Its card is
+`cards/bidoze-adult.md`; the code is `arcasleep_bidoze.adult`.
 
 ## The formulation
 
-An adult night is scored by two models.
+1. **One architecture, several seeds.** BiDoze is trained with the balanced recipe,
+   `config/training-balanced.json` (patience in optimizer steps, smoothed eval κ), with the loss
+   on every class. Three seeds are trained; their 5-way outputs are averaged.
+2. **Sleep or wake:** an epoch is wake when wake is the most probable of wake, light, deep and
+   REM in the averaged output.
+3. **Light, deep or REM**, on sleep epochs only: the argmax of the light, deep and REM
+   probabilities, each divided by the adult stage divisor:
 
-1. **Wake source: the pediatric release, unchanged.**
-   - Its argmax wake and gap calls are the final wake and gap calls.
-   - Sleep/wake metrics (κ, sensitivity, specificity, TST, WASO) therefore equal the release's.
-2. **Stage source: BiDoze trained on Weaver plus adult PSG nights.**
-   - Training uses the balanced recipe, `config/training-balanced.json` (patience in optimizer
-     steps, smoothed eval κ), with the loss on every class.
-   - Several seeds are trained, and their 5-way outputs are averaged.
-3. **Decoding.** Only epochs the wake source calls sleep are staged.
-   - On those epochs the stage is the argmax of the stage source's light, deep and REM
-     probabilities, each divided by the adult stage divisor:
+   divisor_c = w_c × π_train,c / π_adult,c
 
-     divisor_c = w_c × π_train,c / π_adult,c
-
-     - w_c is the stage's effective loss weight in the class-balanced training batches.
-     - π_train,c is the stage's share of the stage source's training epochs.
-     - π_adult,c is its share of adult PSG epochs. BIDsleep is the reference, because it is
-       not a test cohort.
-   - The divisor removes the up-weighting of rare stages by the balanced loss, and the
-     training cohort's stage mix.
+   - w_c is the stage's effective loss weight in the class-balanced training batches.
+   - π_train,c is the stage's share of the training epochs.
+   - π_adult,c is its share of adult PSG epochs. BIDsleep is the reference, because it is not a
+     test cohort.
+   - The divisor removes the up-weighting of rare stages by the balanced loss, and the training
+     cohort's stage mix.
 
 `adult_stage_divisor` computes the divisor from the training and adult nights' stage counts.
-`hybrid_calls` applies the decoding.
+`hybrid_calls(mean, mean, divisor)` applies steps 2 and 3. Given a second model's output as its
+first argument, it takes the sleep/wake decision from that model instead, as the research
+comparisons do.
 
-## Scoring recordings (beta)
+**Wake is not divided.** Dividing all four probabilities, which is the same as subtracting
+log(divisor) from the logits, moves sleep/wake to 97–99% sleep sensitivity and 50–62% wake
+specificity on SleepAccel. The divisor's wake entry depends on the adult reference's share of
+wake, which differs between cohorts.
 
-An *adult bundle* is a directory with the pediatric release (`wake/`), one release bundle per
-stage-source seed (`stage/seed<k>/`) and `composite.json` (the divisor and provenance). Score
-recordings with it as with any release:
+## Scoring recordings
+
+An *adult bundle* is a directory with one release bundle per seed (`seed<k>/`),
+`composite.json` (the divisor and provenance) and the card as `README.md`. Score recordings with
+it as with any release:
 
 ```bash
 arcasleep bidoze predict <adult bundle> night.csv -o out/
 ```
 
-- The `stage` column is the formulation's call: the release decides wake or sleep, and the
-  stage source stages the release's sleep epochs.
-- The `wake` probability is the release's. The `light`, `deep` and `rem` probabilities share
-  1 − P(wake) in the stage source's proportions after the divisor.
-- The calls are not the argmax of these probabilities: an epoch is wake when wake is the
-  release's most probable stage.
+- The seeds run as one batched call (`StackedModel`, `jax.vmap` over the stacked weights).
+- The `stage` column comes from steps 2 and 3, so it is not always the largest probability.
+- The `wake` probability is the seeds' mean. The `light`, `deep` and `rem` probabilities share
+  1 − P(wake) in proportion to their divided probabilities.
 - The GGIR sleep filter and the summaries work as for the release.
 
-`experiments/adult_devices/bundle.py` builds the bundle from an arm's `final` phase: the stage
-source trained on the arm's Weaver recordings and all of SleepAccel.
+`experiments/adult_devices/bundle.py` builds the bundle from an arm's `final` phase, which trains
+on the arm's Weaver recordings and all of SleepAccel. `experiments/adult_devices/card_metrics.py`
+computes the card's metrics.
 
 ## Evidence
 
-All results come from the research log, October 6–7, 2026. They are means over subjects.
-SleepAccel subjects are scored by stage-source models that did not train on them (5 folds).
-p: paired Wilcoxon over subjects, against the pediatric release.
+From the research log, October 6–8, 2026. Means over subjects; p: paired Wilcoxon over subjects,
+against the pediatric release. SleepAccel is cross-validated: each subject is scored by the
+3-seed fold models trained without its fold. SleepAccel-Clinical is never in training and is
+scored by the released model.
 
-| Cohort | Scoring | κ 4-stage | κ sleep/wake | Deep % |
-|:---|:---|--:|--:|--:|
-| SleepAccel | pediatric release | 0.397 | 0.578 | 29.6 |
-| SleepAccel | adult formulation, 5-seed stage source | 0.462 (p < 0.001) | 0.578 | 20.0 |
-| SleepAccel-Clinical | pediatric release | 0.261 | 0.548 | 33.2 |
-| SleepAccel-Clinical | adult formulation, 5-seed stage source | 0.286 (p = 0.10) | 0.548 | 21.4 |
+| Cohort | Model | κ 4-stage | κ sleep/wake | Wake spec. at 95% sens. | Deep % (PSG) |
+|:---|:---|--:|--:|--:|--:|
+| SleepAccel | pediatric release | 0.397 | 0.578 | 69.1% | 29.6 (14.7) |
+| SleepAccel | adult, v0.1.0 recipe | 0.437 (p = 0.060) | 0.562 (p = 0.13) | 68.2% | 21.5 |
+| SleepAccel-Clinical | pediatric release | 0.261 | 0.548 | 54.0% | 33.2 (8.7) |
+| SleepAccel-Clinical | adult v0.1.0 | 0.302 (p = 0.011) | 0.555 (p = 0.90) | 53.9% | 21.8 |
 
-- The stage source in this table was trained on the 202 Weaver nights plus 4 of the 5 SleepAccel
-  folds. Its divisor used Weaver's weights and stage mix.
-- SleepAccel-Clinical is never in training.
+- v0.1.0 trains on 202 revised-Weaver recordings, the same nights as the earlier Weaver cache
+  (111 Fitbit, 70 Apple Watch, 21 ActiGraph), plus SleepAccel.
+- **The same model, scored with the pediatric release's sleep/wake calls**, gives the same
+  4-stage κ: 0.441 on SleepAccel (p = 0.05 against 0.437) and 0.295 on SleepAccel-Clinical
+  (p = 0.19). The pediatric release is not needed.
+- One early-stopping holdout draw moves SleepAccel 4-stage κ by about 0.02. The earlier Weaver
+  cache gave 0.460 with a different draw.
 
-Alternatives that were tested and scored lower:
+Alternatives that were tested and scored lower or the same:
 
-- **The stage source alone**, without the release's wake calls:
-  - SleepAccel sleep/wake κ 0.581 for the 5-seed ensemble vs 0.578 for the release,
-    p = 0.47;
-  - SleepAccel 4-stage κ 0.454, against 0.462 for the formulation.
+- **One seed instead of three:** SleepAccel 4-stage κ 0.402–0.431 for the three v0.1.0-recipe
+  seeds, against 0.437 for their mean.
+- **Training only on ActiGraph recordings of the same nights:** SleepAccel 4-stage κ 0.414 vs
+  0.441 with the pediatric release's sleep/wake calls (p = 0.048).
+- **Fine-tuning all of the pediatric release's weights on 4/5 SleepAccel:** early stopping on
+  pediatric or adult nights stops it within 16 epochs. Its sleep/wake shifts toward wake (94.5%
+  sleep sensitivity) at the same 95%-sensitivity wake specificity; 4-stage κ 0.422.
 - **A stage source trained with the loss on sleep epochs only:** SleepAccel 4-stage κ 0.420 vs
   0.462 (p = 0.016). This version also stalls more often.
-- **Readouts on the release's frozen features** (relative-to-night inputs, within-night contrast,
-  cohort-specific heads): none beats 3 per-class biases on the release's own output (SleepAccel
-  0.418).
-- **BIDsleep nights in the stage source's training data:** SleepAccel sleep/wake κ 0.530 vs
-  0.563 for Weaver alone.
+- **Readouts on the pediatric release's frozen features** (relative-to-night inputs,
+  within-night contrast, cohort-specific heads): none beats 3 per-class biases on the release's
+  own output (SleepAccel 0.418).
+- **BIDsleep nights in the training data:** SleepAccel sleep/wake κ 0.530 vs 0.563 for Weaver
+  alone.
 - **60-s spectrogram windows:** SleepAccel sleep/wake κ 0.521 vs 0.572.
 
 ## Training-data rules
 
 - **The early-stopping holdout keeps participants whole.** A participant is the subject id up
-  to its first `_`, so `00lhv171_apple_n1` and `00lhv171_fitbit_n1` are one child, and
-  `Bidslab00_n1` and `Bidslab00_n2` are one adult.
+  to its first `_`, so `child01_apple_n1` and `child01_fitbit_n1` are one child, and
+  `adult01_n1` and `adult01_n2` are one adult.
 - **Cross-validation folds also keep participants whole**
   (`arcasleep splits-plan --group-separator _`).
-- **Scoring the stage source on an adult cohort it trained on requires folds.** SleepAccel uses
+- **Scoring on an adult cohort the model trained on requires folds.** SleepAccel uses
   `config/splits/sleepaccel_5fold.json`.
 
 ## Open questions
 
-- **Which Weaver recordings to train the stage source on.** The revised Weaver data has 634
-  recordings from 237 children, each recorded by 2–3 devices (ActiGraph, Apple Watch, Fitbit,
-  Garmin). `experiments/adult_devices/` compares the devices, each alone and all together.
 - **The divisor's adult reference.** It is BIDsleep, an adult cohort with 18.9% deep sleep.
   SleepAccel-Clinical PSG has 8.7%, so one adult prior does not fit every adult cohort.
-- **Validation.** Every number above comes from one split, and from SleepAccel (28 subjects) and
-  SleepAccel-Clinical (32 subjects). No adult cohort outside these has been scored.
+- **One network instead of three.** A student trained on the three seeds' mean output could
+  keep most of their gain over one seed.
+- **Validation.** Every number above comes from SleepAccel (28 subjects) and SleepAccel-Clinical
+  (32 subjects). No other adult cohort has been scored.

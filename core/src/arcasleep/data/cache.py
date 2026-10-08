@@ -27,7 +27,7 @@ from arcasleep.data.bundle import CacheBundle
 CACHE_SUFFIX = "_features.npz"
 SUBJECT_SEPARATOR = "_subject_"
 # A subject id is ``<participant>`` or ``<participant>_<recording>``, e.g.
-# ``Bidslab00_n1`` or ``00lhv171_apple_n1``: one participant's nights and devices.
+# ``adult01_n1`` or ``child01_apple_n1``: one participant's nights and devices.
 PARTICIPANT_SEPARATOR = "_"
 
 

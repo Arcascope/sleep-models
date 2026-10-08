@@ -67,14 +67,12 @@ def test_stage_counts_merge_n1_and_n2_into_light() -> None:
     assert stage_counts(np.array([0, 1, 2, 2, 3, 5, 5, -1])).tolist() == [1, 3, 1, 2]
 
 
-def test_adult_probabilities_keep_the_wake_source_wake_and_sum_to_one() -> None:
-    rng = np.random.default_rng(1)
-    wake = rng.dirichlet(np.ones(4), size=6)
-    stage = rng.dirichlet(np.ones(5), size=6)
+def test_adult_probabilities_keep_the_models_wake_and_sum_to_one() -> None:
+    proba = np.random.default_rng(1).dirichlet(np.ones(4), size=6)
 
-    p = adult_probabilities(wake, stage, np.array([1.0, 2.0, 0.5, 1.0]))
+    p = adult_probabilities(proba, np.array([1.0, 2.0, 0.5, 1.0]))
 
-    np.testing.assert_allclose(p[:, WAKE], wake[:, WAKE])
+    np.testing.assert_allclose(p[:, WAKE], proba[:, WAKE])
     np.testing.assert_allclose(p.sum(axis=1), 1.0)
 
 
@@ -102,7 +100,6 @@ def test_an_adult_bundle_predicts_a_recording(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(publish, "verify_bundle", lambda directory: None)
     bundle = build_adult_bundle(
         tmp_path / "adult",
-        _release(tmp_path / "wake", 0),
         [_release(tmp_path / "s0", 1), _release(tmp_path / "s1", 2)],
         [1.0, 0.8, 1.6, 0.9],
         version="v0.0.0",
@@ -115,3 +112,19 @@ def test_an_adult_bundle_predicts_a_recording(tmp_path: Path, monkeypatch) -> No
 
     assert result.probabilities.shape == (minutes * 2, 4)
     assert len(result.labels) == minutes * 2
+
+
+def test_stacked_seeds_give_the_mean_of_their_probabilities(tmp_path: Path) -> None:
+    pytest.importorskip("safetensors")
+    import jax
+
+    from arcasleep.artifacts.publish import load_bundle_model
+    from arcasleep_bidoze.adult import StackedModel
+
+    models = [load_bundle_model(_release(tmp_path / f"s{k}", k)) for k in range(3)]
+    x = np.random.default_rng(2).normal(size=(2, 120, 61, 2)).astype(np.float32)
+
+    stacked = np.asarray(jax.nn.softmax(StackedModel(models).infer(x), axis=-1))
+
+    mean = np.mean([np.asarray(jax.nn.softmax(m.infer(x), axis=-1)) for m in models], axis=0)
+    np.testing.assert_allclose(stacked, mean, rtol=1e-4, atol=1e-6)
