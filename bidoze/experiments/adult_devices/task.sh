@@ -48,8 +48,8 @@ if [[ "$ARM" == distill ]]; then
   python "$HERE/fetch.py" "${ADULT_DEVICES_TEACHERS:?the distill arm needs ADULT_DEVICES_TEACHERS}/$TEACHER_PHASE/model_outputs" "$TEACHERS"
   mkdir -p "$OUT/setup"
   python -c "import json,sys;t=json.load(open(sys.argv[1]));t['distill_from']=sys.argv[2];json.dump(t,open(sys.argv[3],'w'),indent=2)" \
-    "$TRAINING" "$TEACHERS" "$OUT/setup/training-distill.json"
-  TRAINING=$OUT/setup/training-distill.json
+    "$TRAINING" "$TEACHERS" "$OUT/setup/training-teachers.json"
+  TRAINING=$OUT/setup/training-teachers.json
 fi
 if [[ -n "$SEED" ]]; then
   mkdir -p "$OUT/setup"
@@ -59,7 +59,8 @@ if [[ -n "$SEED" ]]; then
 fi
 CV=$S/cv/$ARM/cv_$([[ $K == final ]] && echo final || echo fold$K).json
 mkdir -p "$OUT/setup"
-cp "$S/arms.json" "$TRAINING" "$CV" "$OUT/setup/"
+cp "$S/arms.json" "$CV" "$OUT/setup/"
+[[ "$TRAINING" == "$OUT/setup/"* ]] || cp "$TRAINING" "$OUT/setup/"
 
 FEATURE_CACHE_DIR=$S/cache/$ARM arcasleep bidoze train --cache-only -pc config/inputs.json \
   -mc config/model.json -tc "$TRAINING" -mtc config/metrics.json --split-seed "$SPLIT" \
