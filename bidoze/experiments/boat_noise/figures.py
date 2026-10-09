@@ -4,6 +4,7 @@
   jerk spectrogram (the dashed line is the model's 6 Hz limit), the range of ENMO samples per 2 s, and the PSG
   hypnogram.
 - ``zoom``: one stretch of a night, ``minutes`` long around ``at``:
+  - the PSG stages as swim lanes (Wake, REM, Light, Deep), on the spectrograms' time axis;
   - the magnitude spectrogram in the model's 10-s windows (0.1 Hz bins);
   - the magnitude and jerk spectrograms in 30-s windows at a 2-s step (0.033 Hz bins), from the
     raw samples, which resolve narrow and drifting lines; a transient shows about 30 s wide;
@@ -85,6 +86,23 @@ def side_psd(fig, cell, spec_ax, f: np.ndarray, power: np.ndarray, colour: str, 
         ax.axhline(MODEL_FMAX, color="0.5", ls="--", lw=0.6)
 
 
+LANES = [("Wake", (0,), "#f28e5b"), ("REM", (4, 5), "#5bc8f2"), ("Light", (1, 2), "#3a7bd5"), ("Deep", (3,), "#4b2a91")]
+
+
+def swim_lanes(ax, d: dict, lo: float, hi: float) -> None:
+    """PSG stages as one lane per stage, minutes on the x axis; unscored epochs are left blank."""
+    keep = (d["psg_t"] >= lo - 30) & (d["psg_t"] <= hi)
+    t, stage = d["psg_t"][keep], d["psg"][keep]
+    for lane, (label, codes, colour) in enumerate(LANES):
+        y = len(LANES) - 1 - lane
+        for start in t[np.isin(stage, codes)]:
+            ax.add_patch(plt.Rectangle((start / 60, y + 0.1), 0.5, 0.8, color=colour, lw=0))
+    ax.set_yticks([len(LANES) - 1 - i + 0.5 for i in range(len(LANES))], [label for label, _, _ in LANES])
+    ax.set_ylim(0, len(LANES))
+    ax.set_ylabel("PSG")
+    ax.tick_params(labelbottom=False)
+
+
 def hypnogram(ax, d: dict) -> None:
     keep = d["psg"] >= 0
     t = d["psg_t"][keep] / 3600
@@ -133,24 +151,27 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
     nyquist = float(d["fs"]) / 2
     top = min(fmax or np.inf, nyquist)
 
-    fig = plt.figure(figsize=(16, 19))
-    grid = fig.add_gridspec(5, 2, width_ratios=[4, 1], height_ratios=[2.4, 4, 4, 1.4, 1.4])
-    ax = fig.add_subplot(grid[0, 0])
+    fig = plt.figure(figsize=(16, 20))
+    grid = fig.add_gridspec(6, 2, width_ratios=[4, 1], height_ratios=[0.9, 2.4, 4, 4, 1.4, 1.4])
+    lanes = fig.add_subplot(grid[0, 0])
+    swim_lanes(lanes, d, lo, hi)
+    lanes.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
+    ax = fig.add_subplot(grid[1, 0], sharex=lanes)
     m = (d["mag_t"] >= lo) & (d["mag_t"] <= hi)
     fm = d["f"] <= top
     show(ax, d["mag_t"][m] / 60, d["f"][fm], d["mag"][m][:, fm], f"|a|, {WINDOW_S:g}-s\nwindows (model)")
     ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
     row = int(np.nanargmin(np.abs(d["mag_t"] - at)))
-    side_psd(fig, grid[0, 1], ax, d["f"][fm], 10.0 ** d["mag"][row, fm].astype(float), "tab:blue",
+    side_psd(fig, grid[1, 1], ax, d["f"][fm], 10.0 ** d["mag"][row, fm].astype(float), "tab:blue",
              f"|a|, the {WINDOW_S:g}-s window at the zoom")
-    for row, (sig, tsig, label) in enumerate(((mag_s, ts, "|a|"), (np.asarray(js.jerk), np.asarray(js.timestamps_s), "jerk")), 1):
+    for row, (sig, tsig, label) in enumerate(((mag_s, ts, "|a|"), (np.asarray(js.jerk), np.asarray(js.timestamps_s), "jerk")), 2):
         sp = senpy.compute_nufft_spectrogram(tsig, sig, hires_s, hires_s - step_s, kind="psd",
                                              empty_windows="keep", origin_s=0.0)
         tt = sp.times + (sp.origin_s or 0.0)
         keep_t = (tt >= lo) & (tt <= hi)
         keep_f = sp.frequencies <= top
         psd = running_mean(sp.Sxx, int(round(AVERAGED["smooth_s"] / step_s))) if averaged else sp.Sxx
-        ax = fig.add_subplot(grid[row, 0])
+        ax = fig.add_subplot(grid[row, 0], sharex=lanes)
         show(ax, tt[keep_t] / 60, sp.frequencies[keep_f], np.log10(psd[keep_t][:, keep_f] + 1e-12),
              f"{label}, {hires_s:g}-s\nwindows" + (", 30-s\nrunning mean" if averaged else ""))
         ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
@@ -164,19 +185,17 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
             side_psd(fig, grid[row, 1], ax, sp.frequencies[keep_f], psd[near, keep_f], colour,
                      f"{label}, the {hires_s:g}-s window at the zoom")
     ax.set_xlabel("minutes from recording start")
-    keep = (d["psg_t"] >= lo - 30) & (d["psg_t"] <= hi)
-    stages = ", ".join(f"{STAGES.get(int(v), '?')}" for v in d["psg"][keep] if v >= 0)
-    fig.suptitle(f"{key}: {at_h:.3f} h, {minutes:g} min stretch, {seconds:g} s zoom (cyan)   PSG: {stages[:120]}",
-                 fontsize=10)
+    lanes.set_xlim(lo / 60, hi / 60)
+    fig.suptitle(f"{key}: {at_h:.3f} h, {minutes:g} min stretch, {seconds:g} s zoom (cyan)", fontsize=10)
 
     m = (t >= zlo) & (t <= zhi)
     mag = senpy.compute_magnitude(x[m], y[m], z[m])
     j = senpy.compute_jerk(t[m], x[m], y[m], z[m])
-    ax = fig.add_subplot(grid[3, 0])
+    ax = fig.add_subplot(grid[4, 0])
     ax.plot(t[m] - zlo, np.maximum(mag - 1, 0), lw=0.6, color="k")
     ax.plot(t[m] - zlo, mag - 1, lw=0.4, color="0.6", zorder=0)
     ax.set_ylabel("ENMO (black)\n||a||−1 (grey), g")
-    ax = fig.add_subplot(grid[4, 0])
+    ax = fig.add_subplot(grid[5, 0])
     ax.plot(np.asarray(j.timestamps_s) - zlo, j.jerk, lw=0.5, color="tab:blue")
     ax.set_ylabel("jerk")
     ax.set_xlabel(f"seconds from {zlo / 3600:.4f} h")
