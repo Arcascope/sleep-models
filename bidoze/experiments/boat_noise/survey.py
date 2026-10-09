@@ -13,7 +13,7 @@ Somerset), beyond the model's 0.1–6 Hz band.
 
 Writes ``<out>/spectra/<cohort>_<id>.npz`` (log10 PSD as float16); ``figures.py`` draws them.
 
-Usage: python survey.py <data root> <out dir> [workers]
+Usage: python survey.py <data root> <out dir> [workers] [cohort,cohort,...]  (default SURF,Somerset)
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 import senpy
 
-COHORTS = {"SURF": "SURF", "Somerset": "Somerset"}
+COHORTS = ["SURF", "Somerset"]
 WINDOW_S = 10.0
 STEP_S = 2.0
 EPS = 1e-12
@@ -81,13 +81,13 @@ def night(job: tuple[Path, str, Path]) -> str:
     return f"{name}: fs {fs:.1f} Hz, {t[-1] / 3600:.1f} h"
 
 
-def main(root: Path, out: Path, workers: int) -> None:
-    names = [f"{c}/{p.stem}" for c, d in COHORTS.items()
-             for p in sorted((root / d / "cleaned_accelerometer").glob("*.csv"))]
+def main(root: Path, out: Path, workers: int, cohorts: list[str]) -> None:
+    names = [f"{c}/{p.stem}" for c in cohorts for p in sorted((root / c / "cleaned_accelerometer").glob("*.csv"))]
     with ProcessPoolExecutor(workers) as pool:
         for line in pool.map(night, [(root, n, out) for n in names]):
             print(line, flush=True)
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else 8)
+    main(Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else 8,
+         sys.argv[4].split(",") if len(sys.argv) > 4 else COHORTS)
