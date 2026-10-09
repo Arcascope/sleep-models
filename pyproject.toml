@@ -33,7 +33,7 @@ dependencies = []
 # through this one, so bumping the version here bumps it everywhere. The train
 # image installs exactly this version (deploy/scripts/build_train_image.sh
 # reads it).
-pisces = ["pisces-lite>=4.1.1"]
+pisces = ["pisces-lite>=4.2.0"]
 # One extra per model family: what loading and running that network needs.
 # Training or predicting also needs the `train` or `inference` extra.
 bidoze = ["jax", "flax", "optax"]
