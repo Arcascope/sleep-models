@@ -17,7 +17,11 @@ whole night:
 - ``knock_1.05`` [4]: 20-ms pulses every 1.05 s, half along and half perpendicular to gravity;
 - ``jerk_lines`` [10]: 1.08 and 2.15 Hz sinusoids perpendicular to gravity;
 - ``hull_0.4`` [1]: a narrow band at 0.3–0.5 Hz (40 random-phase sinusoids) along gravity;
-- ``line_8.6``, ``line_24`` [6, 7]: lines above the model's 6-Hz band, along gravity.
+- ``line_8.6``, ``line_24`` [6, 7]: lines above the model's 6-Hz band, along gravity;
+- ``white_iso``: independent white noise on each axis (a raised floor at every frequency);
+- ``white_up``: white noise along gravity only.
+
+The white-noise components are scored on request (``white_iso@2mg``), not in the default list.
 
 Per condition and night the release's prediction (default GGIR filter, ``origin`` on the PSG's
 epoch grid) is written to ``<out>/predictions/<condition>/<night>.csv``; per night, against PSG:
@@ -108,13 +112,19 @@ def inject(accel: np.ndarray, condition: str, seed: int) -> tuple[np.ndarray, fl
     name, gain = condition.split("@")
     gain_g = float(gain.removesuffix("mg")) / 1000.0
     t, a = accel[:, 0], accel[:, 1:]
-    along, perp, f0 = component(name, t, np.random.default_rng(seed))
+    out = accel.copy()
+    if name == "white_iso":
+        out[:, 1:] = a + gain_g * np.random.default_rng(seed).standard_normal(a.shape)
+        return out, None
+    if name == "white_up":
+        along, perp, f0 = np.random.default_rng(seed).standard_normal(len(t)), np.zeros(len(t)), None
+    else:
+        along, perp, f0 = component(name, t, np.random.default_rng(seed))
     up = a / np.linalg.norm(a, axis=1, keepdims=True)
     side = np.cross(up, [1.0, 0.0, 0.0])
     near = np.linalg.norm(side, axis=1) < 0.3
     side[near] = np.cross(up[near], [0.0, 1.0, 0.0])
     side /= np.linalg.norm(side, axis=1, keepdims=True)
-    out = accel.copy()
     out[:, 1:] = a + gain_g * (along[:, None] * up + perp[:, None] * side)
     return out, f0
 
