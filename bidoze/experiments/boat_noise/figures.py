@@ -18,6 +18,7 @@ per frequency or over the night.
 Usage:
   python figures.py overview <out dir> [<cohort>_<id> ...]
   python figures.py zoom <data root> <out dir> <cohort>_<id> <at hours> <minutes> <seconds> <name> [fmax]
+  python figures.py zoom-averaged ...   (the same, with the superseded time-averaged method, into zoo-time-averaged/)
 """
 from __future__ import annotations
 
@@ -40,6 +41,15 @@ LOW_FMAX = 2.0
 WINDOW_S = 10.0
 HIRES_S = 30.0
 HIRES_STEP_S = 2.0
+# The superseded time-averaged method, kept to reproduce its figures for comparison: 60-s
+# windows at a 5-s step, each row the running mean of 30 s of windows, and the PSD panel the
+# median over 5 minutes. Combining windows across time blurs this noise; do not use it for analysis.
+AVERAGED = {"hires_s": 60.0, "step_s": 5.0, "smooth_s": 30.0, "psd_span_s": 300.0}
+
+
+def running_mean(sxx: np.ndarray, n: int) -> np.ndarray:
+    kernel = np.ones(n) / n
+    return np.apply_along_axis(lambda c: np.convolve(c, kernel, mode="same"), 0, np.nan_to_num(sxx))
 
 
 def load(out: Path, key: str) -> dict:
@@ -88,7 +98,8 @@ def overview(out: Path, keys: list[str]) -> None:
 
 
 def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: float, name: str,
-         fmax: float | None = None) -> None:
+         fmax: float | None = None, averaged: bool = False) -> None:
+    hires_s, step_s = (AVERAGED["hires_s"], AVERAGED["step_s"]) if averaged else (HIRES_S, HIRES_STEP_S)
     d = load(out, key)
     cohort, stem = key.split("_", 1)
     t, x, y, z = load_accel(root, cohort, stem).T
@@ -96,7 +107,7 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
     lo, hi = at - minutes * 30, at + minutes * 30
     zlo, zhi = at - seconds / 2, at + seconds / 2
 
-    stretch = (t >= lo - HIRES_S) & (t <= hi + HIRES_S)
+    stretch = (t >= lo - hires_s) & (t <= hi + hires_s)
     ts = t[stretch]
     mag_s = senpy.compute_magnitude(x[stretch], y[stretch], z[stretch])
     js = senpy.compute_jerk(ts, x[stretch], y[stretch], z[stretch])
@@ -112,15 +123,16 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
     ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
     hires = {}
     for row, (sig, tsig, label) in enumerate(((mag_s, ts, "|a|"), (np.asarray(js.jerk), np.asarray(js.timestamps_s), "jerk")), 1):
-        sp = senpy.compute_nufft_spectrogram(tsig, sig, HIRES_S, HIRES_S - HIRES_STEP_S, kind="psd",
+        sp = senpy.compute_nufft_spectrogram(tsig, sig, hires_s, hires_s - step_s, kind="psd",
                                              empty_windows="keep", origin_s=0.0)
         tt = sp.times + (sp.origin_s or 0.0)
         keep_t = (tt >= lo) & (tt <= hi)
         keep_f = sp.frequencies <= top
-        hires[label] = (tt, sp.frequencies, sp.Sxx)
+        psd = running_mean(sp.Sxx, int(round(AVERAGED["smooth_s"] / step_s))) if averaged else sp.Sxx
+        hires[label] = (tt, sp.frequencies, psd)
         ax = fig.add_subplot(grid[row, 0])
-        show(ax, tt[keep_t] / 60, sp.frequencies[keep_f], np.log10(sp.Sxx[keep_t][:, keep_f] + 1e-12),
-             f"{label}, {HIRES_S:g}-s\nwindows")
+        show(ax, tt[keep_t] / 60, sp.frequencies[keep_f], np.log10(psd[keep_t][:, keep_f] + 1e-12),
+             f"{label}, {hires_s:g}-s\nwindows" + (", 30-s\nrunning mean" if averaged else ""))
         ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
     ax.set_xlabel("minutes from recording start")
     keep = (d["psg_t"] >= lo - 30) & (d["psg_t"] <= hi)
@@ -142,16 +154,22 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
 
     ax = fig.add_subplot(grid[1:3, 1])
     for label, (tt, f, psd) in hires.items():
-        row = int(np.nanargmin(np.abs(tt - at)))
         keep_f = f <= top
-        ax.semilogy(f[keep_f], psd[row, keep_f], lw=0.7, label=label)
+        if averaged:
+            near = np.abs(tt - at) <= AVERAGED["psd_span_s"] / 2
+            ax.semilogy(f[keep_f], np.nanmedian(psd[near], axis=0)[keep_f], lw=0.7, label=label)
+        else:
+            row = int(np.nanargmin(np.abs(tt - at)))
+            ax.semilogy(f[keep_f], psd[row, keep_f], lw=0.7, label=label)
     ax.axvline(MODEL_FMAX, color="0.5", ls="--", lw=0.6)
     ax.set_xlabel("Hz")
-    ax.set_title(f"PSD of the one {HIRES_S:g}-s window\ncentred on the zoom", fontsize=9)
+    ax.set_title(f"PSD, {hires_s:g}-s windows, median\nover 5 min (time-averaged)" if averaged
+                 else f"PSD of the one {hires_s:g}-s window\ncentred on the zoom", fontsize=9)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    (out / "zoo").mkdir(exist_ok=True)
-    fig.savefig(out / "zoo" / f"{name}.png", dpi=130)
+    folder = out / ("zoo-time-averaged" if averaged else "zoo")
+    folder.mkdir(exist_ok=True)
+    fig.savefig(folder / f"{name}.png", dpi=130)
     plt.close(fig)
 
 
@@ -161,4 +179,4 @@ if __name__ == "__main__":
     else:
         args = sys.argv[2:]
         zoom(Path(args[0]), Path(args[1]), args[2], float(args[3]), float(args[4]), float(args[5]), args[6],
-             float(args[7]) if len(args) > 7 else None)
+             float(args[7]) if len(args) > 7 else None, averaged=sys.argv[1] == "zoom-averaged")
