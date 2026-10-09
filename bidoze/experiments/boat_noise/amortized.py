@@ -3,8 +3,10 @@
 Computing the model input on the device every step (``fused_train``) costs about 4× a cached
 step. Here the input is computed once per night per noise draw and kept in host memory:
 
-1. Cache every night's clean input, and one noisy input per night (``jax_generator`` draw,
-   ``fused_train.model_input``).
+1. Cache every night's clean input, and one noisy input per night (``fused_train.model_input``;
+   ``--noise`` picks ``boat``, a ``jax_generator`` draw, ``floor``, white noise at the Galaxy Watch
+   floor, or ``none``, which trains on the clean input only). ``--lowpass`` low-passes each axis
+   at 6 Hz before the jerk (``fused.channels``), in every input.
 2. Train on the cache. Each step scores a batch clean and noisy:
    ``loss = (CE(clean) + CE(noisy)) / 2 + λ · KL(p_clean ‖ p_noisy)``, the KL with the clean
    prediction held fixed (no gradient) and weighted per epoch like the class-balanced CE.
@@ -15,20 +17,23 @@ step. Here the input is computed once per night per noise draw and kept in host 
    with the current weights *before* they are trained on: this is the deviation on noise the
    model has not seen.
 4. The run stops as the recipe does: ``Patience`` on the eval kappa, here the mean of the
-   clean and noisy kappa on the held-out nights (one fixed draw per night).
+   clean and noisy kappa on the held-out nights (one fixed draw per night), or with
+   ``--select clean`` (and always with ``--noise none``) the clean kappa alone. With
+   ``--noise none``, the noisy eval inputs, used only for the logged deviation, are ``floor``.
 
 Nights, the fit/eval split and the recipe's hyperparameters are the adult release's (the
 ``matched`` arm); rows are visited in a fresh permutation each epoch.
 
 Writes to ``<out>``: ``reference.csv`` (the seed bundle on the eval nights), ``epochs.csv`` (per epoch), ``refreshes.csv`` (per refresh) and
 ``bundle/`` (the best weights, with the seed bundle's ``config.json`` and
-``preprocessing.json``).
+``preprocessing.json``, and ``arm.json``: the noise, the low-pass flag and the seed).
 
 Usage: python amortized.py <data root> <release cache dir> <seed bundle> <out> [options]
 """
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import shutil
@@ -69,6 +74,9 @@ class Recipe:
     round_steps: int = 1000
     refresh_fraction: float = 0.25
     seed: int = 0
+    noise: str = "boat"
+    lowpass: bool = False
+    select: str = "mean"
 
 
 def training_refs(cache: Path) -> dict[SubjectRef, tuple[str, str, str | None]]:
@@ -103,18 +111,19 @@ def ingest(root: Path, sources: list[tuple[str, str, str | None]], workers: int)
 class Inputs:
     """Model inputs of single nights, padded to one sample count and one frame count."""
 
-    def __init__(self, nights: list[fused_train.Night]):
+    def __init__(self, nights: list[fused_train.Night], lowpass: bool):
         self.n_total = int(max(len(n.t) for n in nights))
         self.data_epochs = int(max(len(n.y) for n in nights))
+        self.lowpass = lowpass
 
-    def __call__(self, night: fused_train.Night, key: jax.Array, noise: bool) -> np.ndarray:
+    def __call__(self, night: fused_train.Night, key: jax.Array, noise: str) -> np.ndarray:
         stacked = fused_train.stack([night], self.n_total, self.data_epochs)
-        return np.asarray(_one_input(stacked["arrays"], key, width=stacked["width"], noise=noise))
+        return np.asarray(_one_input(stacked["arrays"], key, width=stacked["width"], noise=noise, lowpass=self.lowpass))
 
 
-@partial(jax.jit, static_argnames=("width", "noise"))
-def _one_input(arrays, key, width, noise):
-    return fused_train.model_input(jax.tree.map(lambda a: a[0], arrays), key, width, noise)
+@partial(jax.jit, static_argnames=("width", "noise", "lowpass"))
+def _one_input(arrays, key, width, noise, lowpass):
+    return fused_train.model_input(jax.tree.map(lambda a: a[0], arrays), key, width, noise, lowpass)
 
 
 def epoch_weights(y: jax.Array, output_classes: int, beta: float) -> jax.Array:
@@ -150,14 +159,18 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
           f"{sum(len(n.t) for n in nights) / 1e6:.0f} M samples", flush=True)
     fit_nights, eval_nights = nights[: len(fit_refs)], nights[len(fit_refs):]
 
-    make = Inputs(nights)
+    make = Inputs(nights, recipe.lowpass)
     key = jax.random.PRNGKey(recipe.seed)
     start = time.perf_counter()
-    clean = np.stack([make(n, key, False) for n in fit_nights])
-    eval_clean = np.stack([make(n, key, False) for n in eval_nights])
-    eval_noisy = np.stack([make(n, jax.random.PRNGKey(10_000 + i), True) for i, n in enumerate(eval_nights)])
+    clean = np.stack([make(n, key, "none") for n in fit_nights])
+    eval_clean = np.stack([make(n, key, "none") for n in eval_nights])
+    noisy_eval_kind = "floor" if recipe.noise == "none" else recipe.noise
+    eval_noisy = np.stack([make(n, jax.random.PRNGKey(10_000 + i), noisy_eval_kind) for i, n in enumerate(eval_nights)])
     draws = 0
-    noisy = np.stack([make(n, jax.random.fold_in(key, i), True) for i, n in enumerate(fit_nights)])
+    if recipe.noise == "none":
+        noisy = clean
+    else:
+        noisy = np.stack([make(n, jax.random.fold_in(key, i), recipe.noise) for i, n in enumerate(fit_nights)])
     drawn_at = np.zeros(len(fit_nights), int)
     print(f"caches built in {time.perf_counter() - start:.0f} s: {clean.nbytes * 2 / 1e9:.1f} GB fit, "
           f"{eval_clean.nbytes * 2 / 1e9:.1f} GB eval", flush=True)
@@ -241,19 +254,22 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
 
         lc, ln = all_logits(params, eval_clean), all_logits(params, eval_noisy)
         kc, kn = kappa(lc, y_eval), kappa(ln, y_eval)
-        decision = plateau.update((kc + kn) / 2)
-        if np.isfinite(kc + kn) and (kc + kn) / 2 > best:
-            best, best_params, best_epoch = (kc + kn) / 2, params, epoch
+        selection = kc if recipe.select == "clean" or recipe.noise == "none" else (kc + kn) / 2
+        decision = plateau.update(selection)
+        if np.isfinite(selection) and selection > best:
+            best, best_params, best_epoch = selection, params, epoch
         cached_dev, cached_flip = deviation(params, clean, noisy, y_fit)
         eval_dev, eval_flip = deviation(params, eval_clean, eval_noisy, y_eval)
 
         refreshed = False
-        if cached_dev <= recipe.deviation_ratio * round_start or round_steps >= recipe.round_steps:
+        if recipe.noise != "none" and (cached_dev <= recipe.deviation_ratio * round_start
+                                       or round_steps >= recipe.round_steps):
             t1 = time.perf_counter()
             draws += 1
             count = max(1, round(recipe.refresh_fraction * len(fit_nights)))
             chosen = np.argsort(drawn_at, kind="stable")[:count]
-            fresh = np.stack([make(fit_nights[i], jax.random.fold_in(key, 1_000_000 * draws + int(i)), True) for i in chosen])
+            fresh = np.stack([make(fit_nights[i], jax.random.fold_in(key, 1_000_000 * draws + int(i)), recipe.noise)
+                              for i in chosen])
             fresh_dev, fresh_flip = deviation(params, clean[chosen], fresh, y_fit[chosen])
             seen_dev, seen_flip = deviation(params, clean[chosen], noisy[chosen], y_fit[chosen])
             noisy[chosen] = fresh
@@ -288,6 +304,8 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
     bundle.mkdir(exist_ok=True)
     for name in ("config.json", "preprocessing.json"):
         shutil.copy(seed_bundle / name, bundle / name)
+    (bundle / "arm.json").write_text(json.dumps({"noise": recipe.noise, "lowpass": recipe.lowpass,
+                                                  "consistency": recipe.consistency, "seed": recipe.seed}))
     model.params = best_params
     model.model = {"params": best_params}
     model.save_weights_safetensors(bundle / "model.safetensors")
@@ -305,7 +323,11 @@ if __name__ == "__main__":
     parser.add_argument("--round-steps", type=int, default=Recipe.round_steps)
     parser.add_argument("--refresh-fraction", type=float, default=Recipe.refresh_fraction)
     parser.add_argument("--seed", type=int, default=Recipe.seed)
+    parser.add_argument("--noise", choices=("boat", "floor", "none"), default=Recipe.noise)
+    parser.add_argument("--lowpass", action="store_true")
+    parser.add_argument("--select", choices=("mean", "clean"), default=Recipe.select)
     a = parser.parse_args()
     main(a.root, a.cache, a.seed_bundle, a.out,
          Recipe(max_epochs=a.max_epochs, consistency=a.consistency, deviation_ratio=a.deviation_ratio,
-                round_steps=a.round_steps, refresh_fraction=a.refresh_fraction, seed=a.seed), a.workers)
+                round_steps=a.round_steps, refresh_fraction=a.refresh_fraction, seed=a.seed,
+                noise=a.noise, lowpass=a.lowpass, select=a.select), a.workers)

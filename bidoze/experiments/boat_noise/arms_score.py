@@ -2,7 +2,9 @@
 
 Cohorts: SleepAccel-Clinical (the adult release's test cohort; the land guard), SURF's Galaxy
 Watch nights and Somerset. Each night is scored by every bundle with ``Predictor.predict`` (the
-GGIR sleep filter on, origin on the PSG's 30-s grid).
+GGIR sleep filter on, origin on the PSG's 30-s grid). A bundle whose ``arm.json`` sets ``lowpass``
+gets its frames from ``fused.frames`` with the jerk low-pass (``fused.lowpass_taps``), on the
+same cleaned samples and origin as the release's features.
 
 Writes ``<out>/predictions/<model>/<night>.csv``, ``<out>/nights.csv`` (per night and model), ``<out>/summary.csv`` (per cohort and model,
 means over nights) and ``<out>/paired.csv`` (per cohort, metric and model: the mean
@@ -16,10 +18,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import json
+
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from scipy import stats
 
+import fused
+from arcasleep.data.prepare import clean_accelerometer_rows
 from arcasleep.predict import load_predictor
 from inject import score
 from survey import load_accel
@@ -36,9 +43,31 @@ def nights(root: Path) -> list[tuple[str, str]]:
     return out
 
 
+def lowpass_features(released):
+    """The release's ``features``, with frames from ``fused.frames`` and the jerk low-pass."""
+
+    def features(acc, origin):
+        ref, origin_s = released(acc, origin)
+        clean = clean_accelerometer_rows(np.asarray(acc, np.float64))
+        p = fused.plan(clean[:, 0], origin_s)
+        got = fused.frames(*fused.device_plan(p), jnp.asarray(clean[:, 1:], jnp.float32),
+                           jnp.asarray(fused.lowpass_taps(p.median_fs)))
+        return np.asarray(got, ref.dtype)[: ref.shape[0]], origin_s
+
+    return features
+
+
+def load(path: Path):
+    predictor = load_predictor(path)
+    arm = path / "arm.json"
+    if arm.exists() and json.loads(arm.read_text()).get("lowpass"):
+        predictor.ensemble.features = lowpass_features(predictor.ensemble.features)
+    return predictor
+
+
 def main(root: Path, out: Path, bundles: dict[str, Path]) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    predictors = {name: load_predictor(path) for name, path in bundles.items()}
+    predictors = {name: load(path) for name, path in bundles.items()}
     rows = []
     for cohort, stem in nights(root):
         accel = load_accel(root, cohort, stem)

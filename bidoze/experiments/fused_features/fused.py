@@ -13,6 +13,12 @@ Here the work is split by what it depends on:
   padded to one width so a recording is one static shape.
 - ``frames(plan, xyz)`` (JAX, jittable, differentiable): ``|a|``, the jerk, per-window detrend,
   Hann taper, type-1 NUFFT (senpy's ``nufft1``), density scaling, log-PSD and the bin crop.
+  ``frames_from_signal`` takes ``channels(xyz)`` instead, so a caller can compute it once.
+
+With ``taps`` from ``lowpass_taps``, each axis is low-passed at ``LOWPASS_HZ`` before the jerk
+(``|a|`` is unchanged). The jerk's norm rectifies, so without it vibration above 6 Hz reaches the
+0.1–6 Hz band as sum and difference frequencies folded at the sample rate. This is not the
+release's input; a model trained with it must be scored with it.
 
 senpy's jerk with ``use_diff=True`` is ``‖a[i] − a[i−1]‖`` (not divided by the time step), with
 0 for the first sample, on the same timestamps as the samples. This was checked against
@@ -30,6 +36,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.signal import firwin
 from senpy import _packing
 from senpy._grid import DEFAULT_MIN_SAMPLES
 from senpy.jax_backend import nufft1
@@ -41,6 +48,9 @@ LOG_EPS = float(np.finfo(np.float64).eps)  # pisces-lite's log-PSD floor
 NUFFT_EPS = 1e-6
 N_MODES = 128
 PADDING_VALUE = -1.0  # pisces-lite's SPECTROGRAM_PADDING_VALUE: a frame with no window behind it
+LOWPASS_HZ = 6.0
+LOWPASS_S = 2.0  # FIR length; a Hamming window this long has a transition about 1.6 Hz wide
+MAX_TAPS = 201  # LOWPASS_S at up to 100 Hz; faster recordings get a shorter filter
 
 
 @dataclass(frozen=True)
@@ -76,9 +86,25 @@ def safe_norm(v: jax.Array) -> jax.Array:
     return jnp.where(s > 0, jnp.sqrt(jnp.where(s > 0, s, 1.0)), 0.0)
 
 
-def channels(xyz: jax.Array) -> jax.Array:
-    """``[N, 3]`` samples to ``[N, 2]``: ``|a|`` and senpy's jerk."""
-    jerk = jnp.concatenate([jnp.zeros(1, xyz.dtype), safe_norm(xyz[1:] - xyz[:-1])])
+def lowpass_taps(fs: float) -> np.ndarray:
+    """``[MAX_TAPS]`` zero-phase FIR taps, centred; a unit impulse when ``fs`` is too low to filter at ``LOWPASS_HZ``."""
+    out = np.zeros(MAX_TAPS, np.float32)
+    centre = MAX_TAPS // 2
+    if fs / 2 <= 1.1 * LOWPASS_HZ:
+        out[centre] = 1.0
+        return out
+    n = min(2 * int(round(fs * LOWPASS_S / 2)) + 1, MAX_TAPS)
+    out[centre - n // 2:centre + n // 2 + 1] = firwin(n, LOWPASS_HZ, fs=fs)
+    return out
+
+
+def channels(xyz: jax.Array, taps: jax.Array | None = None) -> jax.Array:
+    """``[N, 3]`` samples to ``[N, 2]``: ``|a|`` and senpy's jerk, of the low-passed axes if ``taps``."""
+    smooth = xyz
+    if taps is not None:
+        smooth = jax.vmap(lambda c: jnp.convolve(c, taps, mode="same", precision=jax.lax.Precision.HIGHEST),
+                          in_axes=1, out_axes=1)(xyz)
+    jerk = jnp.concatenate([jnp.zeros(1, xyz.dtype), safe_norm(smooth[1:] - smooth[:-1])])
     return jnp.stack([safe_norm(xyz), jerk], axis=1)
 
 
@@ -93,9 +119,15 @@ BINS = _bins()
 
 @jax.jit
 def frames(index: jax.Array, points: jax.Array, valid: jax.Array, row_valid: jax.Array, median_fs: jax.Array,
-           xyz: jax.Array) -> jax.Array:
+           xyz: jax.Array, taps: jax.Array | None = None) -> jax.Array:
     """``[W, bins, 2]`` log-PSD frames of ``|a|`` and jerk; windows without enough samples hold ``PADDING_VALUE``."""
-    signal = jnp.concatenate([channels(xyz), jnp.zeros((1, 2), xyz.dtype)])  # trailing zero for padding
+    return frames_from_signal(index, points, valid, row_valid, median_fs, channels(xyz, taps))
+
+
+def frames_from_signal(index: jax.Array, points: jax.Array, valid: jax.Array, row_valid: jax.Array,
+                       median_fs: jax.Array, signal: jax.Array) -> jax.Array:
+    """``frames`` from ``channels(xyz)``."""
+    signal = jnp.concatenate([signal, jnp.zeros((1, 2), signal.dtype)])  # trailing zero for padding
     lanes = jnp.moveaxis(signal[index], -1, 1)  # [W, 2, L]
     v = valid.astype(lanes.dtype)
     count = jnp.maximum(v.sum(axis=1), 1.0)

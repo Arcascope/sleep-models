@@ -8,8 +8,11 @@ Host, once per night (``load_night``, from the timestamps only): senpy's window 
 window's first sample and sample count, and each sample's time as a 2-s grid cell plus a
 fraction, which keeps the NUFFT coordinates exact in float32. Device, every step:
 
-1. noise: ``jax_generator.sample_spec`` and ``render`` on the raw ``x, y, z``;
-2. frames: the window lanes from the grid, then ``fused.frames`` (``|a|``, jerk, NUFFT, log-PSD);
+1. noise on the raw ``x, y, z``: ``"boat"``, a ``jax_generator`` draw; ``"floor"``, white Gaussian
+   noise per axis and sample at a per-night level drawn from ``FLOOR_MG`` (the Galaxy Watch floor,
+   §6 and §9 of the Oct 9 log, is about 3.7 mg); ``"none"``;
+2. frames: ``fused.channels`` (with the jerk low-pass if ``lowpass``), the window lanes from the
+   grid, then ``fused.frames_from_signal`` (NUFFT, log-PSD);
 3. pooling: ``arcasleep.data.batching``'s pooling to one row per epoch with the gap row, empty
    epochs filled with the night's median spectrum, padded to ``EPOCHS`` epochs;
 4. the class-balanced cross-entropy and AdamW update of ``fit_balanced``.
@@ -40,6 +43,7 @@ FRAMES_PER_EPOCH = int(30.0 / fused.STEP_S)
 # Frames are computed this many epochs at a time, and nights one at a time, to bound the
 # NUFFT's spreading memory; a stack's data epochs are a multiple of it.
 CHUNK_EPOCHS = 128
+FLOOR_MG = (2.5, 5.0)
 
 
 @dataclass
@@ -55,6 +59,7 @@ class Night:
     count: np.ndarray  # [frames] int32, 0 for a window without enough samples or labels
     fs: float
     y: np.ndarray  # [epochs] int32, 4-class labels, GAP_LABEL where there is no data
+    taps: np.ndarray  # [fused.MAX_TAPS] float32, the jerk low-pass at this night's rate
 
 
 def load_night(data_set, subject_id: str) -> Night:
@@ -78,7 +83,7 @@ def load_night(data_set, subject_id: str) -> Night:
                  t=rec.t.astype(np.float32), cell=cell.astype(np.int32),
                  frac=(rec.t - fused.STEP_S * cell).astype(np.float32),
                  first=grid.first[:n_frames].astype(np.int32), count=count.astype(np.int32),
-                 fs=float(rec.median_fs), y=y)
+                 fs=float(rec.median_fs), y=y, taps=fused.lowpass_taps(float(rec.median_fs)))
 
 
 def stack(nights: list[Night], n_total: int | None = None, data_epochs: int | None = None,
@@ -103,6 +108,7 @@ def stack(nights: list[Night], n_total: int | None = None, data_epochs: int | No
         "n": np.array([len(n.t) for n in nights], np.int32),
         "fs": np.array([n.fs for n in nights], np.float32),
         "y": np.stack([pad(n.y, EPOCHS, GAP_LABEL) for n in nights]),
+        "taps": np.stack([n.taps for n in nights]),
     }
     return {"arrays": jax.device_put(arrays), "width": width, "names": [n.name for n in nights]}
 
@@ -137,13 +143,21 @@ def pool(frames: jax.Array) -> jax.Array:
     return jnp.concatenate([rows, jnp.broadcast_to(padding, (EPOCHS - n_epochs, *rows.shape[1:]))])
 
 
-def model_input(night: dict, key: jax.Array, width: int, noise: bool) -> jax.Array:
-    """One night's ``[EPOCHS, bins + 1, 2]`` model input, with a fresh noise draw if ``noise``."""
+def model_input(night: dict, key: jax.Array, width: int, noise: bool | str, lowpass: bool = False) -> jax.Array:
+    """One night's ``[EPOCHS, bins + 1, 2]`` model input with a fresh draw of ``noise`` (``True`` is ``"boat"``)."""
+    kind = {True: "boat", False: "none"}.get(noise, noise)
     xyz = night["xyz"]
-    if noise:
-        k1, k2 = jax.random.split(key)
+    k1, k2 = jax.random.split(key)
+    if kind == "boat":
         spec = jax_generator.sample_spec(k1, night["fs"] / 2)
         xyz = jax_generator.render(k2, spec, night["t"], xyz, night["n"], night["fs"])
+    elif kind == "floor":
+        sigma = jax.random.uniform(k1, minval=FLOOR_MG[0], maxval=FLOOR_MG[1]) / 1000.0
+        real = (jnp.arange(xyz.shape[0]) < night["n"])[:, None]
+        xyz = xyz + jnp.where(real, sigma * jax.random.normal(k2, xyz.shape, xyz.dtype), 0.0)
+    elif kind != "none":
+        raise ValueError(f"unknown noise {noise!r}")
+    signal = fused.channels(xyz, night["taps"] if lowpass else None)
     chunk = CHUNK_EPOCHS * FRAMES_PER_EPOCH
     w0 = jnp.arange(night["first"].shape[0] // chunk, dtype=jnp.int32) * chunk
 
@@ -151,7 +165,7 @@ def model_input(night: dict, key: jax.Array, width: int, noise: bool) -> jax.Arr
         first = jax.lax.dynamic_slice(night["first"], (start,), (chunk,))
         count = jax.lax.dynamic_slice(night["count"], (start,), (chunk,))
         index, points, valid = window_lanes(first, count, night["cell"], night["frac"], width, start)
-        return fused.frames(index, points, valid, count > 0, night["fs"], xyz)
+        return fused.frames_from_signal(index, points, valid, count > 0, night["fs"], signal)
 
     frames = jax.lax.map(chunk_frames, w0)
     return pool(frames.reshape(-1, *frames.shape[2:]))
