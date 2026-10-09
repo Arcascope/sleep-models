@@ -27,8 +27,8 @@ from arcasleep.artifacts.publish import ASSETS_DIR, BUNDLE_FILES, build_release_
 from arcasleep.data.cache import discover_cached_subjects
 from arcasleep_bidoze.adult import adult_stage_divisor, build_adult_bundle, stage_counts
 
-CACHE_NAME = "12Hz_log_PSD_aligned"
 BIDOZE = Path(__file__).resolve().parents[2]
+CACHE_NAME = json.loads((BIDOZE / "config/inputs.json").read_text())["cache_prefix"]
 
 
 def night_counts(paths: list[Path]) -> np.ndarray:

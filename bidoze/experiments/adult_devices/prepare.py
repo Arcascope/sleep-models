@@ -30,7 +30,7 @@ Arms (revised Weaver part of the training set):
                  learning rate.
 
 Writes, under ``<run>/setup/``:
-- cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
+- cache/<arm>/<cache prefix>/         symlinks only: the arm's Weaver recordings as dataset
                                       ``weaver<Arm>`` (``weaver`` for earlier), SleepAccel by
                                       fold, SleepAccel-Clinical
 - cv/<arm>/cv_fold<k>.json            train on weaver<Arm> + the other 4 SleepAccel folds
@@ -46,8 +46,9 @@ Writes, under ``<run>/setup/``:
                                       also adds init_weights
 
 Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root> [pediatric bundle]
-(cache roots are the directories that hold ``12Hz_log_PSD_aligned/``; the adult root holds
-SleepAccel, SleepAccel-Clinical and the earlier ``weaver`` cache).
+(cache roots are the directories that hold ``<cache prefix>/``, the ``cache_prefix`` of
+config/inputs.json; the adult root holds SleepAccel, SleepAccel-Clinical and the earlier
+``weaver`` cache).
 """
 from __future__ import annotations
 
@@ -63,7 +64,7 @@ from arcasleep.data.splits import read_plan
 
 HERE = Path(__file__).resolve().parent
 BIDOZE = HERE.parents[1]
-CACHE_NAME = "12Hz_log_PSD_aligned"
+CACHE_NAME = json.loads((BIDOZE / "config/inputs.json").read_text())["cache_prefix"]
 MATCHED_CHILDREN = 119
 SEEDS = 3
 DEVICES = ["actigraph", "apple", "fitbit", "garmin"]

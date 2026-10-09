@@ -53,7 +53,7 @@ from pisces_lite.metrics.logger import MetricsLogger
 
 HERE = Path(__file__).resolve().parent
 BIDOZE = HERE.parents[1]
-CACHE_NAME = "12Hz_log_PSD_aligned"
+CACHE_NAME = json.loads((BIDOZE / "config/inputs.json").read_text())["cache_prefix"]
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 SEEDS = [0, 1, 2]
 STALLED_KAPPA = 0.3
