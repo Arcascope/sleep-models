@@ -8,7 +8,8 @@
   - the magnitude and jerk spectrograms in 30-s windows at a 2-s step (0.033 Hz bins), from the
     raw samples, which resolve narrow and drifting lines; a transient shows about 30 s wide;
   - the raw ENMO and jerk at full rate over ``seconds`` around ``at`` (shaded above);
-  - the PSD of the single 30-s window centred on ``at``.
+  - beside each spectrogram, the PSD (dB) of its single window centred on ``at``, on the same
+    frequency axis.
 
 No panel combines spectra across time windows.
 
@@ -66,6 +67,24 @@ def show(ax, t_h: np.ndarray, f: np.ndarray, s: np.ndarray, label: str) -> None:
     ax.set_ylabel(f"{label}\nHz")
 
 
+def side_psd(fig, cell, spec_ax, f: np.ndarray, power: np.ndarray, colour: str, title: str) -> None:
+    """A PSD beside its spectrogram, frequency on the shared vertical axis, power in dB.
+
+    The power axis starts at the 5th percentile, so the nulls of a single periodogram do not
+    stretch it; peaks are what the panel is for.
+    """
+    ax = fig.add_subplot(cell, sharey=spec_ax)
+    db = 10 * np.log10(power + 1e-20)
+    ax.fill_betweenx(f, np.nanpercentile(db, 5), db, color=colour, alpha=0.35, lw=0)
+    ax.plot(db, f, color=colour, lw=0.6)
+    ax.set_xlim(np.nanpercentile(db, 5), np.nanmax(db) + 2)
+    ax.set_xlabel("dB")
+    ax.set_title(title, fontsize=8)
+    ax.tick_params(labelleft=False)
+    if f[-1] > MODEL_FMAX:
+        ax.axhline(MODEL_FMAX, color="0.5", ls="--", lw=0.6)
+
+
 def hypnogram(ax, d: dict) -> None:
     keep = d["psg"] >= 0
     t = d["psg_t"][keep] / 3600
@@ -121,7 +140,9 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
     fm = d["f"] <= top
     show(ax, d["mag_t"][m] / 60, d["f"][fm], d["mag"][m][:, fm], f"|a|, {WINDOW_S:g}-s\nwindows (model)")
     ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
-    hires = {}
+    row = int(np.nanargmin(np.abs(d["mag_t"] - at)))
+    side_psd(fig, grid[0, 1], ax, d["f"][fm], 10.0 ** d["mag"][row, fm].astype(float), "tab:blue",
+             f"|a|, the {WINDOW_S:g}-s window at the zoom")
     for row, (sig, tsig, label) in enumerate(((mag_s, ts, "|a|"), (np.asarray(js.jerk), np.asarray(js.timestamps_s), "jerk")), 1):
         sp = senpy.compute_nufft_spectrogram(tsig, sig, hires_s, hires_s - step_s, kind="psd",
                                              empty_windows="keep", origin_s=0.0)
@@ -129,11 +150,19 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
         keep_t = (tt >= lo) & (tt <= hi)
         keep_f = sp.frequencies <= top
         psd = running_mean(sp.Sxx, int(round(AVERAGED["smooth_s"] / step_s))) if averaged else sp.Sxx
-        hires[label] = (tt, sp.frequencies, psd)
         ax = fig.add_subplot(grid[row, 0])
         show(ax, tt[keep_t] / 60, sp.frequencies[keep_f], np.log10(psd[keep_t][:, keep_f] + 1e-12),
              f"{label}, {hires_s:g}-s\nwindows" + (", 30-s\nrunning mean" if averaged else ""))
         ax.axvspan(zlo / 60, zhi / 60, color="c", alpha=0.25)
+        colour = "tab:blue" if label == "|a|" else "tab:orange"
+        if averaged:
+            near = np.abs(tt - at) <= AVERAGED["psd_span_s"] / 2
+            side_psd(fig, grid[row, 1], ax, sp.frequencies[keep_f], np.nanmedian(psd[near], axis=0)[keep_f], colour,
+                     f"{label}, median over 5 min\n(time-averaged)")
+        else:
+            near = int(np.nanargmin(np.abs(tt - at)))
+            side_psd(fig, grid[row, 1], ax, sp.frequencies[keep_f], psd[near, keep_f], colour,
+                     f"{label}, the {hires_s:g}-s window at the zoom")
     ax.set_xlabel("minutes from recording start")
     keep = (d["psg_t"] >= lo - 30) & (d["psg_t"] <= hi)
     stages = ", ".join(f"{STAGES.get(int(v), '?')}" for v in d["psg"][keep] if v >= 0)
@@ -152,21 +181,7 @@ def zoom(root: Path, out: Path, key: str, at_h: float, minutes: float, seconds: 
     ax.set_ylabel("jerk")
     ax.set_xlabel(f"seconds from {zlo / 3600:.4f} h")
 
-    ax = fig.add_subplot(grid[1:3, 1])
-    for label, (tt, f, psd) in hires.items():
-        keep_f = f <= top
-        if averaged:
-            near = np.abs(tt - at) <= AVERAGED["psd_span_s"] / 2
-            ax.semilogy(f[keep_f], np.nanmedian(psd[near], axis=0)[keep_f], lw=0.7, label=label)
-        else:
-            row = int(np.nanargmin(np.abs(tt - at)))
-            ax.semilogy(f[keep_f], psd[row, keep_f], lw=0.7, label=label)
-    ax.axvline(MODEL_FMAX, color="0.5", ls="--", lw=0.6)
-    ax.set_xlabel("Hz")
-    ax.set_title(f"PSD, {hires_s:g}-s windows, median\nover 5 min (time-averaged)" if averaged
-                 else f"PSD of the one {hires_s:g}-s window\ncentred on the zoom", fontsize=9)
-    ax.legend(fontsize=8)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.985))
     folder = out / ("zoo-time-averaged" if averaged else "zoo")
     folder.mkdir(exist_ok=True)
     fig.savefig(folder / f"{name}.png", dpi=130)
