@@ -20,8 +20,11 @@ averaged across frames.
 Each night is cached in ``<out>/nights/``. Writes ``<out>/epochs.csv.gz`` (one row per night and PSG epoch) and ``<out>/quantization.csv``
 (the smallest step between distinct values of each axis).
 
+A night written ``cohort/stem@k`` keeps every k-th sample before the spectrum (no anti-alias
+filter), to compare one device at a lower sample rate. At 16.7 Hz and below, ``high_db`` is NaN.
+
 Usage: python devices.py <data root> <out> <night list> [workers]
-  <night list>: a text file of ``cohort/stem`` lines.
+  <night list>: a text file of ``cohort/stem`` or ``cohort/stem@k`` lines.
 """
 from __future__ import annotations
 
@@ -55,15 +58,21 @@ def trace_db(t: np.ndarray, axes: np.ndarray) -> tuple[np.ndarray, np.ndarray, n
 def night(job: tuple[Path, str, Path]) -> tuple[pd.DataFrame, dict]:
     root, name, out = job
     cohort, stem = name.split("/")
-    cache = out / "nights" / f"{cohort}_{stem}"
+    stem, _, k = stem.partition("@")
+    step = int(k or 1)
+    label = f"{stem}@{step}" if step > 1 else stem
+    cache = out / "nights" / f"{cohort}_{label}"
     if cache.with_suffix(".csv.gz").exists():
         return pd.read_csv(cache.with_suffix(".csv.gz")), pd.read_json(cache.with_suffix(".json"), typ="series").to_dict()
-    a = load_accel(root, cohort, stem)
+    a = load_accel(root, cohort, stem)[::step]
     t = a[:, 0]
     times, f, db = trace_db(t, a[:, 1:].T)
     frame = {}
     for key, (lo, hi, how) in BANDS.items():
         band = (f >= lo) & (f <= hi)
+        if not band.any():
+            frame[key] = np.full(db.shape[0], np.nan)
+            continue
         frame[key] = db[:, band].max(axis=1) if how == "max" else np.median(db[:, band], axis=1)
     psg = pd.read_csv(root / cohort / "cleaned_psg" / f"{stem}.csv")
     rows = []
@@ -71,13 +80,13 @@ def night(job: tuple[Path, str, Path]) -> tuple[pd.DataFrame, dict]:
         inside = (times >= e) & (times < e + 30)
         if stage not in PSG_STAGES or inside.sum() < 14 or not np.isfinite(frame["level_db"][inside]).all():
             continue
-        row = {"cohort": cohort, "night": stem, "epoch_s": e, "psg": PSG_STAGES[stage]}
+        row = {"cohort": cohort, "night": label, "epoch_s": e, "psg": PSG_STAGES[stage]}
         for key, v in frame.items():
             row[f"{key}_max"] = float(v[inside].max())
             row[f"{key}_min"] = float(v[inside].min())
         rows.append(row)
     steps = {f"q_{c}": float(np.min(np.diff(np.unique(a[:200_000, k])))) for k, c in enumerate("xyz", start=1)}
-    info = {"cohort": cohort, "night": stem, "fs": float(1 / np.median(np.diff(t)))} | steps
+    info = {"cohort": cohort, "night": label, "fs": float(1 / np.median(np.diff(t)))} | steps
     cache.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(cache.with_suffix(".csv.gz"), index=False, float_format="%.3f")
     pd.Series(info).to_json(cache.with_suffix(".json"))
