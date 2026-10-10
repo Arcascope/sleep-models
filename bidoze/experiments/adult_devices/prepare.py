@@ -166,8 +166,9 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     setup = run_dir / "setup"
     weaver = {s.subject_id: s.path
               for s in discover_cached_subjects(["weaver_revised"], weaver_root / CACHE_NAME)["weaver_revised"]}
-    adult = discover_cached_subjects(["SleepAccel", "SleepAccel-Clinical", "weaver", "bidsleep"],
-                                     adult_root / CACHE_NAME)
+    # BIDsleep is read only by the finetune-bidsleep arm, which needs the pediatric bundle.
+    adult_sets = ["SleepAccel", "SleepAccel-Clinical", "weaver"] + (["bidsleep"] if pediatric else [])
+    adult = discover_cached_subjects(adult_sets, adult_root / CACHE_NAME)
     sleepaccel = {s.subject_id: s.path for s in adult["SleepAccel"]}
     clinical = adult["SleepAccel-Clinical"]
     plan = read_plan(BIDOZE / "config/splits/sleepaccel_5fold.json")
@@ -183,7 +184,7 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
         seen = {participant_id(s) for s in chosen["matched"]}
         chosen[FINETUNE] = sorted(s for s in weaver if participant_id(s) not in seen)
         chosen[FINETUNE_BIDSLEEP] = one_night_each(sorted(s.subject_id for s in adult["bidsleep"]))
-    bidsleep = {s.subject_id: s.path for s in adult["bidsleep"]}
+    bidsleep = {s.subject_id: s.path for s in adult.get("bidsleep", [])}
     setup.mkdir(parents=True, exist_ok=True)
     (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
 
