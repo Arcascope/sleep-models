@@ -2,11 +2,11 @@
 
 Models are named ``<cell>-seed<s>`` (and ``release-seed<s>``). Per cohort and metric:
 - ``cells.csv``: each cell's mean over nights, per seed and averaged over seeds;
-- ``paired.csv``: each cell against ``base`` (and ``release`` against ``base``): the mean
+- ``twobytwo_paired.csv``: each cell against the reference cell (default ``base``): the mean
   participant-level difference, each participant's metric first averaged over nights and seeds,
   and the Wilcoxon signed-rank p over participants.
 
-Usage: python twobytwo_summary.py <scores dir>
+Usage: python twobytwo_summary.py <scores dir> [<reference cell>]
 """
 from __future__ import annotations
 
@@ -17,10 +17,9 @@ import pandas as pd
 from scipy import stats
 
 METRICS = ["sleep_sensitivity", "wake_specificity", "kappa_sleep_wake", "kappa_4stage"]
-REFERENCE = "base"
 
 
-def main(out: Path) -> None:
+def main(out: Path, reference: str = "base") -> None:
     table = pd.read_csv(out / "nights.csv")
     table[["cell", "seed"]] = table.model.str.rsplit("-seed", n=1, expand=True)
     per_seed = table.groupby(["cohort", "cell", "seed"])[METRICS].mean()
@@ -32,11 +31,11 @@ def main(out: Path) -> None:
         wide = group.droplevel("cohort").unstack("cell")
         for metric in METRICS:
             for cell in wide[metric].columns:
-                if cell == REFERENCE:
+                if cell == reference:
                     continue
-                d = (wide[(metric, cell)] - wide[(metric, REFERENCE)]).dropna()
+                d = (wide[(metric, cell)] - wide[(metric, reference)]).dropna()
                 p = stats.wilcoxon(d).pvalue if (d != 0).any() else 1.0
-                rows.append({"cohort": cohort, "metric": metric, "cell": cell, "against": REFERENCE,
+                rows.append({"cohort": cohort, "metric": metric, "cell": cell, "against": reference,
                              "participants": d.size, "mean_difference": d.mean(), "wilcoxon_p": p})
     paired = pd.DataFrame(rows)
     paired.to_csv(out / "twobytwo_paired.csv", index=False, float_format="%.4f")
@@ -45,4 +44,4 @@ def main(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]), *sys.argv[2:3])
