@@ -61,7 +61,9 @@ def load(path: Path):
     predictor = load_predictor(path)
     arm = path / "arm.json"
     if arm.exists() and json.loads(arm.read_text()).get("lowpass"):
-        predictor.ensemble.features = lowpass_features(predictor.ensemble.features)
+        # A composite bundle's frames come from its ensemble; a single bundle's from itself.
+        target = getattr(predictor, "ensemble", predictor)
+        target.features = lowpass_features(target.features)
     return predictor
 
 
