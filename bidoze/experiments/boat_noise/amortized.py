@@ -26,7 +26,9 @@ Nights, the fit/eval split and the recipe's hyperparameters are the adult releas
 
 Writes to ``<out>``: ``reference.csv`` (the seed bundle on the eval nights), ``epochs.csv`` (per epoch), ``refreshes.csv`` (per refresh) and
 ``bundle/`` (the best weights, with the seed bundle's ``config.json`` and
-``preprocessing.json``, and ``arm.json``: the noise, the low-pass flag and the seed).
+``preprocessing.json``, and ``arm.json``: the noise, the low-pass flag, the seed and the best
+epoch). The bundle is rewritten at each new best epoch, so a run stopped before it ends keeps the
+best weights so far.
 
 Usage: python amortized.py <data root> <release cache dir> <seed bundle> <out> [options]
 """
@@ -230,6 +232,21 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
     pd.DataFrame([reference_row]).to_csv(out / "reference.csv", index=False, float_format="%.6g")
     print(f"seed bundle on the eval nights: {reference_row}", flush=True)
 
+    bundle = out / "bundle"
+    bundle.mkdir(exist_ok=True)
+    for name in ("config.json", "preprocessing.json"):
+        shutil.copy(seed_bundle / name, bundle / name)
+
+    def save_bundle(params, epoch: int) -> None:
+        """Write ``params`` as the bundle's weights; the rename keeps a whole file if the run is stopped mid-write."""
+        model.params = params
+        model.model = {"params": params}
+        model.save_weights_safetensors(bundle / "model.safetensors.partial")
+        os.replace(bundle / "model.safetensors.partial", bundle / "model.safetensors")
+        (bundle / "arm.json").write_text(json.dumps({"noise": recipe.noise, "lowpass": recipe.lowpass,
+                                                      "consistency": recipe.consistency, "seed": recipe.seed,
+                                                      "epoch": epoch}))
+
     rng = np.random.default_rng(recipe.seed)
     steps_per_epoch = math.ceil(len(fit_nights) / recipe.batch_size)
     plateau = Plateau(recipe.patience, steps_per_epoch)
@@ -258,6 +275,7 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
         decision = plateau.update(selection)
         if np.isfinite(selection) and selection > best:
             best, best_params, best_epoch = selection, params, epoch
+            save_bundle(best_params, best_epoch)
         cached_dev, cached_flip = deviation(params, clean, noisy, y_fit)
         eval_dev, eval_flip = deviation(params, eval_clean, eval_noisy, y_eval)
 
@@ -300,15 +318,8 @@ def main(root: Path, cache: Path, seed_bundle: Path, out: Path, recipe: Recipe, 
             lr /= recipe.lr_drop_factor
             opt_state.hyperparams["learning_rate"] = jnp.asarray(lr, dtype=jnp.float32)
 
-    bundle = out / "bundle"
-    bundle.mkdir(exist_ok=True)
-    for name in ("config.json", "preprocessing.json"):
-        shutil.copy(seed_bundle / name, bundle / name)
-    (bundle / "arm.json").write_text(json.dumps({"noise": recipe.noise, "lowpass": recipe.lowpass,
-                                                  "consistency": recipe.consistency, "seed": recipe.seed}))
-    model.params = best_params
-    model.model = {"params": best_params}
-    model.save_weights_safetensors(bundle / "model.safetensors")
+    if best_params is None:
+        raise RuntimeError(f"no epoch had a finite eval kappa; no bundle written to {bundle}")
     print(f"best mean eval kappa {best:.4f} at epoch {best_epoch}; weights in {bundle}", flush=True)
 
 
