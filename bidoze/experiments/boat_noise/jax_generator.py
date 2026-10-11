@@ -26,6 +26,7 @@ MAX_LINES = int(RANGES["line_count"][1])
 MAX_HARMONICS = int(0.95 * 25.0 / RANGES["comb_f0"][0]) + 1
 MAX_SPELLS = 4096  # on/off spells per component and night; the shortest mean spell is 60 s
 GATE_GRID_S = 1.0
+MAX_EPOCHS = 3072  # fused_train.EPOCHS, the longest night the gate grid covers
 SLOW_PATH_TERMS = 8
 
 
@@ -134,7 +135,7 @@ def _gate(key, t, valid, mean_on, mean_off):
     parity = (jnp.arange(MAX_SPELLS) % 2 == 0) == start_on  # True: this spell is on
     lengths = jax.random.exponential(k2, (MAX_SPELLS,)) * jnp.where(parity, mean_on, mean_off)
     ends = jnp.cumsum(lengths)
-    grid = jnp.arange(int(np.ceil(3000 * 30.0 / GATE_GRID_S)) + 2) * GATE_GRID_S
+    grid = jnp.arange(int(np.ceil(MAX_EPOCHS * 30.0 / GATE_GRID_S)) + 2) * GATE_GRID_S
     level = parity[jnp.minimum(jnp.searchsorted(ends, grid, side="right"), MAX_SPELLS - 1)].astype(t.dtype)
     width = int(RAMP_S / GATE_GRID_S)
     c = jnp.concatenate([jnp.zeros(1), jnp.cumsum(jnp.pad(level, (width // 2, width - 1 - width // 2), mode="edge"))])

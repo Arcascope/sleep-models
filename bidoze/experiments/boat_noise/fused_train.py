@@ -38,11 +38,12 @@ from arcasleep.data.constants import GAP_LABEL
 from arcasleep.data.prepare import prepare_subject
 from arcasleep.training.balanced import balanced_cross_entropy
 
-EPOCHS = 3000  # the balanced recipe's x_length and y_length
 FRAMES_PER_EPOCH = int(30.0 / fused.STEP_S)
 # Frames are computed this many epochs at a time, and nights one at a time, to bound the
 # NUFFT's spreading memory; a stack's data epochs are a multiple of it.
 CHUNK_EPOCHS = 128
+# The model input's length: whole chunks, so a night of up to EPOCHS epochs never rounds past it.
+EPOCHS = 24 * CHUNK_EPOCHS
 FLOOR_MG = (2.5, 5.0)
 
 
