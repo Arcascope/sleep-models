@@ -43,6 +43,24 @@ def test_plan_is_reproducible_from_the_same_seed_and_cohort() -> None:
     assert plan_splits(IDS, cohort="weaver", n_splits=5, seed=1).folds != a.folds
 
 
+def test_grouped_plan_keeps_each_participant_in_one_fold() -> None:
+    ids = [f"p{p:02d}_{device}_n{night}" for p in range(30) for device in ("apple", "fitbit")
+           for night in (1, 2)[: 1 + p % 2]]
+    plan = plan_splits(ids, cohort="weaver", n_splits=5, seed=0, group_separator="_")
+    assert plan.subjects() == sorted(ids)
+    fold_of = {sid: name for name, sids in plan.folds.items() for sid in sids}
+    for p in range(30):
+        assert len({fold_of[s] for s in ids if s.startswith(f"p{p:02d}_")}) == 1
+    sizes = [len(plan.folds[n]) for n in plan.fold_names]
+    assert max(sizes) - min(sizes) <= 4  # the largest participant has 4 subjects
+
+
+def test_ungrouped_plan_is_unchanged_by_the_grouping_option() -> None:
+    assert plan_splits(IDS, cohort="weaver", n_splits=5, seed=0).folds == plan_splits(
+        IDS, cohort="weaver", n_splits=5, seed=0, group_separator=None
+    ).folds
+
+
 def test_plan_rejects_a_subject_in_two_folds() -> None:
     bad = SplitPlan(
         cohort="weaver",

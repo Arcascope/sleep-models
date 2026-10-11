@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "cohort": "SleepAccel",
+  "n_splits": 5,
+  "seed": 0,
+  "provenance": {
+    "cache_dir": "feature_cache/12Hz_log_PSD_aligned",
+    "source": "the fold membership of 2026-10-06 \u00a72 (bidoze-weaver-mix-0)",
+    "data_digest": null
+  },
+  "folds": {
+    "BiDozeSleepAccelFold0": [
+      "1449548",
+      "1818471",
+      "4314139",
+      "4426783",
+      "8000685",
+      "9961348"
+    ],
+    "BiDozeSleepAccelFold1": [
+      "1455390",
+      "2638030",
+      "6220552",
+      "844359",
+      "8686948",
+      "9618981"
+    ],
+    "BiDozeSleepAccelFold2": [
+      "1066528",
+      "3997827",
+      "46343",
+      "5132496",
+      "781756",
+      "8173033"
+    ],
+    "BiDozeSleepAccelFold3": [
+      "2598705",
+      "3509524",
+      "5498603",
+      "759667",
+      "8530312"
+    ],
+    "BiDozeSleepAccelFold4": [
+      "1360686",
+      "4018081",
+      "5797046",
+      "8692923",
+      "9106476"
+    ]
+  }
+}

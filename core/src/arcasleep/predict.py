@@ -360,8 +360,6 @@ class Predictor:
             recording_input,
             split_gap_row,
         )
-        from arcasleep.data.prepare import clean_accelerometer_rows
-        from arcasleep.ggir import evaluate as ggir_evaluate
 
         frames, origin_s = self.features(accel, origin)
         n_epochs = frames.shape[0] // self.frames_per_epoch
@@ -382,47 +380,88 @@ class Predictor:
         _, missing = split_gap_row(pooled)
         epoch_start_s = origin_s + EPOCH_SECONDS * np.arange(n_epochs)
         is_gap = missing >= 1.0
-
-        stage = None
-        is_nap = None
-        ggir = None
-        nap_minutes: float | None = None
-        if ggir_sleep_filter:
-            try:
-                # The same rows the model scored: cleaned, and none before the origin.
-                clean = clean_accelerometer_rows(np.asarray(accel, dtype=np.float64))
-                clean = clean[clean[:, 0] >= origin_s]
-                ggir = ggir_evaluate(clean, epoch_start_s, n_epochs)
-                stage, is_nap = _apply_ggir_filter(
-                    probabilities, self.stage_names, is_gap, ggir
-                )
-                nap_minutes = float(np.count_nonzero(is_nap)) * EPOCH_SECONDS / 60.0
-            except Exception as exc:
-                if ggir_error_fails:
-                    raise
-                warnings.warn(
-                    f"GGIR sleep filter failed ({type(exc).__name__}: {exc}); "
-                    "returning the raw model stages",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                stage = is_nap = ggir = nap_minutes = None
-
-        stage_raw = _label_epochs(probabilities, self.stage_names, is_gap)
-        summary = _summarize(stage if stage is not None else stage_raw, is_gap, nap_minutes, subject_id)
-        return Prediction(
-            epoch_start_s=epoch_start_s,
-            probabilities=probabilities,
-            stage_names=self.stage_names,
-            is_gap=is_gap,
+        return finish_prediction(
+            accel,
+            origin_s,
+            epoch_start_s,
+            probabilities,
+            self.stage_names,
+            is_gap,
+            _label_epochs(probabilities, self.stage_names, is_gap),
             gap_head=gap_head if return_gap_head else None,
-            stage=stage,
-            stage_raw=stage_raw,
-            is_nap=is_nap,
-            summary=summary,
-            is_sib=None if ggir is None else ggir.is_sib,
-            is_spt=None if ggir is None else ggir.is_spt,
+            ggir_sleep_filter=ggir_sleep_filter,
+            ggir_error_fails=ggir_error_fails,
+            subject_id=subject_id,
         )
+
+
+def finish_prediction(
+    accel: np.ndarray,
+    origin_s: float,
+    epoch_start_s: np.ndarray,
+    probabilities: np.ndarray,
+    stage_names: tuple[str, ...],
+    is_gap: np.ndarray,
+    stage_raw: np.ndarray,
+    *,
+    gap_head: np.ndarray | None = None,
+    ggir_sleep_filter: bool = True,
+    ggir_error_fails: bool = False,
+    subject_id: str | None = None,
+) -> Prediction:
+    """A :class:`Prediction` from per-epoch model output and its raw stage labels.
+
+    Applies the GGIR sleep filter (see :func:`predict`) to ``stage_raw`` and
+    summarizes the result.
+    """
+    from arcasleep.data.prepare import clean_accelerometer_rows
+    from arcasleep.ggir import evaluate as ggir_evaluate
+
+    stage = None
+    is_nap = None
+    ggir = None
+    nap_minutes: float | None = None
+    if ggir_sleep_filter:
+        try:
+            # The same rows the model scored: cleaned, and none before the origin.
+            clean = clean_accelerometer_rows(np.asarray(accel, dtype=np.float64))
+            clean = clean[clean[:, 0] >= origin_s]
+            ggir = ggir_evaluate(clean, epoch_start_s, epoch_start_s.shape[0])
+            stage, is_nap = _filter_labels(stage_raw, is_gap, ggir)
+            nap_minutes = float(np.count_nonzero(is_nap)) * EPOCH_SECONDS / 60.0
+        except Exception as exc:
+            if ggir_error_fails:
+                raise
+            warnings.warn(
+                f"GGIR sleep filter failed ({type(exc).__name__}: {exc}); "
+                "returning the raw model stages",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            stage = is_nap = ggir = nap_minutes = None
+
+    summary = _summarize(stage if stage is not None else stage_raw, is_gap, nap_minutes, subject_id)
+    return Prediction(
+        epoch_start_s=epoch_start_s,
+        probabilities=probabilities,
+        stage_names=stage_names,
+        is_gap=is_gap,
+        gap_head=gap_head,
+        stage=stage,
+        stage_raw=stage_raw,
+        is_nap=is_nap,
+        summary=summary,
+        is_sib=None if ggir is None else ggir.is_sib,
+        is_spt=None if ggir is None else ggir.is_spt,
+    )
+
+
+def load_predictor(bundle_dir: Path | str):
+    """A :class:`Predictor` for a bundle, or its family's own predictor for a composite bundle."""
+    from arcasleep.artifacts.publish import bundle_family
+    from arcasleep.models import get_family
+
+    return get_family(bundle_family(bundle_dir)).load_predictor(bundle_dir)
 
 
 def predict(
@@ -459,7 +498,7 @@ def predict(
 
     Loads the bundle on every call; use :class:`Predictor` for many recordings.
     """
-    return Predictor(bundle_dir).predict(
+    return load_predictor(bundle_dir).predict(
         accel,
         origin,
         return_gap_head=return_gap_head,
@@ -518,7 +557,14 @@ def _apply_ggir_filter(
     window is flagged as a nap and kept. Sleep is never promoted, and gap
     epochs are neither sleep nor naps.
     """
-    stage = _label_epochs(probabilities, stage_names, is_gap)
+    return _filter_labels(_label_epochs(probabilities, stage_names, is_gap), is_gap, ggir)
+
+
+def _filter_labels(
+    stage_raw: np.ndarray, is_gap: np.ndarray, ggir
+) -> tuple[np.ndarray, np.ndarray]:
+    """:func:`_apply_ggir_filter` on stage labels already decided."""
+    stage = np.array(stage_raw, dtype=object)
     sleep = ~np.isin(stage, ["wake", GAP_LABEL_NAME])
     demote = sleep & ~ggir.is_sib & ~ggir.is_spt
     stage[demote] = "wake"
@@ -596,7 +642,7 @@ def predict_files(
     their ``tst_minutes`` into a mean, standard error and deciles. With ``hypnogram``, a
     ``<stem>.png`` hypnogram is saved beside each prediction.
     """
-    predictor = Predictor(bundle_dir)
+    predictor = load_predictor(bundle_dir)
     output_dir = Path(output_dir)
     written = []
     summaries = []
