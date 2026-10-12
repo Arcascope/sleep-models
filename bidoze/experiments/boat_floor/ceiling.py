@@ -2,7 +2,8 @@
 
 Reads the saved native epoch PSDs (boat-observation run). For each night and channel the
 feature is the epoch's mean linear power over 2-6 Hz (and 0.1-0.5 Hz); AUROC is PSG wake
-versus sleep on still, covered epochs. Subtracting a constant floor is monotone in this
+versus sleep on still, covered epochs. With --shifts, a night's labels are moved later by its
+source shift (truth[j] = truth[j - k]) before scoring. Subtracting a constant floor is monotone in this
 feature, so it leaves these per-night values unchanged.
 """
 import argparse
@@ -16,12 +17,16 @@ CHANNELS = ['x', 'y', 'z', 'mag', 'jerk']
 
 def main(a):
     rows = []
+    shifts = pd.read_csv(a.shifts).set_index('name').source_shift.to_dict() if a.shifts else {}
     paths = sorted((a.observation / 'nights').glob('*/native_axis_psd.npz')) + sorted((a.observation / 'land').glob('*/native_axis_psd.npz'))
     for path in paths:
         name = path.parent.name
         cohort, rest = name.split('_subject_', 1)
         d = np.load(path)
         p = d['epoch_linear_psd']; f = d['frequencies']; truth = d['truth']; still = d['still']; covered = ~d['gap']
+        k = shifts.get(name, 0)
+        if k:
+            truth = np.concatenate([np.full(k, -1), truth[:-k]])
         p = np.concatenate([p, p[:, :, :3].sum(axis=2, keepdims=True)], axis=2)
         take = covered & (truth >= 0) & np.isfinite(p).all(axis=(1, 2))
         for subset, mask in [('still', take & still), ('all', take)]:
@@ -46,5 +51,5 @@ def main(a):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('observation', type=Path); p.add_argument('out', type=Path)
+    p.add_argument('observation', type=Path); p.add_argument('out', type=Path); p.add_argument('--shifts', type=Path)
     main(p.parse_args())
