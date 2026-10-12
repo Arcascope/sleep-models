@@ -24,3 +24,8 @@ A linear-readout null does not veto matched neural retraining.
 
 All cohort-bearing code is confidential-work only. Register outputs before S3 sync;
 use only the confidential artifact destination specified by results-s3-sync.
+
+The duplicate-magnitude control has the same three-channel shape as trace, but adds
+no new observations. Its seed-0 initial parameter hash must equal trace's hash,
+allowing an information-versus-capacity comparison. The two-channel original remains
+the main pipeline reference.

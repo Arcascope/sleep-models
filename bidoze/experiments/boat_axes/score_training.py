@@ -71,10 +71,11 @@ def main(a):
     pd.DataFrame(paired).to_csv(a.out/'paired.csv',index=False)
     matched=[]
     for (fold,seed,cohort,role,mode,covered),g in subjects.assign(fold=subjects['fold'].astype(str)).query('model=="adapted"').groupby(['fold','seed','cohort','role','mode','covered']):
-        if set(g.arm)!= {'original','trace'}:continue
-        for metric in METRICS:
-            wide=g.pivot(index='participant',columns='arm',values=metric).dropna()
-            if len(wide):matched.append(dict(fold=fold,seed=seed,cohort=cohort,role=role,mode=mode,covered=covered,metric=metric,participants=len(wide),difference=float((wide.trace-wide.original).mean())))
+        for comparator in ('original','duplicate'):
+            if not {'trace',comparator}.issubset(set(g.arm)):continue
+            for metric in METRICS:
+                wide=g[g.arm.isin(['trace',comparator])].pivot(index='participant',columns='arm',values=metric).dropna()
+                if len(wide):matched.append(dict(comparator=comparator,fold=fold,seed=seed,cohort=cohort,role=role,mode=mode,covered=covered,metric=metric,participants=len(wide),difference=float((wide.trace-wide[comparator]).mean())))
     pd.DataFrame(matched).to_csv(a.out/'matched.csv',index=False)
     (a.out/'protocol.json').write_text(json.dumps(dict(stage_divisor=DIVISOR.tolist(),aggregation='recording within participant then participant macro',ci='participant bootstrap; vessel-cluster confirmation still required',threshold='descriptive_spec95 interpolates each test night ROC; not deployable',comparison='scratch original/trace vs frozen release seed0; original/trace paired directly in matched.csv; not a three-seed confirmation',waso='diagnostic uses PSG-defined first-to-last sleep window'),indent=2))
     print(f'{len(rows)} scored recording/model/mode rows',flush=True)

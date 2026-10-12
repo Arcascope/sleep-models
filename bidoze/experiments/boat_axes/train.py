@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import time
+import hashlib
 from pathlib import Path
 import jax
 import jax.numpy as jnp
@@ -29,9 +30,12 @@ def main(a):
     if a.smoke:
         plan={**plan,'fit':[plan['fit'][0],plan['fit'][-1]], 'eval':[plan['eval'][0],plan['eval'][-1]], 'test':plan['test'][:1], 'guard':plan['guard'][:1]}
     (a.out/'split.json').write_text(json.dumps(plan,indent=2))
+    def view(r):
+        if a.representation=='duplicate':return np.concatenate([r['x'],r['x'][:,:,0:1]],axis=2)
+        return r['x'] if a.representation=='original' else r['x_trace']
     def arrays(names):
         rows=[np.load(a.data/'nights'/f'{n}.npz') for n in names]
-        x=np.stack([r['x'] if a.representation=='original' else r['x_trace'] for r in rows]); y=np.stack([r['y'] for r in rows])
+        x=np.stack([view(r) for r in rows]); y=np.stack([r['y'] for r in rows])
         for r in rows:r.close()
         return x,y
     xf,yf=arrays(plan['fit']); xe,ye=arrays(plan['eval'])
@@ -65,7 +69,8 @@ def main(a):
         model.params=p; model.model={'params':p}; model.save_weights_safetensors(dest/'model.safetensors.partial'); os.replace(dest/'model.safetensors.partial',dest/'model.safetensors')
         (dest/'arm.json').write_text(json.dumps(dict(arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,epoch=epoch,lr=a.lr)))
     save(params,0)
-    config=dict(arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,lr=a.lr,max_epochs=a.max_epochs,fit=len(xf),eval=len(xe),initial_eval_kappa=best,context=xf.shape[1],devices=[str(d) for d in jax.devices()],pid=os.getpid(),code=os.environ.get('GIT_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
+    initial_hash=hashlib.sha256(b''.join(np.asarray(v).tobytes() for v in jax.tree.leaves(params))).hexdigest()
+    config=dict(initial_parameter_sha256=initial_hash,input_shape=list(xf.shape[1:]),arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,lr=a.lr,max_epochs=a.max_epochs,fit=len(xf),eval=len(xe),initial_eval_kappa=best,context=xf.shape[1],devices=[str(d) for d in jax.devices()],pid=os.getpid(),code=os.environ.get('GIT_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
     (a.out/'config.json').write_text(json.dumps(config,indent=2));print(config,flush=True)
     if a.arm=='head':print('trainable roots: head_hidden, head_logits',flush=True)
     initial_params=params; best_params=params; rng=np.random.default_rng(a.seed); key=jax.random.PRNGKey(a.seed)
@@ -93,11 +98,11 @@ def main(a):
     for role in ('eval','test','guard'):
         for name in plan[role]:
             with np.load(a.data/'nights'/f'{name}.npz') as r:
-                base=r['x'][None];x=(r['x'] if a.representation=='original' else r['x_trace'])[None];n=int(r['n']);truth=r['truth'][:n] if 'truth' in r else r['y'][:n]
+                base=r['x'][None];x=view(r)[None];n=int(r['n']);truth=r['truth'][:n] if 'truth' in r else r['y'][:n]
                 p=predict(best_params,x)[0,:n];p0=np.asarray(jax.nn.softmax(release.infer(base),axis=-1))[0,:n]
                 np.savez_compressed(pred_dir/f'{name}.npz',probabilities=p,reference=p0,y=truth,missing=x[0,:n,-1,0]>=1,still=r['still'][:n],anglez=r['anglez'][:n],role=role)
     (a.out/'complete.json').write_text(json.dumps(dict(best_epoch=best_epoch,best_eval_kappa=best,seconds=time.monotonic()-start,smoke=a.smoke),indent=2))
     print('complete',flush=True)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('data',type=Path);p.add_argument('out',type=Path);p.add_argument('--fold',choices=list('ABCDE'),default='E');p.add_argument('--arm',choices=['head','full','land'],default='full');p.add_argument('--seed',type=int,default=0);p.add_argument('--lr',type=float,default=0.001);p.add_argument('--max-epochs',type=int,default=100);p.add_argument('--smoke',action='store_true');p.add_argument('--representation',choices=['original','trace'],required=True);main(p.parse_args())
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('data',type=Path);p.add_argument('out',type=Path);p.add_argument('--fold',choices=list('ABCDE'),default='E');p.add_argument('--arm',choices=['head','full','land'],default='full');p.add_argument('--seed',type=int,default=0);p.add_argument('--lr',type=float,default=0.001);p.add_argument('--max-epochs',type=int,default=100);p.add_argument('--smoke',action='store_true');p.add_argument('--representation',choices=['original','trace','duplicate'],required=True);main(p.parse_args())
