@@ -6,7 +6,8 @@ inputs for SURF; Somerset uses native and low-pass native. A 6/8 Hz pass/stop Ka
 filters axes before magnitude and difference-norm jerk, without interpolation across gaps.
 All variants share original PSG, still-wake definitions, GGIR masks and common coverage.
 
-The three release seeds are averaged. Native inputs and predictions are checked against
+The three release seeds are averaged. Calls use stage-conditional probabilities,
+with physical missing epochs forced to gap; the learned gap head is telemetry. Native inputs and predictions are checked against
 frozen preparation, allowing NUFFT low-power numerical error and float32 rounding of gap
 fractions; coverage masks must match exactly. Results are descriptive frozen-model
 perturbations, not a causal estimate of an isolated device floor or a retraining result.
@@ -21,6 +22,8 @@ Supply raw data, prepared bundle/inventory directory and output directory explic
 ```bash
 python sampling.py DATA_ROOT PREPARED_DATA RUN_DIR --calibration
 python axis_diagnostics.py DATA_ROOT PREPARED_DATA RUN_DIR --prepare-land
+python rescore.py PREPARED_DATA RUN_DIR BASELINE_RUN_DIR
+python report.py RUN_DIR
 ```
 
 Register the output directory in results-s3-sync confidential-runs.txt before syncing.

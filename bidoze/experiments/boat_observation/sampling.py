@@ -210,7 +210,7 @@ def main(a):
                 refx = pad_pooled(prepared,3000)[None].astype(np.float32)
                 refp = np.mean([np.asarray(jax.nn.softmax(m.model.infer(refx),axis=-1))[0,:n] for m in models],axis=0)
                 audit['max_probability_diff'] = float(np.abs(outputs[name]-refp).max())
-                audit['changed_calls'] = int(np.sum(hybrid_calls(outputs[name],outputs[name],DIVISOR) != hybrid_calls(refp,refp,DIVISOR)))
+                audit['changed_calls'] = int(np.sum(hybrid_calls(outputs[name][:,:4],outputs[name][:,:4],DIVISOR) != hybrid_calls(refp[:,:4],refp[:,:4],DIVISOR)))
                 (folder/'native-input-audit.json').write_text(json.dumps(audit,indent=2))
                 assert audit['max_probability_diff'] < .001 and audit['changed_calls'] <= 1, audit
                 outputs[name] = refp
@@ -225,7 +225,7 @@ def main(a):
         common_missing = initial_missing | np.logical_or.reduce(list(missing.values()))
         ggir = evaluate_epoch_grid(angles); results=[]
         for name, p in outputs.items():
-            calls = hybrid_calls(p,p,DIVISOR); calls[missing[name]] = 4
+            calls = hybrid_calls(p[:,:4],p[:,:4],DIVISOR); calls[missing[name]] = 4
             filtered = calls.copy(); filtered[(calls>0)&(calls<4)&~ggir.is_sib&~ggir.is_spt]=0
             for mode, call in [('raw',calls),('ggir',filtered)]:
                 results.append({k:r[k] for k in ('name','cohort','participant','group')} | dict(variant=name,mode=mode) |
