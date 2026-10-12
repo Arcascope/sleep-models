@@ -37,19 +37,21 @@ def render_recording(job):
         lo,hi=np.percentile(values,[1,99]) if values.size else (-100.,0.)
         if hi<=lo:hi=lo+1
         scales.append((float(lo),float(hi)))
-    # Supplemental sheets preserve every original frame column; a full-night
-    # overview necessarily rasterizes many 2-second slots into fewer pixels.
+    # Supplemental sheets preserve every selected frame column; a full-night
+    # overview necessarily rasterizes many retained windows into fewer pixels.
     for layout in LAYOUTS:
         channels=[]
-        allowed=real.copy();allowed[:,[i for i in range(15) if i not in LAYOUTS[layout]]]=False
+        positions=LAYOUTS[layout];allowed=real[:,positions]
         for c in (1,0):  # origin='lower': magnitude top, jerk bottom
-            lo,hi=scales[c];values=frames[:,:,:,c].copy();values[~allowed]=np.nan
-            values=values.reshape(n*15,60).T*DB
+            lo,hi=scales[c];values=frames[:,:,:,c][:,positions,:].copy();values[~allowed]=np.nan
+            values=values.reshape(n*len(positions),60).T*DB
             rgba=matplotlib.colormaps['viridis'](np.clip((values-lo)/(hi-lo),0,1))
             rgba[~np.isfinite(values)]=[.93,.93,.93,1.]
             channels.append(rgba)
         sheet=np.repeat(np.concatenate(channels,axis=0),3,axis=0)
-        plt.imsave(dest/f'{layout}_frame_inputs.png',sheet,origin='lower')
+        sheet_path=dest/f'{layout}_frame_inputs.png'
+        sheet_tmp=sheet_path.with_suffix('.png.partial')
+        plt.imsave(sheet_tmp,sheet,origin='lower',format='png');os.replace(sheet_tmp,sheet_path)
     results=[];hours=np.arange(n+1)/120
     cmap=matplotlib.colormaps['viridis'].copy();cmap.set_bad('#eeeeee')
     for arm in ARMS:
@@ -82,12 +84,12 @@ def render_recording(job):
             pooled=surfaces[layout][:,:,c].T*DB;pooled[:,physical_missing[layout]]=np.nan
             image=axs[5+c].imshow(pooled,origin='lower',aspect='auto',extent=(0,n/120,.05,6.05),vmin=lo,vmax=hi,cmap=cmap,interpolation='nearest')
             axs[5+c].set_ylabel(label+'\nepoch mean (Hz)');fig.colorbar(image,ax=axs[5+c],pad=.003,fraction=.012,label='cached PSD dB')
-            selected=frames[:,:,:,c].copy();valid=real.copy()
-            excluded=[i for i in range(15) if i not in LAYOUTS[layout]];valid[:,excluded]=False
+            positions=LAYOUTS[layout]
+            selected=frames[:,:,:,c][:,positions,:].copy();valid=real[:,positions]
             selected[~valid]=np.nan
-            frameplot=selected.reshape(n*15,60).T*DB
+            frameplot=selected.reshape(n*len(positions),60).T*DB
             image=axs[7+c].imshow(frameplot,origin='lower',aspect='auto',extent=(0,n/120,.05,6.05),vmin=lo,vmax=hi,cmap=cmap,interpolation='nearest')
-            axs[7+c].set_ylabel(label+'\nselected frames (Hz)');fig.colorbar(image,ax=axs[7+c],pad=.003,fraction=.012,label='cached PSD dB')
+            axs[7+c].set_ylabel(label+'\nselected windows (Hz)');fig.colorbar(image,ax=axs[7+c],pad=.003,fraction=.012,label='cached PSD dB')
         # Shade unavailable common coverage; truth itself remains the saved PSG.
         absent=common|(truth<0);edges=np.diff(np.r_[False,absent,False].astype(int));starts=np.flatnonzero(edges==1);ends=np.flatnonzero(edges==-1)
         for ax in axs:
@@ -97,16 +99,16 @@ def render_recording(job):
         title=f'{name} | {cohort} / {role} | {arm} | selected windows: {len(LAYOUTS[layout])} | selected checkpoint, seed 0'
         notes=('Raw argmax/confidence uses the five-class softmax; scored stages use frozen divisors + physical-gap mask + GGIR.\n'
                'Spectral limits are shared across all six arms for this recording/channel (native frame 1st–99th percentiles).\n'
-               'Selected-frame columns are 2-s window-start slots for 10-s spectra; pale slots are excluded/missing, not silent raw motion.\n'
+               'Selected windows are packed contiguously within their assigned 30-s epoch; column width is display spacing, not raw window support. Pale columns mean physically missing windows.\n'
                'Mean models see the epoch surface; CNN models see selected frames and also retain their masked epoch mean. Grey spans: unavailable coverage/unscored truth.')
         fig.suptitle(title,fontsize=15,y=.997);fig.text(.5,.005,notes,ha='center',va='bottom',fontsize=11)
-        fig.tight_layout(rect=(0,.052,1,.979));fig.savefig(path,dpi=dpi,facecolor='white');plt.close(fig)
+        fig.tight_layout(rect=(0,.052,1,.979));temporary=path.with_suffix('.png.partial');fig.savefig(temporary,dpi=dpi,facecolor='white',format='png');plt.close(fig);os.replace(temporary,path)
         assert path.stat().st_size>10000
         results.append(dict(name=name,arm=arm,role=role,cohort=cohort,epochs=n,image=f'{name}/{arm}.png',bytes=path.stat().st_size,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),spectral_limits_db=scales))
     h=html.escape;links=' '.join(f'<a href="{arm}.png">{h(arm)}</a>' for arm in ARMS)
     frame_links=' '.join(f'<a href="{layout}_frame_inputs.png">{h(layout)} frame inputs</a>' for layout in LAYOUTS)
     options=''.join(f'<option>{h(x)}</option>' for x in ARMS)
-    page=f'''<!doctype html><meta charset="utf-8"><title>{h(name)}</title><style>body{{font:16px system-ui;margin:20px}}img{{width:100%}}a{{margin-right:15px}}.pair{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}select{{font:inherit}} </style><a href="../">All recordings</a><h2>{h(name)}</h2><p>{h(cohort)} / {h(role)}. Click an image for full resolution. Colour limits match across configurations.</p><p>{links}</p><p>Original-resolution input sheets: {frame_links}. One column per 2-second window-start slot; magnitude above jerk, both 0.1–6 Hz. Pale columns are excluded or physically missing windows; colour bars are in the full figures.</p><div class="pair"><section><select id="left">{options}</select><a id="la" href="native_mean.png"><img id="li" src="native_mean.png"></a></section><section><select id="right">{options}</select><a id="ra" href="contained_mean.png"><img id="ri" src="contained_mean.png"></a></section></div><script>right.value='contained_mean';for(const s of ['left','right']){{document.getElementById(s).onchange=function(){{const t=s==='left'?'l':'r';document.getElementById(t+'i').src=this.value+'.png';document.getElementById(t+'a').href=this.value+'.png'}}}}</script>'''
+    page=f'''<!doctype html><meta charset="utf-8"><title>{h(name)}</title><style>body{{font:16px system-ui;margin:20px}}img{{width:100%}}a{{margin-right:15px}}.pair{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}select{{font:inherit}} </style><a href="../">All recordings</a><h2>{h(name)}</h2><p>{h(cohort)} / {h(role)}. Click an image for full resolution. Colour limits match across configurations.</p><p>{links}</p><p>Original-resolution input sheets: {frame_links}. One column per selected window, packed within each 30-second epoch; magnitude above jerk, both 0.1–6 Hz. Starts: native 0,2,…,28 s; contained 0,2,…,20 s; nonoverlap 0,10,20 s. All windows are 10 s long. Pale columns are physically missing windows; colour bars are in the full figures.</p><div class="pair"><section><select id="left">{options}</select><a id="la" href="native_mean.png"><img id="li" src="native_mean.png"></a></section><section><select id="right">{options}</select><a id="ra" href="contained_mean.png"><img id="ri" src="contained_mean.png"></a></section></div><script>right.value='contained_mean';for(const s of ['left','right']){{document.getElementById(s).onchange=function(){{const t=s==='left'?'l':'r';document.getElementById(t+'i').src=this.value+'.png';document.getElementById(t+'a').href=this.value+'.png'}}}}</script>'''
     (dest/'index.html').write_text(page)
     return results
 
@@ -131,9 +133,9 @@ def main(a):
     assert len(manifest)==len(names)*6
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2))
     h=html.escape;table=''.join(f'<tr data-search="{h((name+" "+roles[name]+" "+meta[name]["cohort"]).lower())}"><td><a href="{name}/">{h(name)}</a></td><td>{h(meta[name]["cohort"])}</td><td>{h(roles[name])}</td></tr>' for name in names)
-    index=f'''<!doctype html><meta charset="utf-8"><title>Window/pooling training hypnograms</title><style>body{{font:16px system-ui;margin:25px;max-width:1400px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:8px;text-align:left;border-bottom:1px solid #ddd}}input{{font:inherit;padding:8px;width:80%}}</style><h1>Window/pooling training hypnograms</h1><p>{len(names)} recordings × six models = {len(manifest)} full training-style figures. Includes inner eval, held-out vessel test, and Clinical guards.</p><p>Each figure: raw probabilities, argmax confidence, raw predicted stages, scored stages, PSG truth, and magnitude/jerk spectrograms at epoch and selected-frame resolution. Spectral colour limits match across models within each recording/channel. No retraining or threshold selection.</p><p>Eval recordings selected checkpoints and are not independent tests. Start with role <b>test</b> for held-out boats, or <b>guard</b> for Clinical. Pale frame slots are excluded windows/missing data; they do not mean quiet raw motion.</p><input id="search" placeholder="Filter by recording, cohort or role"><table><thead><tr><th>Recording</th><th>Cohort</th><th>Role</th></tr></thead><tbody>{table}</tbody></table><script>search.oninput=()=>{{for(const row of document.querySelectorAll('tr[data-search]'))row.hidden=!row.dataset.search.includes(search.value.toLowerCase())}}</script>'''
+    index=f'''<!doctype html><meta charset="utf-8"><title>Window/pooling training hypnograms</title><style>body{{font:16px system-ui;margin:25px;max-width:1400px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:8px;text-align:left;border-bottom:1px solid #ddd}}input{{font:inherit;padding:8px;width:80%}}</style><h1>Window/pooling training hypnograms</h1><p>{len(names)} recordings × six models = {len(manifest)} full training-style figures. Includes inner eval, held-out vessel test, and Clinical guards.</p><p>Each figure: raw probabilities, argmax confidence, raw predicted stages, scored stages, PSG truth, and magnitude/jerk spectrograms at epoch and selected-frame resolution. Spectral colour limits match across models within each recording/channel. No retraining or threshold selection.</p><p>Eval recordings selected checkpoints and are not independent tests. Start with role <b>test</b> for held-out boats, or <b>guard</b> for Clinical. Selected windows are packed within their assigned epoch; structurally excluded slots are omitted. Pale columns mean physically missing windows. Display column spacing is not raw window duration.</p><input id="search" placeholder="Filter by recording, cohort or role"><table><thead><tr><th>Recording</th><th>Cohort</th><th>Role</th></tr></thead><tbody>{table}</tbody></table><script>search.oninput=()=>{{for(const row of document.querySelectorAll('tr[data-search]'))row.hidden=!row.dataset.search.includes(search.value.toLowerCase())}}</script>'''
     (a.out/'index.html').write_text(index)
-    protocol=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),roles={k:sum(roles[n]==k for n in names) for k in ('eval','test','guard')},models=ARMS,probabilities='raw five-class softmax; raw argmax confidence/stages',scored_stages='conditional frozen-divisor stages, common physical missing mask, original GGIR',spectrograms='epoch means and selected original-frame inputs; natural-log PSD converted by 10/ln(10), shared per-recording/channel native p1/p99 limits; gap row excluded',cnn='selected frames are inputs, epoch mean is retained branch; learned 64-dimensional features are not spectra',frame_sheets='three layouts per recording, original frame columns, magnitude top/jerk bottom; excluded or physically unavailable windows pale; common-mask overlay does not erase real inputs',time='unchanged PSG origin; no clock correction',scope='all available evaluated predictions; inner eval is selection data',limit=a.limit)
+    protocol=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),roles={k:sum(roles[n]==k for n in names) for k in ('eval','test','guard')},models=ARMS,probabilities='raw five-class softmax; raw argmax confidence/stages',scored_stages='conditional frozen-divisor stages, common physical missing mask, original GGIR',spectrograms='epoch means and selected original-frame inputs; natural-log PSD converted by 10/ln(10), shared per-recording/channel native p1/p99 limits; gap row excluded',cnn='selected frames are inputs, epoch mean is retained branch; learned 64-dimensional features are not spectra',frame_sheets='three layouts per recording, one pixel per selected window, packed within its epoch; magnitude top/jerk bottom; physically unavailable windows pale; structural slots omitted to prevent downsampling alias; common-mask overlay does not erase real inputs',display_correction='The prior 15-slot raster with structural NaNs aliased into wide pale bands. Only display changed; model inputs, probabilities and metrics unchanged.',time='unchanged PSG origin; no clock correction',scope='all available evaluated predictions; inner eval is selection data',limit=a.limit)
     (a.out/'protocol.json').write_text(json.dumps(protocol,indent=2));(a.out/'complete.json').write_text(json.dumps(dict(recordings=len(names),figures=len(manifest),seconds=time.monotonic()-start,limited=bool(a.limit)),indent=2))
     print('HYPNOGRAMS COMPLETE',len(manifest),flush=True)
 
