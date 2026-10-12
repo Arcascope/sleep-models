@@ -26,7 +26,6 @@ def main(a):
     audits=[]
     for row in meta:
         dest=a.out/'nights'/f"{row['name']}.npz"
-        if dest.exists():continue
         with np.load(a.data/'nights'/dest.name) as z:fields={k:z[k].copy() for k in ('x','y','n','still','anglez','truth') if k in z}
         n=int(fields['n']);cache=a.cache/f"{row['name']}_features.npz"
         if cache.exists():
@@ -37,13 +36,16 @@ def main(a):
             raw=clean_accelerometer_rows(pd.read_csv(a.root/row['cohort']/'cleaned_accelerometer'/f'{stem}.csv').to_numpy(float))
             frames=proc.apply(raw,normalize=False,padding=False,origin=0.).astype(np.float32)
             provenance='regenerated native frames; unchanged origin and raw data'
+        # The frozen preparation discards incomplete trailing groups of 15.
+        # Preserve that night-end rule before applying the window-layout contrast.
+        frames=frames[:(len(frames)//15)*15]
         original_missing=fields['x'][:n,-1,0]>=1;common_missing=original_missing.copy();maxerr=0.;mederr=0.
         for layout in LAYOUTS:
             chosen=select(frames,n,layout);pooled=recording_input(chosen.reshape(-1,*frames.shape[1:]),n,1)
             missing=pooled[:,-1,0]>=1;common_missing|=missing
             fields[f'x_{layout}']=pad_pooled(pooled,3000).astype(np.float32)
             if layout=='native':
-                assert np.array_equal(missing,original_missing),'Native coverage changed'
+                assert np.array_equal(missing,original_missing),f"Native coverage changed: {row['name']}"
                 diff=np.abs(pooled[~missing,:-1]-fields['x'][:n][~missing,:-1]);maxerr=float(diff.max());mederr=float(np.median(diff))
                 assert mederr<1e-3,'Native input regeneration changed typical power'
         fields['frames']=select(frames,n,'native').reshape(-1,*frames.shape[1:]);fields['common_missing']=common_missing
