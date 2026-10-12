@@ -145,6 +145,7 @@ def main(a):
         psd='backend power convention unchanged, natural log input; dB = 10 log10(linear power)',
         status='sampling perturbation, not an isolated estimate of a causal sensor floor')
     protocol['script_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    protocol['native_baseline'] = 'Exact frozen prepared cache for native scoring; regeneration audited; two-channel release extraction for all perturbations'
     protocol['native_audit'] = 'Recomputed vs prepared input: median log-power diff <1e-5, max <0.02; ensemble max probability diff <0.001, at most one changed call per night'
     (a.out/'setup/protocol.json').write_text(json.dumps(protocol, indent=2))
     if a.calibration:
@@ -188,16 +189,14 @@ def main(a):
             initial_missing = d['x'][:n,-1,0] >= 1
             prepared = d['x'][:n].copy()
         arms, response = variants(raw, r['cohort']); outputs = {}; missing = {}; power_rows = []
-        baseline_frames, origin = models[0].features(raw, origin=0.)
-        assert origin == 0
+        
         for name, signal in arms.items():
             frames = processor.apply(signal, normalize=False, padding=False, origin=0.)
             assert frames.shape[1:] == (60,5), frames.shape
-            if name == 'native':
-                comparison = frames[:len(baseline_frames), :, 3:]
-                assert comparison.shape == baseline_frames.shape
-                assert np.allclose(comparison, baseline_frames, atol=2e-4, rtol=1e-5)
-            model_frames = frames[:len(frames)//15*15,:,3:]
+            # Model scoring uses the release's unchanged two-channel extraction;
+            # axes are retained in a separate diagnostic branch.
+            model_frames, origin = models[0].features(signal, origin=0.)
+            assert origin == 0
             pooled = pad_pooled(recording_input(model_frames,len(model_frames)//15,1),n)
             if name == 'native':
                 delta = np.abs(pooled-prepared)
@@ -214,6 +213,8 @@ def main(a):
                 audit['changed_calls'] = int(np.sum(hybrid_calls(outputs[name],outputs[name],DIVISOR) != hybrid_calls(refp,refp,DIVISOR)))
                 (folder/'native-input-audit.json').write_text(json.dumps(audit,indent=2))
                 assert audit['max_probability_diff'] < .001 and audit['changed_calls'] <= 1, audit
+                outputs[name] = refp
+                pooled = prepared
             ep_power, count = epoch_power(frames,n)
             axis_mean,axis_cov,axis_count=epoch_axis_covariance(signal,n)
             np.savez_compressed(folder/f'{name}_axis_psd.npz', epoch_linear_psd=ep_power.astype(np.float32),
