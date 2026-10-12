@@ -30,6 +30,19 @@ obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 - **Device and placement.** It was trained on wrist data from Apple Watch and
   Fitbit devices, sampled at 12 Hz or faster. Hip, ankle and upper-arm
   placements have not been evaluated.
+- **Each epoch's input extends 8 s into the next epoch.** The model reads
+  10-s spectral windows that start every 2 s, at 0, 2, …, 28 s from the
+  epoch start, so one epoch's input covers 38 s. A 1-s movement that starts
+  1 s into an epoch appears in 4 windows of the previous epoch and in 1
+  window of its own.
+- **Vibration near half the sampling rate enters the jerk input.** The jerk
+  channel is the norm of the difference between consecutive samples; this
+  moves vibration close to half the sampling rate into the 0.1–6 Hz band the
+  model reads. In a synthetic 50 Hz recording, a 10 mg vibration at 24 Hz
+  raised the jerk input near 2 Hz by 28 dB; the same vibration at 10 Hz
+  raised it by 1 dB. The magnitude input was unchanged. This applies to
+  recordings made in vehicles or near machinery, and to devices with a high
+  noise floor above 6 Hz.
 
 ## GGIR sleep filter
 
