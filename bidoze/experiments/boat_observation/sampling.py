@@ -203,7 +203,7 @@ def main(a):
                 delta = np.abs(pooled-prepared)
                 audit = dict(max_diff=float(delta.max()), median_diff=float(np.median(delta)), changed=int((delta>2e-4).sum()), shape=list(pooled.shape), gap_diff=float(np.abs(pooled[:,-1]-prepared[:,-1]).max()))
                 (folder/'native-input-audit.json').write_text(json.dumps(audit,indent=2))
-                assert audit['median_diff'] < 1e-5 and audit['max_diff'] < .02 and audit['gap_diff'] == 0, f'Native inputs differ materially from frozen preparation: {audit}'
+                assert audit['median_diff'] < 1e-5 and audit['max_diff'] < .02 and audit['gap_diff'] < 1e-6 and np.array_equal(missing[name], initial_missing), f'Native inputs differ materially from frozen preparation: {audit}'
             missing[name] = pooled[:n,-1,0] >= 1
             x = pad_pooled(pooled,3000)[None].astype(np.float32)
             outputs[name] = np.mean([np.asarray(jax.nn.softmax(m.model.infer(x),axis=-1))[0,:n] for m in models],axis=0)
@@ -232,7 +232,7 @@ def main(a):
         pd.DataFrame(results).to_csv(folder/'metrics.csv',index=False)
         pd.DataFrame(power_rows).to_csv(folder/'power.csv',index=False)
         np.savez_compressed(folder/'probabilities.npz', **outputs, truth=truth, still=still, common_missing=common_missing)
-        record=dict(seconds=time.monotonic()-start, filter=response,raw_sha256=hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        record=dict(code=protocol['code'],script_sha256=protocol['script_sha256'],seconds=time.monotonic()-start, filter=response,raw_sha256=hashlib.sha256(raw_path.read_bytes()).hexdigest(),
             original_covered=int((~initial_missing).sum()),common_covered=int((~common_missing).sum()),
             variants_covered={k:int((~v).sum()) for k,v in missing.items()})
         (folder/'complete.json').write_text(json.dumps(record,indent=2))
