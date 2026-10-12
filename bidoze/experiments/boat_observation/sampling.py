@@ -203,7 +203,7 @@ def main(a):
                 delta = np.abs(pooled-prepared)
                 audit = dict(max_diff=float(delta.max()), median_diff=float(np.median(delta)), changed=int((delta>2e-4).sum()), shape=list(pooled.shape), gap_diff=float(np.abs(pooled[:,-1]-prepared[:,-1]).max()))
                 (folder/'native-input-audit.json').write_text(json.dumps(audit,indent=2))
-                assert audit['median_diff'] < 1e-5 and audit['max_diff'] < .02 and audit['gap_diff'] < 1e-6 and np.array_equal(missing[name], initial_missing), f'Native inputs differ materially from frozen preparation: {audit}'
+                assert audit['median_diff'] < 1e-5 and audit['max_diff'] < .02 and audit['gap_diff'] < 1e-6 and np.array_equal(pooled[:n,-1,0] >= 1, initial_missing), f'Native inputs differ materially from frozen preparation: {audit}'
             missing[name] = pooled[:n,-1,0] >= 1
             x = pad_pooled(pooled,3000)[None].astype(np.float32)
             outputs[name] = np.mean([np.asarray(jax.nn.softmax(m.model.infer(x),axis=-1))[0,:n] for m in models],axis=0)
