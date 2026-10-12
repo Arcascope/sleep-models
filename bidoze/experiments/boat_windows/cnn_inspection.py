@@ -77,7 +77,11 @@ def fit_basis(a,fit,meta):
                 component_stats.append(dict(name=name,arm=arm,weight=weight,pre_sd=float(np.sqrt(np.mean(np.var(pre,axis=0)))),mean_sd=float(np.sqrt(np.mean(np.var(terms[0],axis=0)))),contrast_sd=float(np.sqrt(np.mean(np.var(terms[1],axis=0)))),presence_sd=float(np.sqrt(np.mean(np.var(terms[2],axis=0)))),contrast_rms=float(np.sqrt(np.mean(terms[1]**2))),mean_rms=float(np.sqrt(np.mean(terms[0]**2))),presence_rms=float(np.sqrt(np.mean(terms[2]**2)))))
     assert abs(mass-1)<1e-10
     cov=second-np.outer(mean,mean);sd=np.sqrt(np.maximum(np.diag(cov),0));active=sd>max(1e-8,float(np.median(sd[sd>0]))*1e-6)
-    scale=np.where(active,sd,1.);corr=cov/np.outer(scale,scale);corr[~active,:]=0;corr[:,~active]=0;corr=(corr+corr.T)/2
+    scale=np.where(active,sd,1.)
+    display_scale=scale.copy()
+    for i in range(3):
+        sl=slice(i*64,(i+1)*64);fallback=float(np.median(sd[sl][active[sl]]));display_scale[sl]=np.where(active[sl],sd[sl],fallback)
+    corr=cov/np.outer(scale,scale);corr[~active,:]=0;corr[:,~active]=0;corr=(corr+corr.T)/2
     vals,vectors=np.linalg.eigh(corr);order=np.argsort(vals)[::-1];vals=np.maximum(vals[order],0);vectors=vectors[:,order]
     for j in range(192):
         if vectors[np.argmax(np.abs(vectors[:,j])),j]<0:vectors[:,j]*=-1
@@ -85,7 +89,7 @@ def fit_basis(a,fit,meta):
     for i,arm in enumerate(ARMS):
         block=np.clip(corr[i*64:(i+1)*64,i*64:(i+1)*64],-1,1);distance=1-block;np.fill_diagonal(distance,0)
         condensed=squareform(distance,checks=False);tree=linkage(condensed,method='average');orders.append(leaves_list(optimal_leaf_ordering(tree,condensed)))
-    np.savez_compressed(a.out/'basis.npz',mean=mean,scale=scale,active=active,vectors=vectors,eigenvalues=vals,orders=np.array(orders))
+    np.savez_compressed(a.out/'basis.npz',mean=mean,scale=scale,display_scale=display_scale,active=active,vectors=vectors,eigenvalues=vals,orders=np.array(orders))
     table=pd.DataFrame(component_stats);table.to_csv(a.out/'fit_linear_components.csv',index=False)
     summary=[]
     for arm,g in table.groupby('arm'):
@@ -93,7 +97,7 @@ def fit_basis(a,fit,meta):
     pd.DataFrame(summary).to_csv(a.out/'fit_component_summary.csv',index=False)
     pd.DataFrame({'PC':np.arange(1,193),'variance_fraction':vals/max(vals.sum(),1e-12),'cumulative_fraction':np.cumsum(vals)/max(vals.sum(),1e-12)}).to_csv(a.out/'pca_variance.csv',index=False)
     pd.DataFrame([dict(arm=arm,row=row,channel=int(ch),fit_mean=mean[i*64+ch],fit_sd=sd[i*64+ch],active=bool(active[i*64+ch])) for i,arm in enumerate(ARMS) for row,ch in enumerate(orders[i])]).to_csv(a.out/'channel_order.csv',index=False)
-    return dict(mean=mean,scale=scale,active=active,vectors=vectors,eigenvalues=vals,orders=np.array(orders))
+    return dict(mean=mean,scale=scale,display_scale=display_scale,active=active,vectors=vectors,eigenvalues=vals,orders=np.array(orders))
 
 def atlases(a,pools,basis):
     plt.rcParams.update({'font.size':9})
@@ -117,24 +121,29 @@ def render(job):
         frames=z['frames'].reshape(n,15,60,2);valid=~np.all(frames==PAD,axis=(2,3));limits=[np.percentile(frames[:,:,:,c][valid]*DB,[1,99]) for c in range(2)]
     with np.load(out/'features'/f'{name}.npz') as z:features={key:z[key].copy() for key in z.files}
     fig,axs=plt.subplots(6,3,figsize=(25,20),sharex=True,gridspec_kw={'height_ratios':[1.4,1.4,2.5,1.7,1.3,1.3]})
-    pcscale=np.sqrt(np.maximum(basis['eigenvalues'][:npcs],1e-12));cmap=matplotlib.colormaps['coolwarm'].copy();cmap.set_bad('#eeeeee')
+    pcscale=np.sqrt(np.maximum(basis['eigenvalues'][:npcs],1e-12));cmap=matplotlib.colormaps['RdBu_r'].copy();cmap.set_bad('#888888')
     for i,arm in enumerate(ARMS):
         layout=arm.rsplit('_',1)[0];offset=slice(i*64,(i+1)*64);order=basis['orders'][i]
         for c in range(2):
             spec=surfaces[layout][:,:,c].T*DB;spec[:,physical_missing[layout]]=np.nan
-            axs[c,i].imshow(spec,origin='lower',aspect='auto',extent=(0,n/120,.05,6.05),vmin=limits[c][0],vmax=limits[c][1],interpolation='nearest');axs[c,i].set_ylabel(('Magnitude' if c==0 else 'Jerk')+' (Hz)')
+            im=axs[c,i].imshow(spec,origin='lower',aspect='auto',extent=(0,n/120,.05,6.05),vmin=limits[c][0],vmax=limits[c][1],interpolation='nearest');axs[c,i].set_ylabel(('Magnitude' if c==0 else 'Jerk')+' (Hz)')
+            if i==2:fig.colorbar(im,ax=axs[c,i],fraction=.018,pad=.015,label='cached PSD dB')
+        display=(features[arm]-basis['mean'][offset])/basis['display_scale'][offset]
+        channels=display[:,order].T
         centered=(features[arm]-basis['mean'][offset])/basis['scale'][offset];centered[:,~basis['active'][offset]]=0
-        channels=centered[:,order].T
-        axs[2,i].imshow(channels,origin='lower',aspect='auto',extent=(0,n/120,-.5,63.5),cmap=cmap,vmin=-3,vmax=3,interpolation='nearest');axs[2,i].set_ylabel('64 actual channels\nfit-correlation order; z')
+        im=axs[2,i].imshow(channels,origin='lower',aspect='auto',extent=(0,n/120,-.5,63.5),cmap=cmap,vmin=-3,vmax=3,interpolation='nearest');axs[2,i].set_ylabel('64 actual channels\nfit-correlation order; z')
+        if i==2:fig.colorbar(im,ax=axs[2,i],fraction=.018,pad=.015,label='training z / fallback scale')
         pc=(centered@basis['vectors'][offset,:npcs]/pcscale).T
-        axs[3,i].imshow(pc,origin='lower',aspect='auto',extent=(0,n/120,.5,npcs+.5),cmap=cmap,vmin=-1.5,vmax=1.5,interpolation='nearest');axs[3,i].set_yticks([1,4,8,12]);axs[3,i].set_ylabel('Joint PC contributions\ncommon axes; joint-SD units')
+        im=axs[3,i].imshow(pc,origin='lower',aspect='auto',extent=(0,n/120,.5,npcs+.5),cmap=cmap,vmin=-1.5,vmax=1.5,interpolation='nearest');axs[3,i].set_yticks([1,4,8,12]);axs[3,i].set_ylabel('Joint PC contributions\ncommon axes; joint-SD units')
+        if i==2:fig.colorbar(im,ax=axs[3,i],fraction=.018,pad=.015,label='joint PC SD units')
         # The last two rows use within-night z solely to compare shape.
         # Absolute temporal SD/RMS values are in the fit component CSV.
         for axis,term in [(axs[4,i],'mean'),(axs[5,i],'contrast')]:
             value=features[arm+'_'+term].astype(float)
             value=(value-value.mean(0))/np.maximum(value.std(0),1e-8)
             value=value[:,order].T
-            axis.imshow(value,origin='lower',aspect='auto',extent=(0,n/120,-.5,63.5),cmap=cmap,vmin=-3,vmax=3,interpolation='nearest');axis.set_ylabel(term+' linear term\nwithin-night channel z')
+            im=axis.imshow(value,origin='lower',aspect='auto',extent=(0,n/120,-.5,63.5),cmap=cmap,vmin=-3,vmax=3,interpolation='nearest');axis.set_ylabel(term+' linear term\nwithin-night channel z')
+            if i==2:fig.colorbar(im,ax=axis,fraction=.018,pad=.015,label='within-night z (shape only)')
         axs[0,i].set_title(arm,fontsize=14)
         for ax in axs[:,i]:
             ax.set_xlim(0,n/120)
@@ -143,7 +152,7 @@ def render(job):
         axs[-1,i].set_xlabel('Elapsed hours from PSG origin')
     variance=basis['eigenvalues'];fraction=variance[:npcs].sum()/variance.sum()
     fig.suptitle(f'{name} | {cohort} / {role} | saved pooling CNNs, no retraining',fontsize=16)
-    fig.text(.5,.008,f'Training-only channel order and participant/night-balanced joint PCA. First {npcs} joint PCs explain {fraction:.1%} training standardized-feature variance.\nPC panels show each model block contribution; summing the three gives the joint PC score. Channel z scales ±3; PC contributions ±1.5 joint SD.\nLinear mean/contrast panels are BEFORE GELU and standardized within this night for shape only; their amplitudes are not comparable. Read component CSVs for magnitude.\nCommon-unavailable epochs shaded; physically missing spectra pale. Channels are latent features, not sleep stages; signs/order/PCA variance have no physiological interpretation by themselves.',ha='center',fontsize=10)
+    fig.text(.5,.008,f'Training-only channel order and participant/night-balanced joint PCA. First {npcs} joint PCs explain {fraction:.1%} training standardized-feature variance.\nPC panels show each model block contribution; summing the three gives the joint PC score. Channel z scales ±3; PC contributions ±1.5 joint SD.\nLinear mean/contrast panels are BEFORE GELU and standardized within this night for shape only; their amplitudes are not comparable. Read component CSVs for magnitude.\nCommon-unavailable epochs shaded; physically missing spectra pale. White feature colour ≈ zero standardized response; grey vertical overlays mark unavailable coverage. Training-unvarying channels use a typical-active-SD fallback for display. Channels are latent features, not sleep stages; signs/order/PCA variance have no physiological interpretation by themselves.',ha='center',fontsize=10)
     fig.tight_layout(rect=(0,.065,1,.965));path=out/f'{name}.png';temp=path.with_suffix('.png.partial');fig.savefig(temp,dpi=130,format='png');plt.close(fig);os.replace(temp,path)
     return dict(name=name,role=role,cohort=cohort,image=path.name,bytes=path.stat().st_size,sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 
@@ -152,7 +161,11 @@ def main(a):
     a.out.mkdir(parents=True,exist_ok=True);(a.out/'config.json').write_text(json.dumps(dict(pid=os.getpid(),arm='cnn_inspection',fold='D',seed=0)))
     meta={r['name']:r for r in csv.DictReader((a.run/'setup/data/inventory.csv').open())};plan=json.loads((a.run/'training/native_cnn/D/seed0/split.json').read_text());fit=plan['fit'];roles={name:role for role in ('test','eval','guard') for name in plan[role]}
     assert not set(fit)&set(roles)
-    pools=extract(a,meta);basis=fit_basis(a,fit,meta);atlases(a,pools,basis)
+    if a.reuse_features:
+        assert all((a.out/'features'/f'{name}.npz').exists() for name in meta)
+        pools={arm:load_pool(a.run,arm) for arm in ARMS}
+    else:pools=extract(a,meta)
+    basis=fit_basis(a,fit,meta);atlases(a,pools,basis)
     # Verify additive shared-axis convention on an arbitrary saved training night.
     with np.load(a.out/'features'/f'{fit[0]}.npz') as z:
         joint=np.concatenate([z[arm] for arm in ARMS],axis=1);joint=(joint-basis['mean'])/basis['scale'];joint[:,~basis['active']]=0
@@ -165,10 +178,10 @@ def main(a):
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2))
     h=html.escape;links=' '.join(f'<a href="{arm}_filters.png">{arm} filter atlas</a>' for arm in ARMS)
     records=''.join(f'<tr><td><a href="{r["image"]}">{h(r["name"])}</a></td><td>{h(r["cohort"])}</td><td>{h(r["role"])}</td></tr>' for r in sorted(manifest,key=lambda r:(r['role'],r['name'])))
-    (a.out/'index.html').write_text(f'''<!doctype html><meta charset="utf-8"><title>Pooling CNN inspection</title><style>body{{font:16px system-ui;margin:25px}}td{{padding:7px}}a{{margin-right:15px}}</style><a href="../">Existing hypnograms</a><h1>Pooling CNN inspection</h1><p>Separate diagnostic plots for the 64 learned pooling channels. Existing hypnograms are unchanged.</p><p>{links} <a href="pca_variance.png">PCA variance</a></p><p>Each recording compares native, contained and nonoverlap inputs, the reordered actual channels, shared joint-PCA contributions and exact pre-GELU mean/temporal-contrast terms. Ordering and basis use fit recordings only, equally weighting participants and nights. No PSG labels select the basis or channel order.</p><p>Channel panels use training z scales; the last two panels use within-night z scales for shape only. Joint PCs are shared across models, not separate arbitrary PCA axes. Their block contributions sum to the joint score. These latent directions are not physiological labels or a causal attribution to predictions.</p><table><tr><th>Recording</th><th>Cohort</th><th>Role</th></tr>{records}</table>''')
-    protocol=dict(code=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),models=ARMS,fit_records=len(fit),plot_records=len(jobs),fit_weighting='equal participant mass, equal night mass within participant, equal common-valid epoch mass within night',ordering='training activation Pearson correlation distance, average linkage, optimal leaf ordering; original channel IDs in channel_order.csv',basis='PCA of joint concatenated 3x64 training-standardized activations; deterministic loading sign; block contributions sum to joint PCA score; first12 whitened by joint eigenvalue SD',labels='never used in extraction, ordering or basis',components='exact pre-GELU decomposition into valid-window mean, zero-mean within-epoch contrasts, and presence+bias; conditional on actual valid mask; not post-GELU causal attribution',unchanged='existing hypnograms, training inputs, parameters and predictions',checkpoints={arm:hashlib.sha256((a.run/f'training/{arm}/D/seed0/bundle/model.safetensors').read_bytes()).hexdigest() for arm in ARMS})
+    (a.out/'index.html').write_text(f'''<!doctype html><meta charset="utf-8"><title>Pooling CNN inspection</title><style>body{{font:16px system-ui;margin:25px}}td{{padding:7px}}a{{margin-right:15px}}</style><a href="../">Existing hypnograms</a><h1>Pooling CNN inspection</h1><p>Separate diagnostic plots for the 64 learned pooling channels. Existing hypnograms are unchanged.</p><p>{links} <a href="pca_variance.png">PCA variance</a></p><p>Each recording compares native, contained and nonoverlap inputs, the reordered actual channels, shared joint-PCA contributions and exact pre-GELU mean/temporal-contrast terms. Ordering and basis use fit recordings only, equally weighting participants and nights. No PSG labels select the basis or channel order.</p><p>Channel panels use training z scales; training-unvarying channels are retained with a typical-active-SD fallback scale and marked in channel_order.csv. PCA excludes those unsupported directions. White means near-zero standardized response; grey vertical overlays mark unavailable coverage. the last two panels use within-night z scales for shape only. Joint PCs are shared across models, not separate arbitrary PCA axes. Their block contributions sum to the joint score. These latent directions are not physiological labels or a causal attribution to predictions.</p><table><tr><th>Recording</th><th>Cohort</th><th>Role</th></tr>{records}</table>''')
+    protocol=dict(code=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),models=ARMS,fit_records=len(fit),plot_records=len(jobs),fit_weighting='equal participant mass, equal night mass within participant, equal common-valid epoch mass within night',ordering='training activation Pearson correlation distance, average linkage, optimal leaf ordering; original channel IDs in channel_order.csv',basis='PCA of joint concatenated 3x64 training-standardized activations; deterministic loading sign; block contributions sum to joint PCA score; first12 whitened by joint eigenvalue SD',display_inactive='actual-channel plots retain training-unvarying channels using typical-active-SD fallback; joint PCA zeroes unsupported training directions',labels='never used in extraction, ordering or basis',components='exact pre-GELU decomposition into valid-window mean, zero-mean within-epoch contrasts, and presence+bias; conditional on actual valid mask; not post-GELU causal attribution',unchanged='existing hypnograms, training inputs, parameters and predictions',checkpoints={arm:hashlib.sha256((a.run/f'training/{arm}/D/seed0/bundle/model.safetensors').read_bytes()).hexdigest() for arm in ARMS})
     (a.out/'protocol.json').write_text(json.dumps(protocol,indent=2));(a.out/'complete.json').write_text(json.dumps(dict(recordings=len(jobs),plots=len(manifest)+4)))
     print('CNN INSPECTION COMPLETE',flush=True)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('run',type=Path);p.add_argument('out',type=Path);p.add_argument('--workers',type=int,default=8);main(p.parse_args())
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('run',type=Path);p.add_argument('out',type=Path);p.add_argument('--workers',type=int,default=8);p.add_argument('--reuse-features',action='store_true');main(p.parse_args())
