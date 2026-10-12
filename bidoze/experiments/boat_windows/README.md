@@ -29,7 +29,7 @@ are explicit; no working-directory data assumptions. A finite queue can be run:
 
 ```sh
 PYTHONPATH=core/src:bidoze/src:unet/src:bidoze/experiments python \
-  bidoze/experiments/boat_windows/queue.py --python PYTHON_EXECUTABLE \
+  bidoze/experiments/boat_windows/run_series.py --python PYTHON_EXECUTABLE \
   --root DATA_ROOT --source-data PREPARED_REFERENCE \
   --cache ORIGINAL_FRAME_CACHE --run RUN_DIRECTORY --fold D --max-epochs 100
 ```
