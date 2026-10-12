@@ -63,9 +63,9 @@ def main(a):
     (dest/'input_recipe.json').write_text(json.dumps(dict(representation=a.representation,recipe=json.loads((a.data/'trace-input-recipe.json').read_text()),status='custom cached research checkpoint; no packaged raw predictor'),indent=2))
     def save(p,epoch):
         model.params=p; model.model={'params':p}; model.save_weights_safetensors(dest/'model.safetensors.partial'); os.replace(dest/'model.safetensors.partial',dest/'model.safetensors')
-        (dest/'arm.json').write_text(json.dumps(dict(arm=a.arm,fold=a.fold,seed=a.seed,epoch=epoch,lr=a.lr)))
+        (dest/'arm.json').write_text(json.dumps(dict(arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,epoch=epoch,lr=a.lr)))
     save(params,0)
-    config=dict(arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,lr=a.lr,max_epochs=a.max_epochs,fit=len(xf),eval=len(xe),reference_eval_kappa=best,context=xf.shape[1],devices=[str(d) for d in jax.devices()],pid=os.getpid(),code=os.environ.get('GIT_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
+    config=dict(arm=a.representation,initialization="scratch",fold=a.fold,seed=a.seed,lr=a.lr,max_epochs=a.max_epochs,fit=len(xf),eval=len(xe),initial_eval_kappa=best,context=xf.shape[1],devices=[str(d) for d in jax.devices()],pid=os.getpid(),code=os.environ.get('GIT_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
     (a.out/'config.json').write_text(json.dumps(config,indent=2));print(config,flush=True)
     if a.arm=='head':print('trainable roots: head_hidden, head_logits',flush=True)
     initial_params=params; best_params=params; rng=np.random.default_rng(a.seed); key=jax.random.PRNGKey(a.seed)
