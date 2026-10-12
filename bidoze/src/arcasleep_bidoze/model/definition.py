@@ -98,6 +98,8 @@ class BiDozeNetConfig(ModelConfig):
     frame_pooling: str = "mean"
     # Output width of the "conv" frame pool.
     frame_pool_features: int = 64
+    # Selected physical windows within the fixed frame slots; None means all.
+    frame_pool_expected_frames: int | None = None
     d_model: int = 256
     n_heads: int = 8
     n_transformer_layers: int = 4
@@ -170,6 +172,8 @@ class BiDozeNetConfig(ModelConfig):
             raise ValueError(
                 "BiDozeNetConfig.frame_pooling 'conv' needs raw frames: frames_per_epoch >= 2"
             )
+        if config.frame_pool_expected_frames is not None and not (1 <= config.frame_pool_expected_frames <= config.frames_per_epoch):
+            raise ValueError("frame_pool_expected_frames must be within the frame-slot count")
         if config.frame_pool_features < 1:
             raise ValueError("BiDozeNetConfig.frame_pool_features must be at least 1")
 
@@ -270,6 +274,7 @@ class FramePoolModule(nn.Module):
 
     frames_per_epoch: int
     features: int
+    expected_frames: int | None = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -288,7 +293,8 @@ class FramePoolModule(nn.Module):
         real_epoch = real.reshape(batch, n_epochs, fpe)
         count = real_epoch.sum(axis=2, keepdims=True)
         mean = per_epoch.sum(axis=2) / jnp.maximum(count, 1.0)
-        missing = 1.0 - count / fpe
+        # Structural slots excluded by a window layout are not physical gaps.
+        missing = 1.0 - count / (self.expected_frames or fpe)
 
         conv_in = jnp.concatenate([frames, real[..., None]], axis=-1)
         learned = nn.Conv(
@@ -1142,7 +1148,8 @@ class BiDozeNetModule(nn.Module):
         if self.cfg.frames_per_epoch > 1:
             if self.cfg.frame_pooling == "conv":
                 x = FramePoolModule(
-                    self.cfg.frames_per_epoch, self.cfg.frame_pool_features, name="frame_pool"
+                    self.cfg.frames_per_epoch, self.cfg.frame_pool_features,
+                    expected_frames=self.cfg.frame_pool_expected_frames, name="frame_pool"
                 )(x)
             else:
                 x = _pool_frames_to_epochs(x, self.cfg.frames_per_epoch)

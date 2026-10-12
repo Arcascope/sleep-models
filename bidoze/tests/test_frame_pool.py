@@ -57,3 +57,17 @@ def test_frame_pool_epoch_with_no_frames_gives_zero_mean_and_full_missing() -> N
 def test_invalid_frame_pooling_is_refused(overrides: dict) -> None:
     with pytest.raises(ValueError):
         BiDozeNetConfig.from_dict({"num_classes": 4, **overrides})
+
+
+def test_structural_slots_do_not_inflate_physical_missing_fraction():
+    x=np.full((1,15,4,2),SPECTROGRAM_PADDING_VALUE,dtype=np.float32)
+    x[:,[0,5]]=2.0  # Three selected windows; one of them physically unavailable.
+    module=FramePoolModule(frames_per_epoch=15,features=6,expected_frames=3)
+    params=module.init(jax.random.PRNGKey(0),jnp.asarray(x))
+    out=np.asarray(module.apply(params,jnp.asarray(x)))
+    np.testing.assert_allclose(out[0,0,:8],2.0)
+    assert out[0,0,8]==pytest.approx(1/3)
+    other=FramePoolModule(frames_per_epoch=15,features=6,expected_frames=11)
+    p2=other.init(jax.random.PRNGKey(0),jnp.asarray(x))
+    for left,right in zip(jax.tree.leaves(params),jax.tree.leaves(p2)):
+        np.testing.assert_array_equal(left,right)
