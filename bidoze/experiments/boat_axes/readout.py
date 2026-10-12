@@ -67,7 +67,7 @@ def main(a):
             rows.append(frame[eligible&finite])
     table=pd.concat(rows,ignore_index=True);pd.DataFrame(coverage).to_csv(a.out/'coverage.csv',index=False)
     table.to_csv(a.out/'features.csv.gz',index=False)
-    protocol=dict(code=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    protocol=dict(code=subprocess.check_output(['git','-C',str(Path(__file__).resolve().parents[3]),'rev-parse','HEAD'],text=True).strip(),script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         arms=ARMS,bands=BANDS,seed=0,C=1,solver='lbfgs',max_iter=1000,
         reference='frozen three-seed released-ensemble wake score',
         fit='equal participant and recording mass, then equal weighted class mass; scaler fitted on fit only',
