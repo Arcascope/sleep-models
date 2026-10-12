@@ -9,7 +9,7 @@ from arcasleep.ggir import evaluate_epoch_grid
 
 def main(a):
     score_all(a)
-    summary=pd.read_csv(a.out/'summary.csv');subjects=pd.read_csv(a.out/'subjects.csv');checks={};matched=[];strata=[]
+    summary=pd.read_csv(a.out/'summary.csv');subjects=pd.read_csv(a.out/'subjects.csv');checks={};matched=[];interactions=[];strata=[]
     for pooling in ('mean','cnn'):
         configs=list((a.run/'training').glob(f'*_{pooling}/{a.fold}/seed0/config.json'))
         if configs:
@@ -17,9 +17,18 @@ def main(a):
             assert len(hashes)==1,f'{pooling} arms have different initialization'
             checks[pooling]=dict(initial_hash=next(iter(hashes)),arms=[p.parent.parent.parent.name for p in configs])
     for (cohort,role,mode,covered,metric),g in subjects.melt(id_vars=[c for c in subjects.columns if c not in METRICS],value_vars=METRICS,var_name='metric').query('model=="adapted"').groupby(['cohort','role','mode','covered','metric']):
-        for lhs,rhs in [('contained_mean','native_mean'),('nonoverlap_mean','native_mean'),('contained_cnn','native_cnn'),('nonoverlap_cnn','native_cnn'),('native_cnn','native_mean'),('contained_cnn','contained_mean'),('nonoverlap_cnn','nonoverlap_mean')]:
+        for lhs,rhs in [('contained_mean','native_mean'),('nonoverlap_mean','native_mean'),('nonoverlap_mean','contained_mean'),('contained_cnn','native_cnn'),('nonoverlap_cnn','native_cnn'),('nonoverlap_cnn','contained_cnn'),('native_cnn','native_mean'),('contained_cnn','contained_mean'),('nonoverlap_cnn','nonoverlap_mean')]:
             pair=g[g.arm.isin([lhs,rhs])].pivot(index='participant',columns='arm',values='value').dropna()
             if {lhs,rhs}.issubset(pair.columns):matched.append(dict(cohort=cohort,role=role,mode=mode,covered=covered,metric=metric,lhs=lhs,rhs=rhs,participants=len(pair),difference=float((pair[lhs]-pair[rhs]).mean())))
+    for (cohort,role,mode,covered),g in subjects.query('model=="adapted"').groupby(['cohort','role','mode','covered']):
+        for layout in ('contained','nonoverlap'):
+            needed={f'{layout}_cnn',f'{layout}_mean','native_cnn','native_mean'}
+            if not needed.issubset(set(g.arm)):continue
+            for metric in METRICS:
+                wide=g[g.arm.isin(needed)].pivot(index='participant',columns='arm',values=metric).dropna()
+                delta=(wide[f'{layout}_cnn']-wide.native_cnn)-(wide[f'{layout}_mean']-wide.native_mean)
+                interactions.append(dict(cohort=cohort,role=role,mode=mode,covered=covered,layout=layout,metric=metric,participants=len(wide),difference=float(delta.mean())))
+    pd.DataFrame(interactions).to_csv(a.out/'window_interactions.csv',index=False)
     meta=pd.read_csv(a.run/'setup/data/inventory.csv').set_index('name').to_dict('index')
     for complete in (a.run/'training').glob('**/complete.json'):
         folder=complete.parent;cfg=json.loads((folder/'config.json').read_text())
