@@ -40,12 +40,15 @@ def metrics(y,p,call,still,missing,covered):
 
 def main(a):
     a.out.mkdir(parents=True,exist_ok=True)
-    left=a.run/'training/trace/D/seed0/config.json';right=a.run/'training/duplicate/D/seed0/config.json'
-    if left.exists() and right.exists():
+    checks={}
+    for left in sorted((a.run/'training/trace').glob('*/seed0/config.json')):
+        fold=left.parent.parent.name;right=a.run/f'training/duplicate/{fold}/seed0/config.json'
+        if not right.exists():continue
         l=json.loads(left.read_text());r=json.loads(right.read_text())
         equal=(l['initial_parameter_sha256']==r['initial_parameter_sha256'] and l['input_shape']==r['input_shape'])
-        (a.out/'initialization_control.json').write_text(json.dumps(dict(identical=equal,trace=l['initial_parameter_sha256'],duplicate=r['initial_parameter_sha256'],shape=l['input_shape']),indent=2))
+        checks[fold]=dict(identical=equal,trace=l['initial_parameter_sha256'],duplicate=r['initial_parameter_sha256'],shape=l['input_shape'])
         assert equal,'Trace and duplicate control did not start with identical parameters'
+    if checks:(a.out/'initialization_control.json').write_text(json.dumps(checks,indent=2))
     meta=pd.read_csv(a.run/'setup/data/inventory.csv').set_index('name').to_dict('index');rows=[]
     for complete in sorted((a.run/'training').glob('**/complete.json')):
         folder=complete.parent
