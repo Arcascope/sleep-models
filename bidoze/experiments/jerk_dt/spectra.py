@@ -2,7 +2,9 @@
 
 Per night, the release's ``features`` (pisces-lite and senpy, float64) under each jerk mode, on
 the same samples and origin. Frames that are padding in every mode (all bins −1) are left out.
-The ``|a|`` channel is checked to be unchanged; for the jerk channel, per frame and bin:
+The release's JAX NUFFT is not bit-deterministic, so ``release`` is computed twice: the
+difference between the two runs is the noise floor (``rerun_*``). The ``|a|`` channel is checked
+to change by less than 1e-3 between modes; for the jerk channel, per frame and bin:
 
 - ``median_dt − release``: should equal ``−2·log(median Δt)`` everywhere; reports the constant
   and the largest deviation from it.
@@ -48,10 +50,12 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
         for mode in MODES:
             with jerk_mode(mode):
                 frames[mode], _ = features(accel, origin)
+        rerun = np.asarray(features(accel, origin)[0], np.float64)
         f = {m: np.asarray(v, np.float64) for m, v in frames.items()}
         padding = np.all([(v == -1).all(axis=(1, 2)) for v in f.values()], axis=0)
-        if not np.array_equal(f["dt"][..., 0], f["release"][..., 0]):
-            raise AssertionError(f"{cohort}/{stem}: the |a| channel changed")
+        mag_change = float(np.abs(f["dt"][~padding, :, 0] - f["release"][~padding, :, 0]).max())
+        if mag_change > 1e-3:
+            raise AssertionError(f"{cohort}/{stem}: the |a| channel changed by {mag_change:.3g}")
         jerk = {m: v[~padding, :, 1] for m, v in f.items()}
         t = clean_accelerometer_rows(accel)[:, 0]
         constant = -2.0 * np.log(np.median(steps_s(t)))
@@ -61,6 +65,8 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
                      "offset_expected": constant,
                      "offset_max_deviation": float(np.abs(jerk["median_dt"] - jerk["release"] - constant).max())}
                     | timing(t)
+                    | {"mag_change_max": mag_change}
+                    | summarize(rerun[~padding, :, 1] - jerk["release"], "rerun")
                     | summarize(jerk["dt"] - jerk["release"], "dt_vs_release")
                     | summarize(jerk["dt"] - jerk["median_dt"], "dt_vs_median_dt"))
         if f"{cohort}/{stem}" in keep:
