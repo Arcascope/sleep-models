@@ -16,7 +16,8 @@ counts as a miss. ``paired.csv`` gives, per cohort, metric and mode, the mean di
 ``release`` over participants (a participant's nights averaged first), its 95% t-interval and the
 Wilcoxon signed-rank p.
 
-Writes ``<out>/predictions/<mode>/<cohort>_<night>.csv``, ``<out>/nights.csv``,
+Nights the release refuses (``ValueError``, such as a sampling rate below 12 Hz) are skipped
+and named in the log. Writes ``<out>/predictions/<mode>/<cohort>_<night>.csv``, ``<out>/nights.csv``,
 ``<out>/summary.csv`` (means per cohort and mode) and ``<out>/paired.csv``.
 
 Usage: python score.py <data root> <adult bundle> <out> <cohort> [...]
@@ -98,9 +99,14 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
     for cohort, stem in night_list:
         accel, psg, origin = load_night(root, cohort, stem)
         preds = {}
+        try:
+            for mode in RUNS:
+                with jerk_mode(mode.removesuffix("_rerun")):
+                    preds[mode] = frame(predictor.predict(accel, origin))
+        except ValueError as e:  # a recording the release refuses, such as one sampled below 12 Hz
+            print(f"{cohort}/{stem}: skipped: {e}", flush=True)
+            continue
         for mode in RUNS:
-            with jerk_mode(mode.removesuffix("_rerun")):
-                preds[mode] = frame(predictor.predict(accel, origin))
             target = out / "predictions" / mode / f"{cohort}_{stem}.csv"
             target.parent.mkdir(parents=True, exist_ok=True)
             preds[mode].to_csv(target, index=False)

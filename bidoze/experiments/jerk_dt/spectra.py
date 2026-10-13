@@ -12,7 +12,8 @@ to change by less than 1e-3 between modes; for the jerk channel, per frame and b
   difference, quantiles of the absolute difference (log-PSD, natural log) over all frame×bin
   cells, and the share of cells changed by more than 0.1 and 1.0.
 
-Writes ``<out>/nights.csv`` (one row per night, with ``modes.timing``), and with ``--frames
+Nights the release refuses (``ValueError``, such as a sampling rate below 12 Hz) are skipped
+and named in the log. Writes ``<out>/nights.csv`` (one row per night, with ``modes.timing``), and with ``--frames
 <cohort/night> ...`` also ``<out>/frames/<cohort>_<night>.npz`` holding each mode's jerk frames.
 
 Usage: python spectra.py <data root> <adult bundle> <out> <cohort> [...] [--frames <cohort/night> ...]
@@ -47,9 +48,13 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
     for cohort, stem in night_list:
         accel, _, origin = load_night(root, cohort, stem)
         frames = {}
-        for mode in MODES:
-            with jerk_mode(mode):
-                frames[mode], _ = features(accel, origin)
+        try:
+            for mode in MODES:
+                with jerk_mode(mode):
+                    frames[mode], _ = features(accel, origin)
+        except ValueError as e:  # a recording the release refuses, such as one sampled below 12 Hz
+            print(f"{cohort}/{stem}: skipped: {e}", flush=True)
+            continue
         rerun = np.asarray(features(accel, origin)[0], np.float64)
         f = {m: np.asarray(v, np.float64) for m, v in frames.items()}
         padding = np.all([(v == -1).all(axis=(1, 2)) for v in f.values()], axis=0)
