@@ -21,6 +21,10 @@ axes[0].legend(fontsize=8,loc="lower left")
 axes[0].set_xlabel("2–6 Hz floor density (dB re g²/Hz)\nSummed axes; senpy two-sided convention")
 axes[1].set_xlabel("Physical vector band RMS (mg)\nSelected quiet frames; includes residual motion")
 axes[1].set_xscale("log")
+axes[1].set_xlim(.45,6)
+axes[1].set_xticks([.5,1,2,5],["0.5","1","2","5"])
+from matplotlib.ticker import NullLocator
+axes[1].xaxis.set_minor_locator(NullLocator())
 for ax in axes:
  ax.set_yticks([0,1],["Galaxy: 21 windows","iPhone: 22 windows"])
  ax.set_ylim(1.4,-.4);ax.grid(axis="x",alpha=.2)
