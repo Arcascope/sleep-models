@@ -10,7 +10,8 @@ jerk mode of ``modes.py``, with the release's weights unchanged. Against ``relea
 Where the PSG uses the 0–4 coding (SleepAccel-Clinical): sleep sensitivity, wake specificity,
 κ sleep/wake, κ 4-stage and TST error (model − PSG, minutes) over PSG-scored epochs; a gap
 counts as a miss. ``paired.csv`` gives, per cohort, metric and mode, the mean difference from
-``release`` over nights, its 95% t-interval and the Wilcoxon signed-rank p.
+``release`` over participants (a participant's nights averaged first), its 95% t-interval and the
+Wilcoxon signed-rank p.
 
 Writes ``<out>/predictions/<mode>/<cohort>_<night>.csv``, ``<out>/nights.csv``,
 ``<out>/summary.csv`` (means per cohort and mode) and ``<out>/paired.csv``.
@@ -72,7 +73,7 @@ def frame(prediction) -> pd.DataFrame:
 def paired(table: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     rows = []
     for cohort, group in table.groupby("cohort", sort=False):
-        by = group.pivot(index="night", columns="mode", values=columns)
+        by = group.groupby(["participant", "mode"])[columns].mean().unstack("mode")
         for metric in columns:
             if by[metric]["release"].isna().all():
                 continue
@@ -80,16 +81,17 @@ def paired(table: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
                 d = (by[(metric, mode)] - by[(metric, "release")]).dropna().to_numpy(float)
                 half = stats.t.ppf(0.975, d.size - 1) * d.std(ddof=1) / np.sqrt(d.size)
                 p = float(stats.wilcoxon(d).pvalue) if (d != 0).any() else 1.0
-                rows.append({"cohort": cohort, "metric": metric, "mode": mode, "nights": d.size,
+                rows.append({"cohort": cohort, "metric": metric, "mode": mode, "participants": d.size,
                              "mean_difference": d.mean(), "ci_low": d.mean() - half, "ci_high": d.mean() + half,
                              "wilcoxon_p": p})
     return pd.DataFrame(rows)
 
 
-def main(root: Path, bundle: Path, out: Path, cohorts: list[str]) -> None:
+def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
+         participant=lambda cohort, stem: stem) -> None:
     predictor = load_predictor(bundle)
     rows = []
-    for cohort, stem in nights(root, cohorts):
+    for cohort, stem in night_list:
         accel, psg, origin = load_night(root, cohort, stem)
         preds = {}
         for mode in MODES:
@@ -103,7 +105,8 @@ def main(root: Path, bundle: Path, out: Path, cohorts: list[str]) -> None:
         base_sleep = np.isin(base.stage, STAGES[1:]).sum()
         for mode, pred in preds.items():
             dp = np.abs(pred[names].to_numpy() - base[names].to_numpy())
-            row = {"cohort": cohort, "night": stem, "mode": mode, "epochs": len(pred),
+            row = {"cohort": cohort, "night": stem, "participant": participant(cohort, stem), "mode": mode,
+                   "epochs": len(pred),
                    "same_stage": float(np.mean(pred.stage == base.stage)),
                    "same_stage_raw": float(np.mean(pred.stage_raw == base.stage_raw)),
                    "mean_abs_dp": float(dp.mean()), "max_abs_dp": float(dp.max()),
@@ -122,4 +125,4 @@ def main(root: Path, bundle: Path, out: Path, cohorts: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4:])
+    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), nights(Path(sys.argv[1]), sys.argv[4:]))

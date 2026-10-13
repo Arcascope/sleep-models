@@ -38,11 +38,11 @@ def summarize(d: np.ndarray, prefix: str) -> dict:
                f"{prefix}_over_1": float(np.mean(a > 1.0))})
 
 
-def main(root: Path, bundle: Path, out: Path, cohorts: list[str], keep: set[str]) -> None:
+def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]], keep: set[str]) -> None:
     out.mkdir(parents=True, exist_ok=True)
     features = load_predictor(bundle).ensemble.features
     rows = []
-    for cohort, stem in nights(root, cohorts):
+    for cohort, stem in night_list:
         accel, _, origin = load_night(root, cohort, stem)
         frames = {}
         for mode in MODES:
@@ -74,4 +74,4 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     keep = set(args[args.index("--frames") + 1:]) if "--frames" in args else set()
     args = args[: args.index("--frames")] if "--frames" in args else args
-    main(Path(args[0]), Path(args[1]), Path(args[2]), args[3:], keep)
+    main(Path(args[0]), Path(args[1]), Path(args[2]), nights(Path(args[0]), args[3:]), keep)
