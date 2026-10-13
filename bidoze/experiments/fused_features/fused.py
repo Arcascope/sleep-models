@@ -16,7 +16,15 @@ Here the work is split by what it depends on:
 
 senpy's jerk with ``use_diff=True`` is ``‖a[i] − a[i−1]‖`` (not divided by the time step), with
 0 for the first sample, on the same timestamps as the samples. This was checked against
-``senpy.compute_jerk`` on irregular timestamps.
+``senpy.compute_jerk`` on irregular timestamps. ``plan(..., jerk=...)`` sets a per-sample factor
+the jerk is multiplied by:
+
+- ``release``: 1, the release's jerk.
+- ``dt``: ``1 / (t[i] − t[i−1])``, the backward-difference jerk per second (senpy's
+  ``divide_by_dt=True``).
+- ``median_dt``: ``1 / median(Δt)``, one constant per recording.
+
+Time steps are taken as senpy takes them, from timestamps truncated to whole microseconds.
 
 The NUFFT is evaluated for ``N_MODES`` modes rather than the recording's ``nfft_padded``: a
 type-1 NUFFT's value at mode k does not depend on how many modes are requested, so the kept bins
@@ -51,10 +59,28 @@ class Plan:
     row_valid: np.ndarray  # [W] window has enough samples (else its frame holds PADDING_VALUE)
     median_fs: float
     origin_s: float
+    jerk_scale: np.ndarray  # [N] factor the jerk of each sample is multiplied by
 
 
-def plan(t: np.ndarray, origin_s: float, width: int | None = None) -> Plan:
-    """Window layout of one recording on senpy's grid (``empty_windows="keep"``)."""
+JERK_MODES = ("release", "dt", "median_dt")
+
+
+def jerk_scale(t: np.ndarray, mode: str) -> np.ndarray:
+    """Per-sample factor for ``mode``; the first sample's jerk is 0, so its factor is 1."""
+    if mode not in JERK_MODES:
+        raise ValueError(f"jerk must be one of {JERK_MODES}, got {mode!r}")
+    step = np.diff((np.asarray(t, np.float64) * 1e6).astype(np.int64)) * 1e-6
+    if mode == "release":
+        scale = np.ones_like(step)
+    elif mode == "median_dt":
+        scale = np.full_like(step, 1.0 / np.median(step))
+    else:
+        scale = np.where(step > 0, 1.0 / np.where(step > 0, step, 1.0), 0.0)
+    return np.concatenate([[1.0], scale])
+
+
+def plan(t: np.ndarray, origin_s: float, width: int | None = None, jerk: str = "release") -> Plan:
+    """Window layout of one recording on senpy's grid (``empty_windows="keep"``), and its jerk scale."""
     rec = _packing.discover(t, np.zeros((t.size, 1)), window_s=WINDOW_S, overlap_s=WINDOW_S - STEP_S,
                             ts_unit="s", origin_s=origin_s, min_samples=DEFAULT_MIN_SAMPLES)
     grid = rec.grid
@@ -67,7 +93,8 @@ def plan(t: np.ndarray, origin_s: float, width: int | None = None) -> Plan:
     local = 2.0 * np.pi * ((rec.t[index] - windows[:, None] * STEP_S) / WINDOW_S) - np.pi
     local[~mask] = 0.0
     return Plan(index=index.astype(np.int32), points=local.astype(np.float32), valid=mask,
-                row_valid=grid.valid.copy(), median_fs=float(rec.median_fs), origin_s=float(grid.origin_s))
+                row_valid=grid.valid.copy(), median_fs=float(rec.median_fs), origin_s=float(grid.origin_s),
+                jerk_scale=jerk_scale(t, jerk).astype(np.float32))
 
 
 def safe_norm(v: jax.Array) -> jax.Array:
@@ -76,10 +103,10 @@ def safe_norm(v: jax.Array) -> jax.Array:
     return jnp.where(s > 0, jnp.sqrt(jnp.where(s > 0, s, 1.0)), 0.0)
 
 
-def channels(xyz: jax.Array) -> jax.Array:
-    """``[N, 3]`` samples to ``[N, 2]``: ``|a|`` and senpy's jerk."""
+def channels(xyz: jax.Array, scale: jax.Array) -> jax.Array:
+    """``[N, 3]`` samples to ``[N, 2]``: ``|a|`` and senpy's jerk times ``scale``."""
     jerk = jnp.concatenate([jnp.zeros(1, xyz.dtype), safe_norm(xyz[1:] - xyz[:-1])])
-    return jnp.stack([safe_norm(xyz), jerk], axis=1)
+    return jnp.stack([safe_norm(xyz), jerk * scale], axis=1)
 
 
 def _bins() -> np.ndarray:
@@ -93,9 +120,9 @@ BINS = _bins()
 
 @jax.jit
 def frames(index: jax.Array, points: jax.Array, valid: jax.Array, row_valid: jax.Array, median_fs: jax.Array,
-           xyz: jax.Array) -> jax.Array:
+           jerk_scale: jax.Array, xyz: jax.Array) -> jax.Array:
     """``[W, bins, 2]`` log-PSD frames of ``|a|`` and jerk; windows without enough samples hold ``PADDING_VALUE``."""
-    signal = jnp.concatenate([channels(xyz), jnp.zeros((1, 2), xyz.dtype)])  # trailing zero for padding
+    signal = jnp.concatenate([channels(xyz, jerk_scale.astype(xyz.dtype)), jnp.zeros((1, 2), xyz.dtype)])  # trailing zero for padding
     lanes = jnp.moveaxis(signal[index], -1, 1)  # [W, 2, L]
     v = valid.astype(lanes.dtype)
     count = jnp.maximum(v.sum(axis=1), 1.0)
@@ -114,4 +141,4 @@ def frames(index: jax.Array, points: jax.Array, valid: jax.Array, row_valid: jax
 
 def device_plan(p: Plan) -> tuple:
     return (jnp.asarray(p.index), jnp.asarray(p.points), jnp.asarray(p.valid), jnp.asarray(p.row_valid),
-            jnp.asarray(p.median_fs, jnp.float32))
+            jnp.asarray(p.median_fs, jnp.float32), jnp.asarray(p.jerk_scale))
