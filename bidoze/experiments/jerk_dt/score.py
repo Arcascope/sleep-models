@@ -7,6 +7,9 @@ jerk mode of ``modes.py``, with the release's weights unchanged. Against ``relea
   ``stage_raw`` (before), and the mean and largest change in any stage probability;
 - the change in predicted total sleep time, in minutes.
 
+The release's JAX NUFFT is not bit-deterministic, so ``release`` is also predicted a second
+time (``release_rerun``); its differences from ``release`` are the noise floor.
+
 Where the PSG uses the 0–4 coding (SleepAccel-Clinical): sleep sensitivity, wake specificity,
 κ sleep/wake, κ 4-stage and TST error (model − PSG, minutes) over PSG-scored epochs; a gap
 counts as a miss. ``paired.csv`` gives, per cohort, metric and mode, the mean difference from
@@ -33,6 +36,7 @@ from modes import MODES, jerk_mode, load_night, nights
 PSG_TO_STAGE = {0: 0, 1: 1, 2: 1, 3: 2, 4: 3}
 STAGES = ["wake", "light", "deep", "rem"]
 METRICS = ["sleep_sensitivity", "wake_specificity", "kappa_sleep_wake", "kappa_4stage", "tst_error_minutes"]
+RUNS = MODES + ("release_rerun",)
 AGREEMENT = ["same_stage", "same_stage_raw", "mean_abs_dp", "max_abs_dp", "tst_change_minutes"]
 
 
@@ -77,7 +81,7 @@ def paired(table: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
         for metric in columns:
             if by[metric]["release"].isna().all():
                 continue
-            for mode in MODES[1:]:
+            for mode in RUNS[1:]:
                 d = (by[(metric, mode)] - by[(metric, "release")]).dropna().to_numpy(float)
                 half = stats.t.ppf(0.975, d.size - 1) * d.std(ddof=1) / np.sqrt(d.size)
                 p = float(stats.wilcoxon(d).pvalue) if (d != 0).any() else 1.0
@@ -94,8 +98,8 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
     for cohort, stem in night_list:
         accel, psg, origin = load_night(root, cohort, stem)
         preds = {}
-        for mode in MODES:
-            with jerk_mode(mode):
+        for mode in RUNS:
+            with jerk_mode(mode.removesuffix("_rerun")):
                 preds[mode] = frame(predictor.predict(accel, origin))
             target = out / "predictions" / mode / f"{cohort}_{stem}.csv"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -112,7 +116,7 @@ def main(root: Path, bundle: Path, out: Path, night_list: list[tuple[str, str]],
                    "mean_abs_dp": float(dp.mean()), "max_abs_dp": float(dp.max()),
                    "tst_change_minutes": 0.5 * float(np.isin(pred.stage, STAGES[1:]).sum() - base_sleep)}
             rows.append(row | (psg_metrics(psg, pred) if psg is not None else {}))
-        print(f"{cohort}/{stem}", {r["mode"]: round(r["same_stage"], 4) for r in rows[-len(MODES):]}, flush=True)
+        print(f"{cohort}/{stem}", {r["mode"]: round(r["same_stage"], 4) for r in rows[-len(RUNS):]}, flush=True)
     table = pd.DataFrame(rows)
     table.to_csv(out / "nights.csv", index=False, float_format="%.6g")
     columns = AGREEMENT + [m for m in METRICS if m in table.columns]
