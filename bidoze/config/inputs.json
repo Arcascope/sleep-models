@@ -1,6 +1,6 @@
 {
     "type": "nufft",
-    "cache_prefix": "12Hz_log_PSD_aligned_lowpass6",
+    "cache_prefix": "12Hz_log_PSD_aligned_jerkdt",
     "nufft_backend": "jax",
     "nufft_backend_kwargs": {
       "eps": 1e-6
@@ -13,7 +13,6 @@
     "spectral_channels": ["mag", "jerk"],
     "normalization_mode": "none",
     "jerk_diff": true,
-    "jerk_lowpass_hz": 6.0,
     "detrend": true,
     "spectrogram_kind": "log_psd"
 }
