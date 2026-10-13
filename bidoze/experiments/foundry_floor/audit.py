@@ -72,7 +72,7 @@ def main():
     original=pd.read_csv(a.legacy_summary).set_index("window")
     rows=[]
     for device in ("Eric-Galaxy","Eric-iPhone"):
-        files=sorted((a.root/"cleaned_accelerometer").glob(device+"-*_accelerometer.csv"))
+        files=sorted(p for p in (a.root/"cleaned_accelerometer").glob(device+"-*_accelerometer.csv") if p.name in original.index)
         if a.limit_per_device:files=files[:a.limit_per_device]
         for path in files:
             dest=a.out/"windows"/path.stem;dest.mkdir(parents=True,exist_ok=True)
