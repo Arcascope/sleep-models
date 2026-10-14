@@ -1,0 +1,13 @@
+{
+  "mode": "transfer",
+  "train_sets": [
+    "weaver_revised"
+  ],
+  "test_sets": [
+    "SleepAccel",
+    "SleepAccel-Clinical",
+    "weaver_revised"
+  ],
+  "validation_sets": [],
+  "n_splits": 5
+}

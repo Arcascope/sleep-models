@@ -20,7 +20,8 @@ LR_SCHEDULES = frozenset({"cosine", "constant", "exponential"})
 TRAINABLE_SCOPES = frozenset({"all", "gate_head"})
 # "curriculum" is the staged focal-loss fit with deblip and SWA; "balanced" is
 # the class-balanced cross-entropy fit with plateau drops and early stopping on
-# a held-out share of the training subjects (Olsen et al., Section II-E).
+# a held-out share of the training subjects, or on cv.json's validation sets
+# when it names any (Olsen et al., Section II-E).
 RECIPES = frozenset({"curriculum", "balanced"})
 CURRICULUM_ONLY_KEYS = (
     "sliding_copies",
@@ -44,6 +45,8 @@ BALANCED_ONLY_KEYS = (
     "early_stop_patience",
     "eval_smoothing_steps",
     "eval_fraction",
+    "init_weights",
+    "distill_from",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -89,6 +92,12 @@ class TrainingConfig:
     eval_smoothing_steps: int = 0
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
+    # A release bundle or a checkpoint (.pisces) whose weights the fit starts from; None starts
+    # from random weights. The starting weights are scored as epoch 0, so the fit keeps them
+    # unless an epoch beats them.
+    init_weights: str | None = None
+    # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
+    distill_from: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -299,7 +308,6 @@ def _check_balanced_cv(config: RunConfig) -> None:
     cv = config.cv
     unused = {
         "deblip_sets": bool(cv.deblip_sets),
-        "validation_sets": bool(cv.validation_sets),
         "train_batch_sampling": cv.train_batch_sampling.mode != "disabled",
         "subsample_to_smallest": cv.subsample_to_smallest,
     }
@@ -316,18 +324,22 @@ def _train_fold_balanced(
     split_seed: int,
     features: Mapping[SubjectRef, ModelIOBundle],
 ):
-    """The ``recipe='balanced'`` fit, early-stopping on a held-out share of the subjects."""
+    """The ``recipe='balanced'`` fit, early-stopping on the validation sets or a held-out share."""
     from arcasleep_bidoze.model import BiDozeNetModel
 
     _check_balanced_cv(config)
     training: TrainingConfig = config.training
-    fit_refs, eval_refs = split_train_eval(
-        fold.train_subjects, training.eval_fraction, split_seed
-    )
-    print(
-        f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
-        f"(fraction {training.eval_fraction}, seed {split_seed})"
-    )
+    if fold.val_subjects:
+        fit_refs, eval_refs = sorted(fold.train_subjects), sorted(fold.val_subjects)
+        print(f"  train/eval: {len(fit_refs)} fit, {len(eval_refs)} eval (validation sets)")
+    else:
+        fit_refs, eval_refs = split_train_eval(
+            fold.train_subjects, training.eval_fraction, split_seed
+        )
+        print(
+            f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
+            f"(fraction {training.eval_fraction}, seed {split_seed})"
+        )
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
     X_fit, y_fit = assemble_batch(
@@ -340,8 +352,15 @@ def _train_fold_balanced(
     )
     print(f"  fit  X: {X_fit.shape}  y: {y_fit.shape}")
     print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
+    soft_targets = None
+    if training.distill_from is not None:
+        soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
+        print(f"  distilling the mean output of the teachers in {training.distill_from}")
 
     model = BiDozeNetModel(config.model)
+    if training.init_weights is not None:
+        _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
+        print(f"  starting from the weights of {training.init_weights}")
     history = model.fit_balanced(
         X_fit,
         y_fit,
@@ -354,6 +373,8 @@ def _train_fold_balanced(
         patience=training.patience,
         max_epochs=training.epochs,
         fit_seed=fit_seed,
+        soft_targets=soft_targets,
+        score_start=training.init_weights is not None,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
@@ -389,3 +410,44 @@ def _run_final_deblip(
         target_logits=target_logits,
         target_logit_pairing_weight=training.deblip_logit_weight,
     )
+
+
+def _load_init_weights(model, source: Path, input_shape: tuple[int, ...] | None = None) -> None:
+    """Load a release bundle's or a checkpoint's (.pisces) weights into ``model``, whose
+    architecture must be the source's."""
+    import dataclasses
+    import json
+
+    from arcasleep.models import MODEL_TYPE_KEY
+    from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
+
+    if source.suffix == ".pisces":
+        loaded = BiDozeNetModel.loadz(source, input_shape=input_shape)
+        # Compared as JSON: a checkpoint's config holds lists where model.json's may hold tuples.
+        def as_json(config) -> dict:
+            return json.loads(json.dumps(dataclasses.asdict(config)))
+
+        if as_json(loaded.config) != as_json(model.config):
+            raise ValueError(f"model.json differs from the architecture of {source}")
+        model.input_shape = loaded.input_shape
+        model.params = loaded.params
+        model.model = {"params": model.params}
+        return
+    bundle_config = json.loads((source / "config.json").read_text())
+    bundle_config.pop(MODEL_TYPE_KEY, None)
+    if BiDozeNetConfig.from_dict(bundle_config) != model.config:
+        raise ValueError(f"model.json differs from the architecture of {source}")
+    model.load_weights_safetensors(source / "model.safetensors")
+
+
+def teacher_probabilities(teacher_dir: Path, X: np.ndarray, batch_size: int = 4) -> np.ndarray:
+    """The mean 5-way output of every checkpoint in ``teacher_dir`` on the rows of ``X``."""
+    from arcasleep_bidoze.adult import StackedModel
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    paths = sorted(teacher_dir.glob("*.pisces"))
+    if not paths:
+        raise ValueError(f"no teacher checkpoints (*.pisces) in {teacher_dir}")
+    teachers = StackedModel([BiDozeNetModel.loadz(p, input_shape=X.shape[1:]) for p in paths])
+    log_mean = [teachers.infer(X[i : i + batch_size]) for i in range(0, X.shape[0], batch_size)]
+    return np.exp(np.concatenate(log_mean, axis=0))

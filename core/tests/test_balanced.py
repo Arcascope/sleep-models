@@ -3,9 +3,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from pisces_lite.cv import SubjectRef
+
+from arcasleep.data.cache import participant_id
 from arcasleep.data.constants import GAP_LABEL
 from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
-from arcasleep.training.balanced import Patience, Plateau, PlateauDecision, selection_confusion
+from arcasleep.training.balanced import (
+    Patience,
+    Plateau,
+    PlateauDecision,
+    selection_confusion,
+    split_train_eval,
+)
 
 
 def test_a_scored_epoch_predicted_as_gap_counts_as_a_miss() -> None:
@@ -96,3 +105,19 @@ def test_an_evaluation_without_a_kappa_is_left_out_of_the_smoothing() -> None:
 def test_an_impossible_patience_is_refused(kwargs: dict) -> None:
     with pytest.raises(ValueError):
         Patience(**{"lr_drop": 1, "early_stop": 2, **kwargs})
+
+
+def test_the_eval_holdout_keeps_every_recording_of_a_participant_on_one_side() -> None:
+    refs = [
+        SubjectRef(dataset, f"{child}_{recording}")
+        for child in [f"child{i:02d}" for i in range(20)]
+        for dataset, recording in [("devices", "apple_n1"), ("devices", "fitbit_n1"), ("nights", "n2")]
+    ] + [SubjectRef("single", f"solo{i:02d}") for i in range(10)]
+
+    for seed in range(5):
+        fit, held_out = split_train_eval(refs, 0.3, seed)
+        fit_participants = {participant_id(r.subject_id) for r in fit}
+        eval_participants = {participant_id(r.subject_id) for r in held_out}
+        assert fit_participants.isdisjoint(eval_participants)
+        assert len(eval_participants) == 9
+        assert sorted(fit + held_out) == sorted(refs)

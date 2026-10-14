@@ -11,6 +11,12 @@
 ARG DEPS_IMAGE
 FROM ${DEPS_IMAGE}
 
+# The feature cache comes first: it is the largest layer and changes least, so a
+# code or config change rebuilds and pushes only the small layers above it.
+WORKDIR /opt/bidoze
+COPY --from=data /data/feature_cache ./feature_cache
+COPY --from=data /data/manifest.jsonl ./build/manifest/manifest.jsonl
+
 # The build context is the repository root: the arcasleep distribution holds
 # the shared code and every model family. The image has no .git, so the
 # version setuptools-scm would read from a tag is supplied instead.
@@ -28,9 +34,7 @@ RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PACKAGE_VERSION} \
 WORKDIR /opt/bidoze
 COPY bidoze/config ./config
 COPY bidoze/scripts ./scripts
-
-COPY --from=data /data/feature_cache ./feature_cache
-COPY --from=data /data/manifest.jsonl ./build/manifest/manifest.jsonl
+COPY bidoze/experiments ./experiments
 
 # The code half of the run fingerprint. There is no git and no .git dir in
 # this image, so the commit has to be baked in at build time; build_train_image.sh
