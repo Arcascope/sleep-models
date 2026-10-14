@@ -51,6 +51,23 @@ arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
 arcasleep unet train | evaluate | publish | predict
 ```
 
+### Tab completion
+
+Install the `completion` extra, then register the shell hook once:
+
+```bash
+pip install "arcasleep[completion]"
+eval "$(register-python-argcomplete arcasleep)"          # bash, zsh
+register-python-argcomplete --shell fish arcasleep | source   # fish
+```
+
+Add the `eval` line to `~/.bashrc` or `~/.zshrc` to keep it across sessions. In
+zsh, run `autoload -U bashcompinit && bashcompinit` before it if `compdef` or
+`complete` is not found. After that, `arcasleep hyp<Tab>` completes to
+`arcasleep hypnogram`, `arcasleep bidoze <Tab>` lists `train`, `evaluate`,
+`publish` and `predict`, and `--<Tab>` lists the options of the command typed so
+far. Without the extra, the CLI works the same but does not complete.
+
 ## Models
 
 The current pediatric model variants are trained on the clinical pediatric pool described in [Weaver et al. 2026](https://pubmed.ncbi.nlm.nih.gov/40676371/). This set has subjects with no recorded diagnosis (n=37), as well as mild (n=94), moderate (n=33), and severe (n=38) obstructive sleep apnea (OSA). We are grateful to Glenn Weaver and his group for sharing their data with us.

@@ -1229,7 +1229,16 @@ def _extra_for(module: str | None, family: str | None) -> str | None:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    try:
+        import argcomplete
+    except ModuleNotFoundError:
+        pass
+    else:
+        # Answers a shell's tab-completion request and exits; does nothing
+        # in a normal run.
+        argcomplete.autocomplete(parser)
+    args = parser.parse_args()
     try:
         return int(args.handler(args))
     except ModuleNotFoundError as exc:
