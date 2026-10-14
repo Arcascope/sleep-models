@@ -43,16 +43,18 @@ from arcasleep.data.bundle import CacheBundle
 from arcasleep.data.cache import CACHE_SUFFIX
 from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key
 from arcasleep.ggir import anglez_bins, epoch_bins
+from arcasleep.processing import (
+    FeatureExtractionError,
+    clean_accelerometer_rows,
+    frames_per_label,
+    median_sampling_rate,
+)
 from arcasleep.data.constants import MIN_SCORED_MINUTES
 
 
 ADAPTER_FILENAME = "pisces_lite_adapter.py"
 
 __all__ = ["MIN_SCORED_MINUTES"]
-
-
-class FeatureExtractionError(RuntimeError):
-    """A subject could not be turned into features, with the reason attached."""
 
 
 @dataclass(frozen=True)
@@ -68,40 +70,9 @@ class PreparedSubject:
     anglez_bins: tuple[np.ndarray, np.ndarray] | None = None
 
 
-def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
-    """Drop invalid rows and enforce strictly increasing timestamps."""
-    acc = np.asarray(accel, dtype=np.float64)
-    acc = acc[np.all(np.isfinite(acc), axis=1)]
-    if acc.shape[0] < 2:
-        raise FeatureExtractionError("need at least two finite accelerometer rows")
-    acc = acc[np.argsort(acc[:, 0], kind="mergesort")]
-    acc = acc[np.concatenate([[True], np.diff(acc[:, 0]) > 0])]
-    if acc.shape[0] < 2:
-        raise FeatureExtractionError(
-            "need at least two accelerometer rows with distinct timestamps"
-        )
-    return acc
-
-
 def scored_minutes(labels: np.ndarray) -> float:
     """Minutes of actually-staged PSG in a recording."""
     return float(np.count_nonzero(np.asarray(labels) >= 0)) * (PSG_DT / 60.0)
-
-
-def frames_per_label(processing_config: ProcessingConfig) -> int:
-    """Feature frames per PSG epoch: ``PSG_DT / window_step_seconds``.
-
-    1 for the canonical 30 s-hop configs, 15 for the 12 Hz log-PSD config's 2 s
-    hop. The hop must divide the PSG epoch evenly, or X and y would drift apart
-    over the night.
-    """
-    step = float(processing_config.window_step_seconds)
-    ratio = float(PSG_DT) / step
-    if abs(ratio - round(ratio)) > 1e-9 or ratio < 1.0:
-        raise ValueError(
-            f"window_step_seconds={step} must evenly divide the {PSG_DT}s PSG epoch"
-        )
-    return int(round(ratio))
 
 
 def _match_dataset(
@@ -281,13 +252,6 @@ def _init_load_worker(
     _LOAD_STATE["data_set"] = load_dataset(dataset_dir, name)
     _LOAD_STATE["min_scored_minutes"] = min_scored_minutes
     _LOAD_STATE["target_fs"] = target_fs
-
-
-def median_sampling_rate(timestamps: np.ndarray) -> float:
-    """Median rate over positive steps, as senpy measures it for its window grid."""
-    steps = np.diff(np.asarray(timestamps, dtype=np.float64))
-    steps = np.sort(steps[steps > 0.0])
-    return 1.0 / float(steps[steps.size // 2]) if steps.size else 0.0
 
 
 def _load_one(subject_id: str, cache_id: str) -> tuple[str, object]:

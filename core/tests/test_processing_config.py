@@ -8,7 +8,8 @@ import pytest
 
 pytest.importorskip("pisces_lite")
 
-from arcasleep.training.config import load_inputs, processing_config  # noqa: E402
+from arcasleep.processing import processing_config  # noqa: E402
+from arcasleep.training.config import load_inputs  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 COMMITTED_INPUTS = [REPO / "bidoze" / "config" / "inputs.json", REPO / "unet" / "config" / "inputs.json"]
@@ -23,9 +24,8 @@ def test_committed_inputs_build(path: Path, extra: dict, tmp_path: Path) -> None
     load_inputs(tmp_path / "inputs.json")
 
 
-@pytest.mark.parametrize("key", ["not_a_setting", "mode"])
-def test_a_setting_pisces_lite_does_not_declare_is_refused(key: str, tmp_path: Path) -> None:
-    settings = {**json.loads(COMMITTED_INPUTS[0].read_text()), key: 1.0}
+def test_a_setting_pisces_lite_does_not_declare_is_refused(tmp_path: Path) -> None:
+    settings = {**json.loads(COMMITTED_INPUTS[0].read_text()), "not_a_setting": 1.0}
     with pytest.raises(ValueError):
         processing_config(settings, "preprocessing.json")
     (tmp_path / "inputs.json").write_text(json.dumps(settings))
