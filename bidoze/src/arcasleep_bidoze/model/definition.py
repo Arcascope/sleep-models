@@ -29,6 +29,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from arcasleep.data.batching import pad_recording_input
 from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
@@ -3179,6 +3180,8 @@ class BiDozeNetModel(CVModel):
         class_sample_max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
+        transfer_x: Sequence[np.ndarray] | None = None,
+        transfer_targets: np.ndarray | None = None,
         score_start: bool = False,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
@@ -3197,7 +3200,11 @@ class BiDozeNetModel(CVModel):
         With ``soft_targets`` ``(B, T, output_classes)``, the fit distills: each
         step draws whole rows uniformly and the loss is the cross-entropy against
         those probabilities over every epoch of the row, scored or not. The labels
-        then serve only the eval kappa.
+        then serve only the eval kappa. ``transfer_x`` adds unlabelled recordings to
+        the draws, each an unpadded model input padded to the fit length when it is
+        drawn, with ``transfer_targets`` ``(len(transfer_x), T, output_classes)`` as
+        their probabilities. An epoch still draws as many rows as there are training
+        rows, so the eval cadence and the patience do not depend on the transfer set.
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
@@ -3249,12 +3256,23 @@ class BiDozeNetModel(CVModel):
             updates, opt_state = tx.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), opt_state, loss
 
+        transfer_x = list(transfer_x) if transfer_x is not None else []
         if soft_targets is not None:
             soft_targets = np.asarray(soft_targets, dtype=np.float32)
             if soft_targets.shape != (*train_y.shape, output_classes):
                 raise ValueError(
                     f"soft_targets must be {(*train_y.shape, output_classes)}, got {soft_targets.shape}"
                 )
+            if transfer_x:
+                transfer_shape = (len(transfer_x), train_y.shape[1], output_classes)
+                if transfer_targets is None or transfer_targets.shape != transfer_shape:
+                    got = None if transfer_targets is None else transfer_targets.shape
+                    raise ValueError(f"transfer_targets must be {transfer_shape}, got {got}")
+                soft_targets = np.concatenate(
+                    [soft_targets, np.asarray(transfer_targets, dtype=np.float32)]
+                )
+        elif transfer_x:
+            raise ValueError("transfer_x needs soft_targets: a transfer set is only distilled")
 
         @jax.jit
         def eval_logits(params, xb, mb):
@@ -3301,10 +3319,20 @@ class BiDozeNetModel(CVModel):
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
             if soft_targets is not None:
-                # Whole rows, drawn uniformly; the loss covers every epoch of a row.
-                drawn = rng.integers(train_x.shape[0], size=steps_per_epoch * batch_size)
-                xs, targets = train_x[drawn], soft_targets[drawn]
+                # Whole rows, drawn uniformly over the training and transfer rows; the
+                # loss covers every epoch of a row.
+                drawn = rng.integers(soft_targets.shape[0], size=steps_per_epoch * batch_size)
                 ms = np.ones((len(drawn), train_y.shape[1] * fpe), dtype=np.float32)
+
+                def batch_inputs(batch: slice):
+                    picked = drawn[batch]
+                    xb = np.stack([
+                        train_x[r] if r < train_x.shape[0]
+                        else pad_recording_input(transfer_x[r - train_x.shape[0]], train_x.shape[1] // fpe, fpe)
+                        for r in picked
+                    ])
+                    return xb, ms[batch], soft_targets[picked]
+
                 step_fn = distill_step
             else:
                 # Rows are already the fit length, so each draw is a whole row.
@@ -3320,17 +3348,22 @@ class BiDozeNetModel(CVModel):
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
+
+                def batch_inputs(batch: slice):
+                    return xs[batch], ms[batch], targets[batch]
+
                 step_fn = train_step
             epoch_loss = 0.0
             for step in range(steps_per_epoch):
                 batch = slice(step * batch_size, (step + 1) * batch_size)
+                xb, mb, tb = batch_inputs(batch)
                 rng_key, step_key = jax.random.split(rng_key)
                 params, opt_state, loss = step_fn(
                     params,
                     opt_state,
-                    jnp.asarray(xs[batch]),
-                    jnp.asarray(ms[batch]),
-                    jnp.asarray(targets[batch]),
+                    jnp.asarray(xb),
+                    jnp.asarray(mb),
+                    jnp.asarray(tb),
                     step_key,
                 )
                 epoch_loss += float(loss)

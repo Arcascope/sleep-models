@@ -1,7 +1,7 @@
 """The BiDoze training recipe: its ``training.json`` and one fold's fit."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -9,7 +9,9 @@ import numpy as np
 from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
-from arcasleep.data.batching import assemble_batch
+from arcasleep.data.batching import assemble_batch, pad_recording_input, recording_input
+from arcasleep.data.bundle import CacheBundle
+from arcasleep.data.cache import CACHE_SUFFIX, participant_id
 from arcasleep.training.balanced import Patience, split_train_eval
 from arcasleep.training.config import RunConfig, read_json, reject_unknown, require_one_of
 from arcasleep.training.folds import DatasetIndex, deblip_subjects_for_fold
@@ -47,6 +49,7 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "distill_transfer_dir",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +101,10 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # A directory of cached recordings (*_features.npz) whose teachers' mean output the
+    # student also learns; their labels are not used. Recordings of a participant in the
+    # early-stopping holdout or the fold's test sets are left out.
+    distill_transfer_dir: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -178,6 +185,8 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+        if self.distill_transfer_dir is not None and self.distill_from is None:
+            raise ValueError("training.json: distill_transfer_dir needs distill_from")
 
     @property
     def patience(self) -> Patience:
@@ -353,9 +362,33 @@ def _train_fold_balanced(
     print(f"  fit  X: {X_fit.shape}  y: {y_fit.shape}")
     print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
     soft_targets = None
+    transfer_x, transfer_targets = None, None
     if training.distill_from is not None:
         soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
         print(f"  distilling the mean output of the teachers in {training.distill_from}")
+        fit_lengths = [min(features[ref].y.shape[1], training.y_length) for ref in fit_refs]
+        top = [_mean_top_probability(soft_targets, fit_lengths)]
+        if training.distill_transfer_dir is not None:
+            held_out = {participant_id(ref.subject_id) for ref in [*eval_refs, *fold.test_subjects]}
+            transfer_x, skipped = transfer_inputs(
+                Path(training.distill_transfer_dir), held_out, training.x_length, frames_per_epoch
+            )
+            if not transfer_x:
+                raise ValueError(f"every recording in {training.distill_transfer_dir} is held out or tested")
+            transfer_targets = teacher_probabilities(
+                Path(training.distill_from), transfer_x,
+                pad_to=training.x_length, frames_per_epoch=frames_per_epoch,
+            )
+            transfer_lengths = [x.shape[0] // frames_per_epoch for x in transfer_x]
+            top.append(_mean_top_probability(transfer_targets, transfer_lengths))
+            print(
+                f"  transfer: {len(transfer_x)} recordings from {training.distill_transfer_dir}, "
+                f"{skipped} left out (participants held out or tested)"
+            )
+        print(
+            "  teachers' mean top-class probability over recorded epochs: "
+            + ", ".join(f"{name} {p:.4f}" for name, p in zip(["fit", "transfer"], top))
+        )
 
     model = BiDozeNetModel(config.model)
     if training.init_weights is not None:
@@ -374,6 +407,8 @@ def _train_fold_balanced(
         max_epochs=training.epochs,
         fit_seed=fit_seed,
         soft_targets=soft_targets,
+        transfer_x=transfer_x,
+        transfer_targets=transfer_targets,
         score_start=training.init_weights is not None,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
@@ -440,14 +475,56 @@ def _load_init_weights(model, source: Path, input_shape: tuple[int, ...] | None 
     model.load_weights_safetensors(source / "model.safetensors")
 
 
-def teacher_probabilities(teacher_dir: Path, X: np.ndarray, batch_size: int = 4) -> np.ndarray:
-    """The mean 5-way output of every checkpoint in ``teacher_dir`` on the rows of ``X``."""
+def teacher_probabilities(
+    teacher_dir: Path,
+    X: np.ndarray | Sequence[np.ndarray],
+    batch_size: int = 4,
+    *,
+    pad_to: int | None = None,
+    frames_per_epoch: int = 1,
+) -> np.ndarray:
+    """The mean 5-way output of every checkpoint in ``teacher_dir`` on the rows of ``X``.
+
+    ``X`` is padded rows; with ``pad_to``, it is unpadded model inputs, each padded to
+    ``pad_to`` epochs as the fit pads its rows.
+    """
     from arcasleep_bidoze.adult import StackedModel
     from arcasleep_bidoze.model import BiDozeNetModel
+
+    def rows(i: int) -> np.ndarray:
+        if pad_to is None:
+            return np.asarray(X[i : i + batch_size])
+        return np.stack([pad_recording_input(x, pad_to, frames_per_epoch) for x in X[i : i + batch_size]])
 
     paths = sorted(teacher_dir.glob("*.pisces"))
     if not paths:
         raise ValueError(f"no teacher checkpoints (*.pisces) in {teacher_dir}")
-    teachers = StackedModel([BiDozeNetModel.loadz(p, input_shape=X.shape[1:]) for p in paths])
-    log_mean = [teachers.infer(X[i : i + batch_size]) for i in range(0, X.shape[0], batch_size)]
+    input_shape = rows(0).shape[1:]
+    teachers = StackedModel([BiDozeNetModel.loadz(p, input_shape=input_shape) for p in paths])
+    log_mean = [teachers.infer(rows(i)) for i in range(0, len(X), batch_size)]
     return np.exp(np.concatenate(log_mean, axis=0))
+
+
+def transfer_inputs(
+    directory: Path, held_out: set[str], x_length: int, frames_per_epoch: int
+) -> tuple[list[np.ndarray], int]:
+    """The unpadded float32 model inputs of the cached recordings in ``directory``, cut to
+    ``x_length`` epochs, without those of the ``held_out`` participants; and how many
+    recordings were left out."""
+    inputs, skipped = [], 0
+    paths = sorted(directory.glob(f"*{CACHE_SUFFIX}"))
+    if not paths:
+        raise ValueError(f"no cached recordings (*{CACHE_SUFFIX}) in {directory}")
+    for path in paths:
+        bundle = CacheBundle.from_npz(path)
+        if participant_id(str(bundle.subject_ids[0])) in held_out:
+            skipped += 1
+            continue
+        x = recording_input(bundle.X[0], bundle.y.shape[1], frames_per_epoch)
+        inputs.append(np.asarray(x[: x_length * frames_per_epoch], dtype=np.float32))
+    return inputs, skipped
+
+
+def _mean_top_probability(probabilities: np.ndarray, lengths: Sequence[int]) -> float:
+    """The mean, over every recorded epoch of every row, of the most probable class's probability."""
+    return float(np.concatenate([probabilities[i, :n].max(axis=-1) for i, n in enumerate(lengths)]).mean())
