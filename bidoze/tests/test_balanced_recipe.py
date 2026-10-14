@@ -135,7 +135,7 @@ def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> 
 
 @pytest.mark.parametrize(
     "cv_overrides",
-    [{"deblip_sets": ["CohortA"]}, {"validation_sets": ["CohortC"]}],
+    [{"deblip_sets": ["CohortA"]}],
 )
 def test_cv_options_the_balanced_recipe_does_not_use_are_refused(
     tmp_path: Path, cv_overrides: dict
@@ -174,3 +174,151 @@ def test_a_fit_with_no_finite_eval_kappa_refuses_to_pick_an_epoch(tmp_path: Path
             batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
             patience=Patience(lr_drop=1, early_stop=2), max_epochs=3, fit_seed=0,
         )
+
+
+def test_balanced_recipe_early_stops_on_validation_sets(tmp_path: Path) -> None:
+    config = _configs(tmp_path / "config", cv_overrides={"validation_sets": ["CohortC"]})
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(3)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0"], epochs=9)
+    _write_cache(cache_root / "test", "CohortC", ["c0", "c1"], epochs=10)
+    results = tmp_path / "results" / "training"
+
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="test")
+
+    (checkpoint,) = (results / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def _release(directory: Path, config) -> Path:
+    from arcasleep.models import MODEL_TYPE_KEY
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    model = BiDozeNetModel(config)
+    model._ensure_built((16, 5, 2), seed=7)
+    directory.mkdir(parents=True)
+    model.save_weights_safetensors(directory / "model.safetensors")
+    model_json = json.loads((directory.parent / "config" / "model.json").read_text())
+    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **model_json}))
+    return directory
+
+
+def test_a_fit_can_start_from_a_release_bundles_weights(tmp_path: Path) -> None:
+    import jax
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    config = _configs(tmp_path / "config").model
+    bundle = _release(tmp_path / "release", config)
+    model = BiDozeNetModel(config)
+
+    _load_init_weights(model, bundle)
+
+    source = BiDozeNetModel(config)
+    source.load_weights_safetensors(bundle / "model.safetensors")
+    for a, b in zip(jax.tree_util.tree_leaves(model.params),
+                    jax.tree_util.tree_leaves(source.params), strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_a_fit_can_start_from_a_checkpoints_weights(tmp_path: Path) -> None:
+    import jax
+
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    config = _configs(tmp_path / "config").model
+    source = BiDozeNetModel(config)
+    source._ensure_built((16, 5, 2), seed=3)
+    source.savez(tmp_path / "teacher.pisces")
+    model = BiDozeNetModel(config)
+
+    _load_init_weights(model, tmp_path / "teacher.pisces", (16, 5, 2))
+
+    for a, b in zip(jax.tree_util.tree_leaves(model.params),
+                    jax.tree_util.tree_leaves(source.params), strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_a_fit_scored_from_its_start_keeps_the_best_of_start_and_epochs(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    config = _configs(tmp_path / "config").model
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(4, 16, 5, 2)).astype(np.float32)
+    y = rng.integers(0, 4, size=(4, 16)).astype(np.int32)
+    model = BiDozeNetModel(config)
+    model._ensure_built(x.shape[1:], seed=0)
+
+    history = model.fit_balanced(
+        x, y, x, y, batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.0,
+        patience=TrainingConfig.from_dict(BALANCED_TRAINING).patience, max_epochs=2, fit_seed=0,
+        score_start=True,
+    )
+
+    assert 0 <= history["best_epoch"] <= 2
+    assert history["best_eval_kappa"] >= max(history["eval_kappa"])
+
+
+def test_starting_weights_from_another_architecture_are_refused(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import _load_init_weights
+
+    bundle = _release(tmp_path / "release", _configs(tmp_path / "config").model)
+    wider = _configs(tmp_path / "wider", {"d_model": 32}).model
+
+    with pytest.raises(ValueError):
+        _load_init_weights(BiDozeNetModel(wider), bundle)
+
+
+def test_init_weights_is_a_balanced_recipe_option() -> None:
+    TrainingConfig.from_dict({**BALANCED_TRAINING, "init_weights": "release"})
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict(
+            {**BALANCED_TRAINING, "recipe": "curriculum", "init_weights": "release"}
+        )
+
+
+def test_a_fit_distills_the_mean_output_of_teacher_checkpoints(tmp_path: Path) -> None:
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
+    teachers = tmp_path / "teachers" / "training"
+    run_training(_configs(tmp_path / "teacher-config"), RunPaths(results=teachers, feature_cache=cache_root),
+                 run_id="teacher")
+
+    config = _configs(tmp_path / "config")
+    training = {**BALANCED_TRAINING, "distill_from": str(teachers / "model_outputs")}
+    (tmp_path / "config" / "training.json").write_text(json.dumps(training))
+    config = RunConfig.from_paths(
+        family=BIDOZE,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    student = tmp_path / "student" / "training"
+    run_training(config, RunPaths(results=student, feature_cache=cache_root), run_id="student")
+
+    (checkpoint,) = (student / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def test_teacher_probabilities_are_a_distribution(tmp_path: Path) -> None:
+    from arcasleep_bidoze.model import BiDozeNetModel
+    from arcasleep_bidoze.training import teacher_probabilities
+
+    config = _configs(tmp_path / "config").model
+    for seed in range(2):
+        model = BiDozeNetModel(config)
+        model._ensure_built((16, 5, 2), seed=seed)
+        model.savez(tmp_path / f"model_seed_{seed}.pisces")
+    x = np.random.default_rng(0).normal(size=(3, 16, 5, 2)).astype(np.float32)
+
+    p = teacher_probabilities(tmp_path, x)
+
+    assert p.shape == (3, 16, config.output_classes)
+    np.testing.assert_allclose(p.sum(axis=-1), 1.0, rtol=1e-5)

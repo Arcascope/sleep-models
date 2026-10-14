@@ -109,6 +109,7 @@ def plan_splits(
     n_splits: int,
     seed: int = 0,
     provenance: dict | None = None,
+    group_separator: str | None = None,
 ) -> SplitPlan:
     """Assign subjects to ``n_splits`` near-equal folds, once.
 
@@ -116,21 +117,39 @@ def plan_splits(
     plan from the same cohort reproduces it. That reproducibility is a
     convenience for review, not the guarantee -- the guarantee is the committed
     file.
+
+    With ``group_separator``, subjects whose ids share the part before the
+    first separator are one participant, and a participant's subjects are
+    all placed in the same fold. Folds are then near-equal in subjects as
+    far as participant sizes allow.
     """
     if n_splits < 2:
         raise ValueError(f"n_splits must be at least 2, got {n_splits}")
     ordered = sorted(set(subject_ids))
-    if len(ordered) < n_splits:
+    if group_separator is None:
+        groups = [[sid] for sid in ordered]
+    else:
+        by_participant: Dict[str, List[str]] = {}
+        for sid in ordered:
+            by_participant.setdefault(sid.split(group_separator, 1)[0], []).append(sid)
+        groups = [by_participant[p] for p in sorted(by_participant)]
+    if len(groups) < n_splits:
         raise ValueError(
-            f"cohort {cohort!r} has {len(ordered)} subjects; cannot make {n_splits} folds"
+            f"cohort {cohort!r} has {len(groups)} participants; cannot make {n_splits} folds"
         )
-    shuffled = [ordered[i] for i in np.random.default_rng(seed).permutation(len(ordered))]
-    chunks = np.array_split(np.arange(len(shuffled)), n_splits)
+    shuffled = [groups[i] for i in np.random.default_rng(seed).permutation(len(groups))]
+    if group_separator is None:
+        chunks = [[shuffled[j] for j in chunk] for chunk in np.array_split(np.arange(len(shuffled)), n_splits)]
+    else:
+        # Each participant goes to the fold holding the fewest subjects so far.
+        chunks = [[] for _ in range(n_splits)]
+        for group in shuffled:
+            min(chunks, key=lambda c: sum(len(g) for g in c)).append(group)
     plan = SplitPlan(
         cohort=cohort,
         n_splits=n_splits,
         folds={
-            fold_dataset_name(cohort, i): sorted(shuffled[j] for j in chunk)
+            fold_dataset_name(cohort, i): sorted(sid for group in chunk for sid in group)
             for i, chunk in enumerate(chunks)
         },
         seed=seed,

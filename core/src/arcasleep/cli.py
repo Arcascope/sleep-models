@@ -198,10 +198,12 @@ def _splits_plan(args: argparse.Namespace) -> int:
         cohort=cohort,
         n_splits=n_splits,
         seed=args.seed,
+        group_separator=args.group_separator,
         provenance={
             "cache_dir": str(cache_dir),
             "external_test_sets": external,
             "subject_count": len(ids),
+            "group_separator": args.group_separator,
             # The bytes this split was drawn from. Without it, a plan and a
             # cache that disagree look identical to one that agrees.
             DATA_DIGEST_KEY: digest,
@@ -1147,6 +1149,10 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("-cvc", "--cv-config", required=True)
     plan.add_argument("--output", required=True)
     plan.add_argument("--seed", type=int, default=0)
+    plan.add_argument(
+        "--group-separator",
+        help="keep subjects whose ids share the part before this separator in one fold",
+    )
     plan.set_defaults(handler=_splits_plan)
 
     apply_ = commands.add_parser(
@@ -1223,7 +1229,16 @@ def _extra_for(module: str | None, family: str | None) -> str | None:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    try:
+        import argcomplete
+    except ModuleNotFoundError:
+        pass
+    else:
+        # Answers a shell's tab-completion request and exits; does nothing
+        # in a normal run.
+        argcomplete.autocomplete(parser)
+    args = parser.parse_args()
     try:
         return int(args.handler(args))
     except ModuleNotFoundError as exc:

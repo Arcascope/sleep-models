@@ -71,6 +71,15 @@ class BiDozeFamily(ModelFamily):
         model.load_weights_safetensors(weights)
         return model
 
+    def load_predictor(self, bundle_dir: Path | str):
+        from arcasleep.artifacts.publish import COMPOSITE_FILENAME
+
+        if (Path(bundle_dir) / COMPOSITE_FILENAME).is_file():
+            from arcasleep_bidoze.adult import AdultPredictor
+
+            return AdultPredictor(bundle_dir)
+        return super().load_predictor(bundle_dir)
+
     def prediction_window(self, model) -> tuple[int | None, int]:
         return int(model.input_shape[0]), 1
 
