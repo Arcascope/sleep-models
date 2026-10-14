@@ -25,7 +25,7 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  - id: image
+  - id: docker-tools
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
     args:
@@ -40,6 +40,24 @@ steps:
             https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64
           chmod +x ~/.docker/cli-plugins/docker-buildx
         fi
+        mkdir -p /workspace/.build-tools
+        cp "$$(command -v docker)" /workspace/.build-tools/docker
+        plugin="$$(docker info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "buildx"}}{{.Path}}{{end}}{{end}}')"
+        cp "$$plugin" /workspace/.build-tools/docker-buildx
+
+  - id: image
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # Keep gcloud and Docker in the same step. The Docker builder does
+        # not include gcloud; both are needed by cloudbuild.sh.
+        export PATH="/workspace/.build-tools:$$PATH"
+        mkdir -p ~/.docker/cli-plugins
+        cp /workspace/.build-tools/docker-buildx ~/.docker/cli-plugins/docker-buildx
+        gcloud version
         docker buildx version
         export BUILD_KIND="$_BUILD_KIND"
         export GIT_COMMIT="$_GIT_COMMIT"
