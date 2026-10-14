@@ -294,17 +294,15 @@ class Predictor:
     """A loaded bundle, reusable across recordings."""
 
     def __init__(self, bundle_dir: Path | str):
-        from pisces_lite.proc import ProcessingConfig
-
         from arcasleep.artifacts.publish import bundle_family, load_bundle_model
-        from arcasleep.data.prepare import frames_per_label
         from arcasleep.models import get_family
+        from arcasleep.processing import frames_per_label, processing_config
 
         bundle_dir = Path(bundle_dir)
         self.bundle_dir = bundle_dir
         self.model = load_bundle_model(bundle_dir)
-        self.processing = ProcessingConfig.from_dict(
-            json.loads((bundle_dir / "preprocessing.json").read_text())
+        self.processing = processing_config(
+            json.loads((bundle_dir / "preprocessing.json").read_text()), "preprocessing.json"
         )
         self.frames_per_epoch = frames_per_label(self.processing)
         self.context_epochs, self.epoch_multiple = get_family(
@@ -321,7 +319,7 @@ class Predictor:
         The origin is in seconds on the input clock; frames run
         ``frames_per_epoch`` to an epoch from it.
         """
-        from arcasleep.data.prepare import clean_accelerometer_rows, median_sampling_rate
+        from arcasleep.processing import clean_accelerometer_rows, median_sampling_rate
 
         accel = np.asarray(accel, dtype=np.float64)
         if accel.ndim != 2 or accel.shape[1] != 4:
@@ -360,6 +358,8 @@ class Predictor:
             recording_input,
             split_gap_row,
         )
+        from arcasleep.processing import clean_accelerometer_rows
+        from arcasleep.ggir import evaluate as ggir_evaluate
 
         frames, origin_s = self.features(accel, origin)
         n_epochs = frames.shape[0] // self.frames_per_epoch

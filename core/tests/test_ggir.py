@@ -428,7 +428,7 @@ def _break_filter(monkeypatch) -> None:
         "arcasleep.data.batching.split_gap_row", lambda pooled: (None, np.zeros(5))
     )
     monkeypatch.setattr(
-        "arcasleep.data.prepare.clean_accelerometer_rows", lambda a: a
+        "arcasleep.processing.clean_accelerometer_rows", lambda a: a
     )
 
 

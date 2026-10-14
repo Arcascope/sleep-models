@@ -25,6 +25,8 @@ from pisces_lite.cv import CVConfig as PiscesCVConfig
 from pisces_lite.metrics import MetricsConfig
 from pisces_lite.proc import ProcessingConfig
 
+from arcasleep.processing import CACHE_PREFIX_KEY, processing_config
+
 if TYPE_CHECKING:
     from arcasleep.models import ModelConfig, ModelFamily, TrainingRecipe
 
@@ -185,17 +187,11 @@ def load_inputs(path: Path | str) -> tuple[ProcessingConfig, str]:
     at the root.
     """
     data = read_json(path)
-    kind = str(data.get("type", "")).lower()
-    if kind != "nufft":
-        raise ValueError(f"inputs.json: only type='nufft' is supported, got {kind!r}")
-
-    prefix = data.get("cache_prefix")
+    prefix = data.get(CACHE_PREFIX_KEY)
     if not prefix or not str(prefix).strip():
         raise ValueError("inputs.json: missing 'cache_prefix'")
 
-    # ProcessingConfig ignores keys it does not declare, so cache_prefix rides
-    # along in the same file without disturbing it.
-    return ProcessingConfig.from_dict(data), str(prefix).strip()
+    return processing_config(data, "inputs.json"), str(prefix).strip()
 
 
 def load_processing_config(path: Path | str) -> ProcessingConfig:

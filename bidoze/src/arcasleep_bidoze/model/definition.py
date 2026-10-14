@@ -84,10 +84,9 @@ class BiDozeNetConfig(ModelConfig):
     # With this `True` the net learns to predict sections that have
     # no accelerometer samples to a 5th class.
     score_gap: bool = True
-    # Sub-epoch feature caches (e.g. the 12 Hz log_psd config, window_step_seconds=2)
-    # carry this many raw frames per 30 s PSG epoch; the model pools
-    # them down to one token per epoch before the conv/transformer stack.
-    # Use 1 for the canonical 30 s-hop configs, where the pool is the identity.
+    # Feature frames per 30 s PSG epoch (15 for the committed configs' 2 s
+    # hop); the model pools them down to one token per epoch before the
+    # conv/transformer stack. With 1 the pool is the identity.
     frames_per_epoch: int = 1
     d_model: int = 256
     n_heads: int = 8
