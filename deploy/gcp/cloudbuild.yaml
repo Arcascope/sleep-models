@@ -59,6 +59,11 @@ steps:
         cp /workspace/.build-tools/docker-buildx ~/.docker/cli-plugins/docker-buildx
         gcloud version
         docker buildx version
+        # The host daemon's BuildKit is too old for named image contexts.
+        # Cloud Build allows the privileged BuildKit container used here.
+        docker buildx create --name arcasleep --driver docker-container \
+          --driver-opt network=cloudbuild --use
+        docker buildx inspect --bootstrap
         export BUILD_KIND="$_BUILD_KIND"
         export GIT_COMMIT="$_GIT_COMMIT"
         export DEPS_REPO="$_DEPS_REPO" DATA_REPO="$_DATA_REPO"

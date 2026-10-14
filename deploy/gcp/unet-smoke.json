@@ -16,6 +16,7 @@
           "environment": {
             "variables": {
               "JAX_PLATFORMS": "cuda",
+              "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
               "UNET_TRAINING_CONFIG": "config/training-smoke.json",
               "UNET_RESULTS_DIR": "/results",
               "UNET_RUN_ID": "__RUN_ID__",
