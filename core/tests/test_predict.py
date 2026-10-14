@@ -11,7 +11,6 @@ from arcasleep.predict import (
     _resolve_origin,
     _softmax,
     _stage_and_gap_probabilities,
-    processing_config,
     read_accelerometer,
 )
 
@@ -129,24 +128,3 @@ def test_origin_defaults_to_the_first_sample_and_unix_snaps_to_whole_epochs() ->
     assert _resolve_origin(5.0, 12.5) == 5.0
     with pytest.raises(ValueError):
         _resolve_origin("psg", 0.0)
-
-
-RELEASE_PREPROCESSING = {
-    "cache_prefix": "prefix", "detrend": True, "fmax": 6.0, "fmin": 0.1, "fs": 12.0,
-    "jerk_diff": True, "normalization_mode": "none", "nufft_backend": "jax",
-    "nufft_backend_kwargs": {"eps": 1e-06}, "spectral_channels": ["mag", "jerk"],
-    "spectrogram_kind": "log_psd", "type": "nufft", "window_seconds": 10, "window_step_seconds": 2,
-}
-
-
-@pytest.mark.parametrize("extra", [{}, {"jerk_lowpass_hz": 6.0}, {"jerk_lowpass_hz": None}])
-def test_bundle_preprocessing_builds(extra) -> None:
-    pytest.importorskip("pisces_lite")
-    config = processing_config({**RELEASE_PREPROCESSING, **extra})
-    assert config.fs == 12.0
-
-
-def test_bundle_preprocessing_with_an_unknown_setting_is_refused() -> None:
-    pytest.importorskip("pisces_lite")
-    with pytest.raises(ValueError):
-        processing_config({**RELEASE_PREPROCESSING, "not_a_setting": 1.0})

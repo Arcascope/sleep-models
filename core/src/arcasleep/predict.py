@@ -290,33 +290,6 @@ def read_prediction_csv(path: Path | str) -> Prediction:
     )
 
 
-
-# Keys ``ProcessingConfig.from_dict`` reads that are not dataclass fields: its
-# aliases, and the cache prefix, which names the feature cache only.
-_PROCESSING_KEYS_NOT_FIELDS = {
-    "cache_prefix", "kwargs", "spectrogram_mode", "stft_mode", "stft_kind", "kind",
-    "mode", "backend", "backend_kwargs",
-}
-
-
-def processing_config(settings: dict):
-    """A bundle's ``ProcessingConfig``; refuses settings the installed pisces-lite does not know.
-
-    ``ProcessingConfig.from_dict`` drops unknown keys, so an older pisces-lite would
-    otherwise compute different spectra from the ones the model was trained on.
-    """
-    from pisces_lite.proc import ProcessingConfig
-
-    flat = {**settings, **settings.get("kwargs", {})}
-    unknown = sorted(set(flat) - set(ProcessingConfig.__dataclass_fields__) - _PROCESSING_KEYS_NOT_FIELDS)
-    if unknown:
-        raise ValueError(
-            f"preprocessing.json sets {unknown}, which the installed pisces-lite does not "
-            "support; upgrade pisces-lite to the version in arcasleep's requirements"
-        )
-    return ProcessingConfig.from_dict(settings)
-
-
 class Predictor:
     """A loaded bundle, reusable across recordings."""
 
@@ -324,12 +297,13 @@ class Predictor:
         from arcasleep.artifacts.publish import bundle_family, load_bundle_model
         from arcasleep.data.prepare import frames_per_label
         from arcasleep.models import get_family
+        from arcasleep.training.config import processing_config
 
         bundle_dir = Path(bundle_dir)
         self.bundle_dir = bundle_dir
         self.model = load_bundle_model(bundle_dir)
         self.processing = processing_config(
-            json.loads((bundle_dir / "preprocessing.json").read_text())
+            json.loads((bundle_dir / "preprocessing.json").read_text()), "preprocessing.json"
         )
         self.frames_per_epoch = frames_per_label(self.processing)
         self.context_epochs, self.epoch_multiple = get_family(

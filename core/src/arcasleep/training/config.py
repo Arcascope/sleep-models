@@ -193,9 +193,24 @@ def load_inputs(path: Path | str) -> tuple[ProcessingConfig, str]:
     if not prefix or not str(prefix).strip():
         raise ValueError("inputs.json: missing 'cache_prefix'")
 
-    # ProcessingConfig ignores keys it does not declare, so cache_prefix rides
-    # along in the same file without disturbing it.
-    return ProcessingConfig.from_dict(data), str(prefix).strip()
+    return processing_config(data, "inputs.json"), str(prefix).strip()
+
+
+def processing_config(data: dict, what: str) -> ProcessingConfig:
+    """``data`` as a ``ProcessingConfig``; refuses settings the installed pisces-lite does not know.
+
+    ``ProcessingConfig.from_dict`` drops keys it does not declare, so an older
+    pisces-lite would otherwise compute different spectra from the ones ``data``
+    describes. ``cache_prefix`` names the feature cache and is the one other key
+    allowed.
+    """
+    unknown = set(data) - set(ProcessingConfig.__dataclass_fields__) - {"cache_prefix"}
+    if unknown:
+        raise ValueError(
+            f"{what} sets {sorted(unknown)}, which the installed pisces-lite does not "
+            "support; upgrade pisces-lite to the version in arcasleep's requirements"
+        )
+    return ProcessingConfig.from_dict(data)
 
 
 def load_processing_config(path: Path | str) -> ProcessingConfig:
