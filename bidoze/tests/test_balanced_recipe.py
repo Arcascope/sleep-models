@@ -307,6 +307,47 @@ def test_a_fit_distills_the_mean_output_of_teacher_checkpoints(tmp_path: Path) -
     assert checkpoint_family(checkpoint) == "bidoze"
 
 
+
+def test_a_fit_distills_the_teachers_on_a_transfer_set(tmp_path: Path) -> None:
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
+    # Unlabelled for the student: longer and shorter than the fit length, and one of a
+    # tested participant, which is left out.
+    _write_cache(tmp_path / "transfer", "CohortC", ["c0", "c1"], epochs=20)
+    _write_cache(tmp_path / "transfer", "CohortC", ["c2"], epochs=7)
+    _write_cache(tmp_path / "transfer", "CohortB", ["b0"], epochs=9)
+    teachers = tmp_path / "teachers" / "training"
+    run_training(_configs(tmp_path / "teacher-config"), RunPaths(results=teachers, feature_cache=cache_root),
+                 run_id="teacher")
+
+    _configs(tmp_path / "config")
+    training = {
+        **BALANCED_TRAINING,
+        "distill_from": str(teachers / "model_outputs"),
+        "distill_transfer_dir": str(tmp_path / "transfer"),
+    }
+    (tmp_path / "config" / "training.json").write_text(json.dumps(training))
+    config = RunConfig.from_paths(
+        family=BIDOZE,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    student = tmp_path / "student" / "training"
+    run_training(config, RunPaths(results=student, feature_cache=cache_root), run_id="student")
+
+    (checkpoint,) = (student / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def test_a_transfer_set_needs_teachers() -> None:
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "distill_transfer_dir": "transfer"})
+
+
 def test_teacher_probabilities_are_a_distribution(tmp_path: Path) -> None:
     from arcasleep_bidoze.model import BiDozeNetModel
     from arcasleep_bidoze.training import teacher_probabilities

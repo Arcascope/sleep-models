@@ -28,6 +28,11 @@ Arms (revised Weaver part of the training set):
                  teacher, at a tenth of the recipe's learning rate.
 - distill-warm-half, distill-warm-full: as distill-warm, at half and all of the recipe's
                  learning rate.
+- distill-transfer: as distill, and the student also learns the teachers' mean output on the
+                 transfer set, recordings the teachers did not fit: every BIDsleep night and
+                 every revised Weaver recording outside matched. Their labels are not used.
+- distill-transfer-warm: as distill-transfer, starting from the fold's seed-0 teacher at the
+                 recipe's learning rate.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the arm's Weaver recordings as dataset
@@ -38,12 +43,15 @@ Writes, under ``<run>/setup/``:
                                       that is released; scored on SleepAccel-Clinical only
 - arms.json                           the subject ids of every arm (for finetune, its
                                       validation recordings)
+- transfer/, transfer.json            symlinks only: the transfer set's recordings; their files
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
 - training-finetune*.json             training.json at a tenth of the learning rate, starting
                                       from the pediatric bundle's weights
 - training-distill.json               training.json with one seed; task.sh adds distill_from
 - training-distill-warm*.json         training-distill.json at the arm's learning rate; task.sh
                                       also adds init_weights
+- training-distill-transfer*.json     training-distill.json; task.sh adds distill_from and
+                                      distill_transfer_dir, and for -warm init_weights
 
 Usage: python prepare.py <run dir> <weaver_revised cache root> <adult cache root> [pediatric bundle]
 (cache roots are the directories that hold ``12Hz_log_PSD_aligned/``; the adult root holds
@@ -76,6 +84,9 @@ FINETUNE_ARMS = {FINETUNE: "weaverUnseen", FINETUNE_BIDSLEEP: "bidsleepVal"}
 FINETUNE_LR_FACTOR = 0.1
 # The arms whose student starts from a teacher's weights, and their learning-rate factors.
 DISTILL_WARM_ARMS = {"distill-warm": 0.1, "distill-warm-half": 0.5, "distill-warm-full": 1.0}
+# The arms whose student also learns the teachers' output on the transfer set.
+DISTILL_TRANSFER_ARMS = ["distill-transfer", "distill-transfer-warm"]
+TRANSFER = "transfer"
 
 
 def device_of(subject_id: str) -> str:
@@ -175,7 +186,7 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     chosen.update(match_weaver([s.path for s in adult["weaver"]], weaver))
     earlier = {s.subject_id: s.path for s in adult["weaver"]}
     chosen[EARLIER] = sorted(earlier)
-    for arm in [DISTILL, *DISTILL_WARM_ARMS]:
+    for arm in [DISTILL, *DISTILL_WARM_ARMS, *DISTILL_TRANSFER_ARMS]:
         chosen[arm] = chosen["matched"]
     if pediatric is not None:
         # The release trained on every earlier night, which are the matched children.
@@ -183,8 +194,13 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
         chosen[FINETUNE] = sorted(s for s in weaver if participant_id(s) not in seen)
         chosen[FINETUNE_BIDSLEEP] = one_night_each(sorted(s.subject_id for s in adult["bidsleep"]))
     bidsleep = {s.subject_id: s.path for s in adult["bidsleep"]}
+    matched = set(chosen["matched"])
+    transfer = [bidsleep[s] for s in sorted(bidsleep)] + [weaver[s] for s in sorted(weaver) if s not in matched]
+    for path in transfer:
+        link(path, setup / TRANSFER / path.name)
     setup.mkdir(parents=True, exist_ok=True)
     (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
+    (setup / f"{TRANSFER}.json").write_text(json.dumps(sorted(p.name for p in transfer), indent=1) + "\n")
 
     training = json.loads((BIDOZE / "config/training-balanced.json").read_text())
     training.update(run_seed=0, seed_count=SEEDS)
@@ -194,6 +210,8 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     for arm, factor in DISTILL_WARM_ARMS.items():
         warm = {**student, "lr": training["lr"] * factor}
         (setup / f"training-{arm}.json").write_text(json.dumps(warm, indent=2) + "\n")
+    for arm in DISTILL_TRANSFER_ARMS:
+        (setup / f"training-{arm}.json").write_text(json.dumps(student, indent=2) + "\n")
     if pediatric is not None:
         finetune = {**training, "lr": training["lr"] * FINETUNE_LR_FACTOR, "init_weights": str(pediatric)}
         for arm in FINETUNE_ARMS:
@@ -233,6 +251,7 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
         (setup / "cv" / arm / "cv_final.json").write_text(json.dumps(final, indent=2) + "\n")
         children = len({participant_id(s) for s in ids})
         print(f"{arm}: {name}, {len(ids)} recordings, {children} children")
+    print(f"{TRANSFER}: {len(bidsleep)} BIDsleep and {len(transfer) - len(bidsleep)} revised Weaver recordings")
 
 
 if __name__ == "__main__":
