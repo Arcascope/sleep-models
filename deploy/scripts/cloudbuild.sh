@@ -29,7 +29,7 @@ ar_digest() {
         rm -f "$error_file"
         [[ "$digest" == sha256:* ]] || { echo "no digest returned for $uri:$tag" >&2; return 1; }
         echo "$digest"
-    elif grep -q 'NOT_FOUND' "$error_file"; then
+    elif grep -Eq 'NOT_FOUND|\(gcloud\.artifacts\.docker\.images\.describe\) Image not found\.' "$error_file"; then
         rm -f "$error_file"
     else
         cat "$error_file" >&2
