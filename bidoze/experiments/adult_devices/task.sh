@@ -11,6 +11,7 @@
 # (local or s3://) whose <phase>/model_outputs/ the distill arms' students learn from;
 # the distill-warm and distill-transfer-warm arms also start from the phase's seed-0 teacher,
 # and the distill-transfer arms also learn the teachers' output on setup/transfer/.
+# ADULT_DEVICES_LABELS, when set, also writes the cache's labels to OUT_DIR/labels/.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -69,7 +70,10 @@ fi
 CV=$S/cv/$ARM/cv_$([[ $K == final ]] && echo final || echo fold$K).json
 mkdir -p "$OUT/setup"
 cp "$S/arms.json" "$CV" "$OUT/setup/"
+[[ "$ARM" == distill-transfer* ]] && cp "$S/transfer.json" "$OUT/setup/"
 [[ "$TRAINING" == "$OUT/setup/"* ]] || cp "$TRAINING" "$OUT/setup/"
+# The cache's labels without its features, which score.py needs where the cache is not.
+[[ -n "${ADULT_DEVICES_LABELS:-}" ]] && python "$HERE/labels.py" "$FEATURE_CACHE_DIR" "$OUT/labels"
 
 FEATURE_CACHE_DIR=$S/cache/$ARM arcasleep bidoze train --cache-only -pc config/inputs.json \
   -mc config/model.json -tc "$TRAINING" -mtc config/metrics.json --split-seed "$SPLIT" \

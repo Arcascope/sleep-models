@@ -42,8 +42,8 @@ Writes, under ``<run>/setup/``:
 - cv/<arm>/cv_final.json             train on weaver<Arm> + all of SleepAccel: the stage source
                                       that is released; scored on SleepAccel-Clinical only
 - arms.json                           the subject ids of every arm (for finetune, its
-                                      validation recordings), and the transfer set's files
-- transfer/                           symlinks only: the transfer set's recordings
+                                      validation recordings)
+- transfer/, transfer.json            symlinks only: the transfer set's recordings; their files
 - training.json                       the repo's balanced recipe with run_seed 0, seed_count 3
 - training-finetune*.json             training.json at a tenth of the learning rate, starting
                                       from the pediatric bundle's weights
@@ -199,9 +199,8 @@ def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | N
     for path in transfer:
         link(path, setup / TRANSFER / path.name)
     setup.mkdir(parents=True, exist_ok=True)
-    (setup / "arms.json").write_text(
-        json.dumps({**chosen, TRANSFER: sorted(p.name for p in transfer)}, indent=1) + "\n"
-    )
+    (setup / "arms.json").write_text(json.dumps(chosen, indent=1) + "\n")
+    (setup / f"{TRANSFER}.json").write_text(json.dumps(sorted(p.name for p in transfer), indent=1) + "\n")
 
     training = json.loads((BIDOZE / "config/training-balanced.json").read_text())
     training.update(run_seed=0, seed_count=SEEDS)
