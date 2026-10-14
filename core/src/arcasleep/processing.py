@@ -64,9 +64,8 @@ def median_sampling_rate(timestamps: np.ndarray) -> float:
 def frames_per_label(processing_config: ProcessingConfig) -> int:
     """Feature frames per PSG epoch: ``PSG_DT / window_step_seconds``.
 
-    1 for the canonical 30 s-hop configs, 15 for the 12 Hz log-PSD config's 2 s
-    hop. The hop must divide the PSG epoch evenly, or X and y would drift apart
-    over the night.
+    15 for the committed configs' 2 s hop. The hop must divide the PSG epoch
+    evenly, or X and y would drift apart over the night.
     """
     step = float(processing_config.window_step_seconds)
     ratio = float(PSG_DT) / step
