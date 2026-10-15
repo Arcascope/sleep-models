@@ -192,12 +192,31 @@ The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository
 Like CodeBuild, the build uploads committed `HEAD`; commit changes first.
 
     deploy/scripts/remote_build_gcp.sh train unet <data image>
+    python3 deploy/scripts/run_spot_smoke_gcp.py <training image>
+
+The spot launcher resolves the image to a digest and tries `us-west1-a`,
+`europe-west1-b`, then `europe-west1-c` on stockout. Override that list with
+`--zones ZONE [ZONE ...]`. It provisions one `g2-standard-8` (L4, 32 GiB host
+memory), runs `fold0` with `config/training-smoke.json` (two epochs), uploads
+results to GCS, downloads them into `unet/results/<run id>/`, and deletes the
+VM. A one-hour VM lifetime with automatic deletion provides a backstop if
+the launcher is interrupted. Spot preemption can interrupt training or upload.
+
+The local run directory also holds `gcp-run.json` (image digest, zone, exit
+codes, cleanup status) and `serial.log`. COS installs the GPU driver on boot;
+Docker credentials and results use writable directories under `/var/lib`.
+Use `--provisioning-model STANDARD` for on-demand capacity. The default
+`g2-standard-8` has 32 GiB host RAM; `--machine-type g2-standard-4` selects
+16 GiB, and `--machine-type a2-highgpu-1g` selects a single A100 with 40 GB
+GPU memory. Each type requires existing quota and regional capacity.
+
+### On-demand Cloud Batch alternative
+
     bash deploy/scripts/run_smoke_gcp.sh <training image> us-central1
 
-The smoke submitter resolves the training image to a digest and runs `fold0`
-with `config/training-smoke.json` (two epochs). Cloud Batch provisions one
-on-demand `g2-standard-8` (L4, 32 GiB host memory). The task has a one hour
-limit and no retries; a queued job can wait for regional GPU capacity.
+This submitter runs the same two-epoch phase on one on-demand L4. The task
+has a one-hour limit and no retries; queued jobs can wait for GPU capacity
+indefinitely. Delete a queued job if it is no longer needed.
 
 Results are written to a shared directory on the VM. A separate container
 uploads that directory to
@@ -210,5 +229,4 @@ The Batch service account needs Artifact Registry read and bucket write access.
     gcloud logging read 'labels.job_uid="<job uid>"' --project=shiftapp-arcascope
     gcloud storage rsync --recursive gs://arcascope-sleep-models-data/training_outputs/<run id>/ unet/results/<run id>/
 
-The training harness's S3 upload is disabled for this job. This GCP path covers
-the smoke run; the ECS scripts above still provide the full training workflow.
+The training harness's S3 upload is disabled for these smoke jobs.

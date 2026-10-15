@@ -11,7 +11,7 @@
             "imageUri": "__IMAGE_REF__",
             "entrypoint": "/bin/bash",
             "commands": ["-c", "set -euo pipefail; nvidia-smi; python -c 'import jax; print(jax.devices()); assert any(d.platform == \"gpu\" for d in jax.devices())'; bash scripts/harness.sh fold0"],
-            "volumes": ["/mnt/disks/arcasleep-results:/results"]
+            "volumes": ["/var/lib/arcasleep-results:/results"]
           },
           "environment": {
             "variables": {
@@ -32,7 +32,7 @@
             "imageUri": "gcr.io/google.com/cloudsdktool/google-cloud-cli:stable",
             "entrypoint": "gcloud",
             "commands": ["storage", "rsync", "--recursive", "/results", "gs://arcascope-sleep-models-data/training_outputs"],
-            "volumes": ["/mnt/disks/arcasleep-results:/results:ro"]
+            "volumes": ["/var/lib/arcasleep-results:/results:ro"]
           }
         }
       ],
