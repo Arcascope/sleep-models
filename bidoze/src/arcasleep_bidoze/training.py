@@ -10,7 +10,7 @@ from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.batching import assemble_batch
-from arcasleep.training.balanced import Patience, split_train_eval
+from arcasleep.training.balanced import SEGMENT_PLACEMENTS, Patience, split_train_eval
 from arcasleep.training.config import RunConfig, read_json, reject_unknown, require_one_of
 from arcasleep.training.folds import DatasetIndex, deblip_subjects_for_fold
 
@@ -47,6 +47,7 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "segment_placement",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +99,9 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # Where each drawn recording sits in the x_length context: "start" at epoch 0,
+    # "random" at a uniformly drawn epoch that keeps it whole, drawn at every draw.
+    segment_placement: str = "start"
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -151,6 +155,9 @@ class TrainingConfig:
         require_one_of(self.deblip_schedule, DEBLIP_SCHEDULES, "training.json deblip_schedule")
         require_one_of(self.lr_schedule, LR_SCHEDULES, "training.json lr_schedule")
         require_one_of(self.trainable_scope, TRAINABLE_SCOPES, "training.json trainable_scope")
+        require_one_of(
+            self.segment_placement, frozenset(SEGMENT_PLACEMENTS), "training.json segment_placement"
+        )
 
         if self.lr <= 0.0:
             raise ValueError("training.json: lr must be positive")
@@ -375,6 +382,7 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+        segment_placement=training.segment_placement,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model

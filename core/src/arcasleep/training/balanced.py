@@ -27,6 +27,9 @@ LR_DROP_FACTOR = math.sqrt(10.0)
 PATIENCE_UNITS = ("epochs", "steps")
 #: Recording draws per segment before the sampler gives up on its target class.
 CLASS_SAMPLE_MAX_ATTEMPTS = 100
+#: Where a drawn row's recording sits in the fit length: "start" keeps it at
+#: epoch 0; "random" moves it to a uniformly drawn epoch that still fits it whole.
+SEGMENT_PLACEMENTS = ("start", "random")
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,43 @@ def sample_balanced_segments(
         xs[i, : seg_x.shape[0]] = seg_x
         ys[i, : seg_y.shape[0]] = seg_y
     return xs, ys
+
+
+def recorded_lengths(ys: np.ndarray) -> np.ndarray:
+    """Per row of ``ys`` ``(B, T)``, the epochs up to and including the last one not labelled gap."""
+    labelled = np.asarray(ys) != GAP_LABEL
+    last = ys.shape[1] - np.argmax(labelled[:, ::-1], axis=1)
+    return np.where(labelled.any(axis=1), last, 0)
+
+
+def place_rows(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    rng: np.random.Generator,
+    frames_per_epoch: int,
+    extra: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Move each padded row's recording to a random epoch of the row.
+
+    Each row ``(frames, labels)`` holds a recording followed by gap padding.
+    The recording moves to an offset drawn uniformly from the offsets that keep
+    it whole, and the padding that followed it fills the epochs before it.
+    Padding epochs are identical within a row (the recording's median spectrum,
+    gap row at 1), so this is a roll. ``extra`` ``(B, T, ...)``, per-epoch
+    values such as soft targets, moves with the labels.
+    """
+    fpe = frames_per_epoch
+    width = ys.shape[1]
+    offsets = rng.integers(width - recorded_lengths(ys) + 1)
+    xs, ys = xs.copy(), ys.copy()
+    extra = None if extra is None else extra.copy()
+    for i, offset in enumerate(offsets):
+        if offset:
+            xs[i] = np.roll(xs[i], int(offset) * fpe, axis=0)
+            ys[i] = np.roll(ys[i], int(offset), axis=0)
+            if extra is not None:
+                extra[i] = np.roll(extra[i], int(offset), axis=0)
+    return xs, ys, extra
 
 
 def selection_confusion(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> np.ndarray:

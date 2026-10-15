@@ -12,6 +12,8 @@ from arcasleep.training.balanced import (
     Patience,
     Plateau,
     PlateauDecision,
+    place_rows,
+    recorded_lengths,
     selection_confusion,
     split_train_eval,
 )
@@ -121,3 +123,38 @@ def test_the_eval_holdout_keeps_every_recording_of_a_participant_on_one_side() -
         assert fit_participants.isdisjoint(eval_participants)
         assert len(eval_participants) == 9
         assert sorted(fit + held_out) == sorted(refs)
+
+
+def _padded_rows(lengths: list[int], width: int, fpe: int) -> tuple[np.ndarray, np.ndarray]:
+    xs = np.full((len(lengths), width * fpe, 3, 2), -7.0, dtype=np.float32)
+    ys = np.full((len(lengths), width), GAP_LABEL, dtype=np.int32)
+    for i, n in enumerate(lengths):
+        ys[i, :n] = np.arange(n) % 4
+        xs[i, : n * fpe] = np.arange(n * fpe)[:, None, None]
+    return xs, ys
+
+
+def test_placed_rows_keep_each_recording_whole_and_its_frames_with_its_labels() -> None:
+    fpe, width, lengths = 3, 20, [5, 20, 1, 12]
+    xs, ys = _padded_rows(lengths, width, fpe)
+    soft = np.eye(5, dtype=np.float32)[np.where(ys == GAP_LABEL, 4, ys)]
+
+    placed_x, placed_y, placed_soft = place_rows(xs, ys, np.random.default_rng(3), fpe, extra=soft)
+
+    assert recorded_lengths(placed_y).tolist() != lengths
+    for i, n in enumerate(lengths):
+        offset = int(np.argmax(placed_y[i] != GAP_LABEL))
+        assert offset + n <= width
+        np.testing.assert_array_equal(placed_y[i, offset : offset + n], ys[i, :n])
+        np.testing.assert_array_equal(placed_x[i, offset * fpe : (offset + n) * fpe], xs[i, : n * fpe])
+        np.testing.assert_array_equal(placed_soft[i, offset : offset + n], soft[i, :n])
+        assert (placed_y[i] != GAP_LABEL).sum() == n
+
+
+def test_placement_spreads_recordings_over_the_row() -> None:
+    xs, ys = _padded_rows([10] * 400, width=100, fpe=1)
+
+    _, placed_y, _ = place_rows(xs, ys, np.random.default_rng(0), 1)
+
+    offsets = np.argmax(placed_y != GAP_LABEL, axis=1)
+    assert offsets.min() == 0 and offsets.max() == 90

@@ -46,7 +46,10 @@ def _write_cache(cache_dir: Path, dataset: str, subjects: list[str], epochs: int
 
 
 def _configs(
-    directory: Path, model_overrides: dict | None = None, cv_overrides: dict | None = None
+    directory: Path,
+    model_overrides: dict | None = None,
+    cv_overrides: dict | None = None,
+    training_overrides: dict | None = None,
 ) -> RunConfig:
     directory.mkdir(parents=True, exist_ok=True)
     files = {
@@ -73,7 +76,7 @@ def _configs(
             "test_sets": ["CohortB"],
             **(cv_overrides or {}),
         },
-        "training.json": BALANCED_TRAINING,
+        "training.json": {**BALANCED_TRAINING, **(training_overrides or {})},
         "metrics.json": {
             "num_classes": 4,
             "class_names": ["wake", "light", "deep", "rem", "gap"],
@@ -94,11 +97,16 @@ def _configs(
     )
 
 
+@pytest.mark.parametrize("segment_placement", ["start", "random"])
 @pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
 def test_balanced_recipe_trains_and_scores_end_to_end(
-    tmp_path: Path, model_frames_per_epoch: int
+    tmp_path: Path, model_frames_per_epoch: int, segment_placement: str
 ) -> None:
-    config = _configs(tmp_path / "config", {"frames_per_epoch": model_frames_per_epoch})
+    config = _configs(
+        tmp_path / "config",
+        {"frames_per_epoch": model_frames_per_epoch},
+        training_overrides={"segment_placement": segment_placement},
+    )
     cache_root = tmp_path / "feature_cache"
     _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
     _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
@@ -126,6 +134,8 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
         {"deblip_adjustment_epochs": 20, "deblip_logit_weight": 0.5},
         {"sliding_copies": 2},
         {"recipe": "curriculum", "early_stop_patience": 5},
+        {"recipe": "curriculum", "segment_placement": "random"},
+        {"segment_placement": "end"},
     ],
 )
 def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> None:

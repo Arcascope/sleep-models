@@ -33,9 +33,11 @@ from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
+    SEGMENT_PLACEMENTS,
     Patience,
     Plateau,
     balanced_cross_entropy,
+    place_rows,
     sample_balanced_segments,
     selection_confusion,
 )
@@ -3180,6 +3182,7 @@ class BiDozeNetModel(CVModel):
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
+        segment_placement: str = "start",
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3201,12 +3204,26 @@ class BiDozeNetModel(CVModel):
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
+
+        With ``segment_placement="random"``, each drawn row's recording moves to a
+        random epoch of the row (:func:`~arcasleep.training.balanced.place_rows`),
+        drawn anew at every draw, so the model sees recordings at every position of
+        the fit length. The eval rows are placed the same way once, from ``fit_seed``.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
         train_y = np.asarray(train_y, dtype=np.int32)
         eval_x = np.asarray(eval_x, dtype=np.float32)
         eval_y = np.asarray(eval_y, dtype=np.int32)
+        if segment_placement not in SEGMENT_PLACEMENTS:
+            raise ValueError(
+                f"segment_placement must be one of {SEGMENT_PLACEMENTS}, got {segment_placement!r}"
+            )
+        place = segment_placement == "random"
+        if place:
+            eval_x, eval_y, _ = place_rows(
+                eval_x, eval_y, np.random.default_rng([fit_seed, 1]), cfg.frames_per_epoch
+            )
         self._ensure_built(tuple(train_x.shape[1:]), seed=fit_seed)
         assert self.params is not None
 
@@ -3304,6 +3321,8 @@ class BiDozeNetModel(CVModel):
                 # Whole rows, drawn uniformly; the loss covers every epoch of a row.
                 drawn = rng.integers(train_x.shape[0], size=steps_per_epoch * batch_size)
                 xs, targets = train_x[drawn], soft_targets[drawn]
+                if place:
+                    xs, _, targets = place_rows(xs, train_y[drawn], rng, fpe, extra=targets)
                 ms = np.ones((len(drawn), train_y.shape[1] * fpe), dtype=np.float32)
                 step_fn = distill_step
             else:
@@ -3317,6 +3336,8 @@ class BiDozeNetModel(CVModel):
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
                 )
+                if place:
+                    xs, ys, _ = place_rows(xs, ys, rng, fpe)
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
