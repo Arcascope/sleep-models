@@ -322,3 +322,59 @@ def test_teacher_probabilities_are_a_distribution(tmp_path: Path) -> None:
 
     assert p.shape == (3, 16, config.output_classes)
     np.testing.assert_allclose(p.sum(axis=-1), 1.0, rtol=1e-5)
+
+
+def test_a_joint_fit_trains_scores_and_saves_each_member(tmp_path: Path) -> None:
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
+    _configs(tmp_path / "config")
+    (tmp_path / "config" / "training.json").write_text(json.dumps({**BALANCED_TRAINING, "joint_members": 3}))
+    config = RunConfig.from_paths(
+        family=BIDOZE,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    results = tmp_path / "results" / "training"
+
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="joint")
+
+    members = sorted((results / "model_outputs").glob("*_member*.pisces"))
+    assert len(members) == 3
+    assert all(checkpoint_family(m) == "bidoze" for m in members)
+    (fold_dir,) = (results / "predictions").iterdir()
+    assert {p.name for p in fold_dir.iterdir()} == {"CohortB_b0.csv", "CohortB_b1.csv"}
+
+
+def test_a_joint_ensemble_outputs_its_members_mean_and_starts_from_their_seeds(tmp_path: Path) -> None:
+    import jax
+
+    from arcasleep_bidoze.adult import StackedModel
+    from arcasleep_bidoze.joint import JointEnsemble
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    config = _configs(tmp_path / "config").model
+    joint = JointEnsemble(config, 3)
+    joint._ensure_built((16, 5, 2), seed=4)
+    seeds = []
+    for seed in (4, 5, 6):
+        model = BiDozeNetModel(config)
+        model._ensure_built((16, 5, 2), seed=seed)
+        seeds.append(model)
+    x = np.random.default_rng(0).normal(size=(2, 16, 5, 2)).astype(np.float32)
+
+    joint_proba = np.asarray(jax.nn.softmax(joint.infer(x), axis=-1))
+
+    # A vmapped batch and separate calls round differently on GPU.
+    stacked_proba = np.asarray(jax.nn.softmax(StackedModel(seeds).infer(x), axis=-1))
+    np.testing.assert_allclose(joint_proba, stacked_proba, rtol=0, atol=1e-5)
+    for member, seed in zip(joint.member_models(), seeds, strict=True):
+        np.testing.assert_allclose(member.infer(x), seed.infer(x), rtol=0, atol=1e-5)
+
+
+def test_joint_members_start_from_random_weights() -> None:
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "joint_members": 2, "init_weights": "release"})

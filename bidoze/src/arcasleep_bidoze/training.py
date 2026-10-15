@@ -47,6 +47,7 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "joint_members",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +99,9 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # With 2 or more, one fit trains this many networks whose mean output takes the loss and
+    # decides early stopping (arcasleep_bidoze.joint); each run seed is one such ensemble.
+    joint_members: int = 1
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -133,6 +137,7 @@ class TrainingConfig:
             "x_length": self.x_length,
             "y_length": self.y_length,
             "sliding_copies": self.sliding_copies,
+            "joint_members": self.joint_members,
         }
         for name, value in at_least_one.items():
             if int(value) < 1:
@@ -178,6 +183,8 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+        if self.joint_members > 1 and (self.init_weights or self.distill_from):
+            raise ValueError("training.json: joint_members > 1 starts from random weights and trains on labels")
 
     @property
     def patience(self) -> Patience:
@@ -357,7 +364,13 @@ def _train_fold_balanced(
         soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
         print(f"  distilling the mean output of the teachers in {training.distill_from}")
 
-    model = BiDozeNetModel(config.model)
+    if training.joint_members > 1:
+        from arcasleep_bidoze.joint import JointEnsemble
+
+        model = JointEnsemble(config.model, training.joint_members)
+        print(f"  training {training.joint_members} networks jointly on their mean output")
+    else:
+        model = BiDozeNetModel(config.model)
     if training.init_weights is not None:
         _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")

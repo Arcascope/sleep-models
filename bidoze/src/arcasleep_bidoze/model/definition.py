@@ -1908,6 +1908,19 @@ class BiDozeNetModel(CVModel):
             console_kwargs={"force_terminal": False, "width": 120},
         )
 
+    def _apply(
+        self,
+        params: FrozenDict[str, Any],
+        x: jnp.ndarray,
+        mask: jnp.ndarray,
+        *,
+        train: bool,
+        key: jax.Array | None = None,
+    ) -> jnp.ndarray:
+        """The logits of ``params`` on ``x``; ``key`` seeds dropout and augmentation when training."""
+        rngs = None if key is None else {"dropout": key, "augment": key}
+        return self.module.apply({"params": params}, x, mask, train=train, rngs=rngs)
+
     def infer(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
         input_x = np.asarray(input_x, dtype=np.float32)
         if input_x.ndim < 3:
@@ -1921,7 +1934,7 @@ class BiDozeNetModel(CVModel):
                 valid_mask = _numpy_feature_activity_mask(input_x)
         else:
             valid_mask = self._coerce_valid_mask(input_x, valid_mask)
-        logits = self.module.apply({"params": self.params}, jnp.asarray(input_x), jnp.asarray(valid_mask), train=False)
+        logits = self._apply(self.params, jnp.asarray(input_x), jnp.asarray(valid_mask), train=False)
         return np.asarray(logits, dtype=np.float32)
 
     def soft_deblipped_target_logits(
@@ -3217,7 +3230,7 @@ class BiDozeNetModel(CVModel):
         # With score_gap, gap and padding epochs train the extra logit; without
         # it they are masked like unscored epochs.
         gap_class = num_classes if cfg.score_gap else -1
-        module = self.module
+        apply = self._apply
 
         tx = optax.inject_hyperparams(optax.adamw)(
             learning_rate=initial_lr, b1=0.9, b2=0.999, eps=1e-8, weight_decay=weight_decay
@@ -3228,9 +3241,7 @@ class BiDozeNetModel(CVModel):
         @jax.jit
         def train_step(params, opt_state, xb, mb, yb, key):
             def loss_fn(p):
-                logits = module.apply(
-                    {"params": p}, xb, mb, train=True, rngs={"dropout": key, "augment": key}
-                )
+                logits = apply(p, xb, mb, train=True, key=key)
                 return balanced_cross_entropy(logits, yb, output_classes, balance_beta)
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
@@ -3240,9 +3251,7 @@ class BiDozeNetModel(CVModel):
         @jax.jit
         def distill_step(params, opt_state, xb, mb, qb, key):
             def loss_fn(p):
-                logits = module.apply(
-                    {"params": p}, xb, mb, train=True, rngs={"dropout": key, "augment": key}
-                )
+                logits = apply(p, xb, mb, train=True, key=key)
                 return -(qb * jax.nn.log_softmax(logits, axis=-1)).sum(axis=-1).mean()
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
@@ -3258,7 +3267,7 @@ class BiDozeNetModel(CVModel):
 
         @jax.jit
         def eval_logits(params, xb, mb):
-            return module.apply({"params": params}, xb, mb, train=False)
+            return apply(params, xb, mb, train=False)
 
         def valid_mask(y: np.ndarray) -> np.ndarray:
             if cfg.score_gap:
