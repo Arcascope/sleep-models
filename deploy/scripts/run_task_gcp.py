@@ -83,8 +83,9 @@ def main() -> int:
     if "auto" in args.zones and args.zones != ["auto"]:
         parser.error("Use --zones auto alone, or list explicit zones")
     for phase in args.phases:
-        if not re.fullmatch(r"[A-Za-z0-9]+", phase):
-            parser.error("phase names are letters and digits, such as fold0 or final")
+        if not re.fullmatch(r"[A-Za-z0-9]+([/-][A-Za-z0-9]+)*", phase):
+            parser.error("phase names are letters and digits, such as fold0 or final, "
+                         "or experiment phases such as random/final")
     if len(set(args.phases)) != len(args.phases):
         parser.error("a phase is named twice")
 
