@@ -205,6 +205,19 @@ and cleanup status. A phase that finds no L4 in any zone is reported as
 
 The VM startup script is `deploy/gcp/train-startup.sh`.
 
+## Copying images between ECR and Artifact Registry
+
+    deploy/scripts/copy_image.sh [--dry-run] SOURCE DESTINATION
+
+SOURCE is pinned by digest; DESTINATION is `<repo>:<tag>`; one is in ECR and
+the other in Artifact Registry, in either direction. The script starts an
+`e2-standard-4` VM in `us-east4-a` that runs `skopeo copy --preserve-digests`,
+so the image crosses the cloud backbone instead of this machine and keeps its
+digest. The script then checks the digest in the destination registry and
+deletes the VM. A destination tag that already exists is not copied again.
+Use it for data images: build the data image on AWS, then copy it to Artifact
+Registry.
+
 ## Google Cloud smoke run
 
 The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository

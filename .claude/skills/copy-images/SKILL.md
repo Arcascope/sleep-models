@@ -1,0 +1,45 @@
+---
+name: copy-images
+description: Copy a container image between AWS ECR and GCP Artifact Registry (either direction) for arcasleep training, e.g. to run on GCP a data or training image built on AWS. Use when an image exists in one cloud's registry and a run needs it in the other's, or when asked to "copy", "mirror" or "move" an image between ECR and AR.
+---
+
+# Copying images between ECR and Artifact Registry
+
+```bash
+deploy/scripts/copy_image.sh --dry-run <source> <destination>
+deploy/scripts/copy_image.sh <source> <destination>
+```
+
+- `<source>` is pinned by digest (`<repo>@sha256:...`); `<destination>` is `<repo>:<tag>`, normally
+  the source's own tag. One is ECR (`904277341831.dkr.ecr.us-east-1.amazonaws.com/arcasleep-train/<repo>`),
+  the other Artifact Registry (`us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/<repo>`).
+- The script starts an `e2-standard-4` VM in `us-east4-a` that runs `skopeo copy
+  --preserve-digests`, waits, checks that the destination digest equals the source's, and
+  deletes the VM. The bytes move cloud to cloud; nothing passes through this machine.
+- A destination tag that already exists is not copied; the script only checks its digest.
+- Run it in the background and wait for it to exit; it prints the pinned destination
+  (`<repo>:<tag>@sha256:...`) last.
+
+## Why not the obvious ways
+
+- **Not `docker pull` + `docker push` on the workstation.** A 13 GB data image downloads and
+  uploads through the office link: two slow copies instead of one fast one.
+- **Not a GCP data build from a GCS copy of the cache.** `remote_build_gcp.sh data` runs
+  `arcasleep manifest-local` in a build step where arcasleep is not installed, and fails with
+  exit 127. Copying the ECR data image is also the only way to get the same bytes, and the
+  same tag, on both clouds.
+- `--preserve-digests` keeps the manifest as it is, so the image has one digest in both
+  registries and a run on either cloud can be pinned to it.
+
+## Rules
+
+- Copy what a run needs, pinned by digest; do not mirror whole repositories.
+- Copying AR → ECR pays GCP egress; ECR → AR pays AWS egress. Both are small next to GPU time.
+- The ECR password (valid 12 h) is passed to the VM as instance metadata. The VM is deleted
+  when the copy ends; GCE deletes it after 2 h regardless. After a failure, check that no
+  `copy-image-*` VM is left:
+  `gcloud compute instances list --filter='labels.purpose=image-copy' --project=shiftapp-arcascope`.
+  Delete only VMs you started.
+- A training image is per cloud (it is built on the data image in that cloud's registry), so a
+  run on both clouds usually copies the data image and builds the training image on each side
+  from the same commit (`remote_build.sh train`, `remote_build_gcp.sh train`).
