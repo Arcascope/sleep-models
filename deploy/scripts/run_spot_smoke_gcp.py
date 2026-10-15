@@ -26,7 +26,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image")
     parser.add_argument("--project", default=os.environ.get("ARCASLEEP_PROJECT", "shiftapp-arcascope"))
-    parser.add_argument("--zones", nargs="+", default=["us-west1-a", "europe-west1-b", "europe-west1-c"])
+    parser.add_argument("--zones", nargs="+", default=["auto"],
+                        help="auto discovers GPU zones; otherwise restrict attempts to the listed zones")
     parser.add_argument("--results-bucket", default="arcascope-sleep-models-data")
     parser.add_argument("--machine-type", choices=["g2-standard-4", "g2-standard-8", "a2-highgpu-1g"], default="g2-standard-8")
     parser.add_argument("--provisioning-model", choices=["SPOT", "STANDARD"], default="SPOT")
@@ -38,6 +39,18 @@ def main() -> int:
         if check and result.returncode:
             raise RuntimeError(result.stderr or result.stdout)
         return result
+
+    if args.zones == ["auto"]:
+        accelerator = "nvidia-tesla-a100" if args.machine_type.startswith("a2-") else "nvidia-l4"
+        available = gcloud("compute", "accelerator-types", "list", "--filter=name=" + accelerator,
+                           "--format=value(zone.basename())").stdout
+        args.zones = sorted({z.strip() for z in available.splitlines()
+                             if re.fullmatch(r"[a-z]+-[a-z]+\d+-[a-z]", z.strip())},
+                            key=lambda z: (0 if z.startswith("us-") else 1 if z.startswith("europe-") else 2, z))
+        if not args.zones:
+            raise RuntimeError("No zones returned for " + accelerator)
+    elif "auto" in args.zones:
+        parser.error("Use --zones auto alone, or list explicit zones")
 
     # gcloud accepts a tag or digest reference, but not their combination.
     lookup = args.image
@@ -54,7 +67,7 @@ def main() -> int:
     output.mkdir(parents=True)
     state = {"run_id": run_id, "image": image, "project": args.project,
              "machine_type": args.machine_type, "provisioning_model": args.provisioning_model,
-             "stage": "starting"}
+             "zones": args.zones, "stage": "starting"}
 
     def save(**updates: object) -> None:
         state.update(updates)
@@ -83,9 +96,12 @@ def main() -> int:
                 zone = candidate
                 break
             unavailable_type = "machine type with name" in result.stderr.lower() and "does not exist in zone" in result.stderr.lower()
-            if not unavailable_type and "stockout" not in result.stderr and "RESOURCE_POOL_EXHAUSTED" not in result.stderr:
+            quota_error = "QUOTA_EXCEEDED" in result.stderr or ("Quota '" in result.stderr and "exceeded" in result.stderr)
+            regional_quota = quota_error and "_ALL_REGIONS" not in result.stderr
+            if not unavailable_type and not regional_quota and "stockout" not in result.stderr and "RESOURCE_POOL_EXHAUSTED" not in result.stderr:
                 raise RuntimeError(result.stderr)
-            print("No " + args.provisioning_model.lower() + " capacity in " + candidate, flush=True)
+            print("Unable to allocate " + args.provisioning_model.lower() + " in " + candidate
+                  + (" (quota)" if regional_quota else ""), flush=True)
     if zone is None:
         save(stage="no-capacity")
         raise RuntimeError("No capacity in the requested zones")

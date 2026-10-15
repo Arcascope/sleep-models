@@ -194,9 +194,9 @@ Like CodeBuild, the build uploads committed `HEAD`; commit changes first.
     deploy/scripts/remote_build_gcp.sh train unet <data image>
     python3 deploy/scripts/run_spot_smoke_gcp.py <training image>
 
-The spot launcher resolves the image to a digest and tries `us-west1-a`,
-`europe-west1-b`, then `europe-west1-c` on stockout. Override that list with
-`--zones ZONE [ZONE ...]`. It provisions one `g2-standard-8` (L4, 32 GiB host
+The spot launcher resolves the image to a digest, discovers GPU-enabled zones,
+and tries them sequentially (US, then Europe, then other regions). Restrict
+that list with `--zones ZONE [ZONE ...]`. It provisions one `g2-standard-8` (L4, 32 GiB host
 memory), runs `fold0` with `config/training-smoke.json` (two epochs), uploads
 results to GCS, downloads them into `unet/results/<run id>/`, and deletes the
 VM. A one-hour VM lifetime with automatic deletion provides a backstop if
