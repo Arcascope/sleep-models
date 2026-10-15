@@ -19,6 +19,8 @@ deploy/scripts/copy_image.sh <source> <destination>
 - A destination tag that already exists is not copied; the script only checks its digest.
 - Run it in the background and wait for it to exit; it prints the pinned destination
   (`<repo>:<tag>@sha256:...`) last.
+- Expect about 5 minutes for a data image: the 14.5 GB BiDoze data image copied from
+  ECR to Artifact Registry in 198 s, plus about 1 minute to boot and delete the VM.
 
 ## Why not the obvious ways
 
