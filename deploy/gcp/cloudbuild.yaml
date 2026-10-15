@@ -44,6 +44,7 @@ steps:
         cp "$$(command -v docker)" /workspace/.build-tools/docker
         plugin="$$(docker info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "buildx"}}{{.Path}}{{end}}{{end}}')"
         cp "$$plugin" /workspace/.build-tools/docker-buildx
+        cp /etc/ssl/certs/ca-certificates.crt /workspace/.build-tools/ca-certificates.crt
 
   - id: image
     name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
@@ -55,6 +56,9 @@ steps:
         # Keep gcloud and Docker in the same step. The Docker builder does
         # not include gcloud; both are needed by cloudbuild.sh.
         export PATH="/workspace/.build-tools:$$PATH"
+        # Docker/buildx's Go TLS client needs the system trust bundle too;
+        # gcloud's Python certificate store does not supply it.
+        export SSL_CERT_FILE=/workspace/.build-tools/ca-certificates.crt
         mkdir -p ~/.docker/cli-plugins
         cp /workspace/.build-tools/docker-buildx ~/.docker/cli-plugins/docker-buildx
         gcloud version

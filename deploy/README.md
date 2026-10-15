@@ -184,3 +184,31 @@ for a model that does not fit in 24 GB.
     aws cloudformation delete-stack --stack-name arcasleep-train
 
 The ECR repositories must be empty first, or the deletion stalls on them.
+
+## Google Cloud smoke run
+
+The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository
+`us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train`, and Cloud Build.
+Like CodeBuild, the build uploads committed `HEAD`; commit changes first.
+
+    deploy/scripts/remote_build_gcp.sh train unet <data image>
+    bash deploy/scripts/run_smoke_gcp.sh <training image> us-central1
+
+The smoke submitter resolves the training image to a digest and runs `fold0`
+with `config/training-smoke.json` (two epochs). Cloud Batch provisions one
+on-demand `g2-standard-8` (L4, 32 GiB host memory). The task has a one hour
+limit and no retries; a queued job can wait for regional GPU capacity.
+
+Results are written to a shared directory on the VM. A separate container
+uploads that directory to
+`gs://arcascope-sleep-models-data/training_outputs/<run id>/`, including partial
+outputs after a training failure. Training has a 55 minute runnable limit to
+leave time for upload; reaching the task's overall limit can prevent upload.
+The Batch service account needs Artifact Registry read and bucket write access.
+
+    gcloud batch jobs describe <run id> --location=us-central1 --project=shiftapp-arcascope
+    gcloud logging read 'labels.job_uid="<job uid>"' --project=shiftapp-arcascope
+    gcloud storage rsync --recursive gs://arcascope-sleep-models-data/training_outputs/<run id>/ unet/results/<run id>/
+
+The training harness's S3 upload is disabled for this job. This GCP path covers
+the smoke run; the ECS scripts above still provide the full training workflow.
