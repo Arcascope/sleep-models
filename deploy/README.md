@@ -185,6 +185,26 @@ for a model that does not fit in 24 GB.
 
 The ECR repositories must be empty first, or the deletion stalls on them.
 
+## Google Cloud training run
+
+`run_task_gcp.py` is the GCP counterpart of `run_task.sh`: one on-demand L4 VM
+per phase under one run id, with the same results layout as S3.
+
+    python3 deploy/scripts/run_task_gcp.py [options] FAMILY IMAGE [PHASE ...]
+
+Options match `run_task.sh` (`--config`, `--run-id`, `--env KEY=VALUE`,
+`--max-hours`, `--queue`, `--dry-run`), plus `--zones`, `--machine-type`,
+`--provisioning-model {STANDARD,SPOT}` and `--max-vms`. The launcher refuses a
+launch that would put more than `--max-vms` (default 4) training VMs in the
+project, counting other users' VMs, unless `--queue` is given. Each VM uploads
+to `gs://arcascope-sleep-models-data/training_outputs/<run id>/`; the launcher
+downloads that into `<family>/results/<run id>/` and deletes each VM.
+`gcp-run.json` there records the image digest and each phase's zone, exit codes
+and cleanup status. A phase that finds no L4 in any zone is reported as
+`no-capacity`, and can be run on AWS under the same run id.
+
+The VM startup script is `deploy/gcp/train-startup.sh`.
+
 ## Google Cloud smoke run
 
 The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository
