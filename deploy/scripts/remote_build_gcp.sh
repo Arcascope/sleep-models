@@ -59,7 +59,7 @@ fi
 
 # gcloud uploads a tarball of HEAD, so the build source matches the commit the
 # image will name; a directory upload would include uncommitted work.
-ARCHIVE=$(mktemp -t arcasleep-gcp).tgz
+ARCHIVE=$(mktemp -t arcasleep-gcp.XXXXXX).tgz
 trap 'rm -f "$ARCHIVE"' EXIT
 git -C "$REPO_ROOT" archive --format=tar.gz -o "$ARCHIVE" HEAD
 
