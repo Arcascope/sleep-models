@@ -40,7 +40,7 @@ from scipy.stats import wilcoxon
 from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 
 ARMS = ["random", "foundry", "foundry-start", "circular", "foundry-circular", "foundry-wakecut",
-        "foundry-wakecut-pair", "wakecut-pair"]
+        "foundry-wakecut-pair", "wakecut-pair", "foundry-crop"]
 STAGES = ["wake", "light", "deep", "rem"]
 EPOCH_MIN = 0.5
 LEAD_EPOCHS = 240
