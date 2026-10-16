@@ -51,6 +51,7 @@ BALANCED_ONLY_KEYS = (
     "member_loss_weight",
     "role_loss_weight",
     "max_train_seconds",
+    "fit_state_path",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -112,6 +113,9 @@ class TrainingConfig:
     role_loss_weight: float = 0.0
     # A wall-clock cap on each fit, in seconds; at the cap the fit keeps its best eval κ.
     max_train_seconds: float | None = None
+    # Where a fit stopped by max_train_seconds saves its state, and resumes from it when the
+    # file exists; the fit seed is appended to the file name.
+    fit_state_path: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -401,9 +405,17 @@ def _train_fold_balanced(
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
         max_train_seconds=training.max_train_seconds,
+        fit_state_path=_seeded_state_path(training.fit_state_path, fit_seed),
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
+
+
+def _seeded_state_path(path: str | None, fit_seed: int) -> Path | None:
+    if path is None:
+        return None
+    p = Path(path)
+    return p.with_name(f"{p.stem}_seed{fit_seed}{p.suffix}")
 
 
 def _run_final_deblip(

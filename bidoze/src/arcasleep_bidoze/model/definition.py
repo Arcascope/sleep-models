@@ -3370,6 +3370,7 @@ class BiDozeNetModel(CVModel):
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
         max_train_seconds: float | None = None,
+        fit_state_path: str | os.PathLike | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3394,6 +3395,12 @@ class BiDozeNetModel(CVModel):
 
         With ``max_train_seconds`` the fit also stops after the first epoch that ends
         past that many seconds, keeping the parameters of its best eval kappa.
+
+        With ``fit_state_path``, a fit stopped by ``max_train_seconds`` saves its whole
+        state there (parameters, optimizer, learning rate, patience, best epoch, history
+        and random state), and a fit that finds a file there resumes from it at the next
+        epoch. The cap then applies to each session separately. When a resumed fit ends
+        for any other reason, the file is renamed ``<name>.used<suffix>``.
 
         With ``gap_from_row`` the gap output is set from the input, so gap and padding
         epochs are left out of the loss.
@@ -3491,8 +3498,28 @@ class BiDozeNetModel(CVModel):
             best_epoch = 0
             print(f"    epoch   0  eval_kappa {best_kappa:.4f}  (starting weights)", flush=True)
 
+        start_epoch = 1
+        state_file = Path(fit_state_path) if fit_state_path is not None else None
+        resumed = state_file is not None and state_file.exists()
+        if resumed:
+            import pickle
+
+            with state_file.open("rb") as f:
+                saved = pickle.load(f)
+            params = jax.device_put(saved["params"])
+            opt_state = jax.device_put(saved["opt_state"])
+            best_params = jax.device_put(saved["best_params"])
+            best_kappa, best_epoch, lr = saved["best_kappa"], saved["best_epoch"], saved["lr"]
+            plateau.__dict__.update(saved["plateau"])
+            history = saved["history"]
+            rng.bit_generator.state = saved["rng_state"]
+            rng_key = jnp.asarray(saved["rng_key"])
+            start_epoch = saved["epoch"] + 1
+            print(f"    resumed from {state_file} at epoch {start_epoch}, step {plateau.step}, "
+                  f"lr {lr:.2e}, best {best_kappa:.4f}@{best_epoch}", flush=True)
+
         fit_start = time.time()
-        for epoch in range(1, max_epochs + 1):
+        for epoch in range(start_epoch, max_epochs + 1):
             epoch_start = time.time()
             if soft_targets is not None:
                 # Whole rows, drawn uniformly; the loss covers every epoch of a row.
@@ -3556,6 +3583,27 @@ class BiDozeNetModel(CVModel):
             if max_train_seconds is not None and time.time() - fit_start > max_train_seconds:
                 print(f"    time cap: stopped after {time.time() - fit_start:.0f}s (cap {max_train_seconds:.0f}s)")
                 history["time_capped"] = True
+                if state_file is not None:
+                    import pickle
+
+                    if decision.drop_lr:
+                        lr /= lr_drop_factor
+                        opt_state.hyperparams["learning_rate"] = jnp.asarray(lr, dtype=jnp.float32)
+                        print(f"    lr -> {lr:.2e}")
+                    saved = {
+                        "params": jax.device_get(params), "opt_state": jax.device_get(opt_state),
+                        "best_params": jax.device_get(best_params), "best_kappa": best_kappa,
+                        "best_epoch": best_epoch, "lr": lr, "epoch": epoch,
+                        "plateau": dict(plateau.__dict__), "history": history,
+                        "rng_state": rng.bit_generator.state, "rng_key": np.asarray(rng_key),
+                    }
+                    state_file.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = state_file.with_name(state_file.name + ".tmp")
+                    with tmp.open("wb") as f:
+                        pickle.dump(saved, f)
+                    os.replace(tmp, state_file)
+                    print(f"    fit state saved to {state_file}")
+                    state_file = None
                 break
             if decision.drop_lr:
                 lr /= lr_drop_factor
@@ -3564,6 +3612,8 @@ class BiDozeNetModel(CVModel):
 
         if best_params is None:
             raise ValueError("no epoch reached a finite eval kappa; nothing to select")
+        if resumed and state_file is not None:
+            os.replace(state_file, state_file.with_name(f"{state_file.stem}.used{state_file.suffix}"))
         self.params = best_params
         self.model = {"params": self.params}
         history["best_eval_kappa"] = float(best_kappa)
