@@ -19,7 +19,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from known_style import AQUA, BLUE, GREY, GRID, INK, MUTED, ORANGE, VIOLET, plt, save  # noqa: E402
 
-ARMS = [("tridoze_j", "TriDoze-J", BLUE), ("tridoze_r", "TriDoze-R", ORANGE),
+ARMS = [("tridoze_j", "TriDoze-J", BLUE), ("tridoze_j_split", "TriDoze-J refit, not capped", BLUE),
+        ("tridoze_r", "TriDoze-R", ORANGE),
         ("bidoze_xl", "BiDoze-XL", AQUA), ("bidoze_g", "BiDoze-G (1 network)", VIOLET)]
 METRICS = [("kappa_4stage", "κ 4-stage", 0.02), ("kappa_sleep_wake", "κ sleep/wake", 0.02),
            ("wake_spec_at_95_sens", "wake spec at 95% sleep sens (pts)", 3.0)]
