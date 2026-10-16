@@ -7,6 +7,8 @@ steps as the recordings the bundle was trained on.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from pisces_lite.datasets.constants import PSG_DT
 from pisces_lite.proc import ProcessingConfig
@@ -18,6 +20,10 @@ CACHE_PREFIX_KEY = "cache_prefix"
 #: Largest acceleration, in g on any axis, kept by :func:`clean_accelerometer_rows`;
 #: the full-scale range of common wrist accelerometers.
 MAX_ABS_G = 16.0
+
+#: Largest share of finite rows :func:`clean_accelerometer_rows` drops for range before it
+#: refuses the recording; a larger share usually means the input is not in g.
+MAX_OUT_OF_RANGE_SHARE = 0.001
 
 
 class FeatureExtractionError(RuntimeError):
@@ -48,10 +54,27 @@ def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
 
     A row is invalid when any value is non-finite or any axis is beyond
     ±``MAX_ABS_G`` g; such samples are sensor or export errors, not motion.
+    Rows dropped for range are reported with a ``RuntimeWarning``. More than
+    ``MAX_OUT_OF_RANGE_SHARE`` of the finite rows out of range raises
+    :class:`FeatureExtractionError`.
     """
     acc = np.asarray(accel, dtype=np.float64)
     acc = acc[np.all(np.isfinite(acc), axis=1)]
-    acc = acc[np.all(np.abs(acc[:, 1:]) <= MAX_ABS_G, axis=1)]
+    in_range = np.all(np.abs(acc[:, 1:]) <= MAX_ABS_G, axis=1)
+    dropped = int(acc.shape[0] - np.count_nonzero(in_range))
+    if dropped:
+        share = dropped / acc.shape[0]
+        if share > MAX_OUT_OF_RANGE_SHARE:
+            raise FeatureExtractionError(
+                f"{dropped} of {acc.shape[0]} accelerometer rows ({share:.2%}) have an axis "
+                f"beyond ±{MAX_ABS_G:g} g; acceleration must be in g (divide m/s² by 9.81)"
+            )
+        warnings.warn(
+            f"dropped {dropped} accelerometer rows with an axis beyond ±{MAX_ABS_G:g} g",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    acc = acc[in_range]
     if acc.shape[0] < 2:
         raise FeatureExtractionError("need at least two valid accelerometer rows")
     acc = acc[np.argsort(acc[:, 0], kind="mergesort")]

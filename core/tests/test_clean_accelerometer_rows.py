@@ -6,19 +6,37 @@ import pytest
 
 pytest.importorskip("pisces_lite")
 
-from arcasleep.processing import MAX_ABS_G, clean_accelerometer_rows  # noqa: E402
+from arcasleep.processing import (  # noqa: E402
+    MAX_ABS_G,
+    MAX_OUT_OF_RANGE_SHARE,
+    FeatureExtractionError,
+    clean_accelerometer_rows,
+)
 
 
-def test_rows_beyond_the_range_are_dropped() -> None:
-    accel = np.array([
-        [0.0, 0.0, 0.0, 1.0],
-        [0.1, MAX_ABS_G, -MAX_ABS_G, 0.0],
-        [0.2, 3e20, 0.0, 1.0],
-        [0.3, 0.0, -17.0, 1.0],
-        [0.4, np.nan, 0.0, 1.0],
-        [0.5, 0.1, 0.2, 0.9],
-    ])
-    np.testing.assert_array_equal(clean_accelerometer_rows(accel)[:, 0], [0.0, 0.1, 0.5])
+def still_rows(n: int) -> np.ndarray:
+    return np.column_stack([np.arange(n) * 0.04, np.zeros(n), np.zeros(n), np.ones(n)])
+
+
+def test_rows_beyond_the_range_are_dropped_with_a_warning() -> None:
+    accel = still_rows(5000)
+    accel[1, 1:] = [MAX_ABS_G, -MAX_ABS_G, 0.0]
+    accel[2, 1] = 3e20
+    accel[3, 2] = -17.0
+    accel[4, 1] = np.nan
+    with pytest.warns(RuntimeWarning):
+        clean = clean_accelerometer_rows(accel)
+    assert clean.shape[0] == 4997
+    assert not np.isin(accel[2:5, 0], clean[:, 0]).any()
+    assert accel[1, 0] in clean[:, 0]
+
+
+def test_a_large_share_out_of_range_is_refused() -> None:
+    accel = still_rows(1000)
+    n = int(1000 * MAX_OUT_OF_RANGE_SHARE) + 1
+    accel[:n, 3] = 9.81 * MAX_ABS_G
+    with pytest.raises(FeatureExtractionError):
+        clean_accelerometer_rows(accel)
 
 
 def test_timestamps_are_not_range_checked() -> None:
