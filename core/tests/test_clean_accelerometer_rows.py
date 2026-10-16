@@ -21,7 +21,7 @@ def test_rows_beyond_the_range_are_dropped_with_a_warning() -> None:
     accel = still_rows(5000)
     accel[1, 1:] = [MAX_ABS_G, -MAX_ABS_G, 0.0]
     accel[2, 1] = 3e20
-    accel[3, 2] = -17.0
+    accel[3, 2] = -(MAX_ABS_G + 1.0)
     accel[4, 1] = np.nan
     with pytest.warns(RuntimeWarning):
         clean = clean_accelerometer_rows(accel)

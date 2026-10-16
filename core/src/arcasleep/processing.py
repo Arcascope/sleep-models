@@ -18,8 +18,8 @@ from pisces_lite.proc import ProcessingConfig
 CACHE_PREFIX_KEY = "cache_prefix"
 
 #: Largest acceleration, in g on any axis, kept by :func:`clean_accelerometer_rows`;
-#: the full-scale range of common wrist accelerometers.
-MAX_ABS_G = 16.0
+#: above the brief 16–22 g readings some wrist devices report during real movement.
+MAX_ABS_G = 32.0
 
 #: Range of the median acceleration magnitude, in g, that :func:`clean_accelerometer_rows`
 #: accepts. Gravity alone is 1 g, so a recording in g has a median close to 1; one in m/s²
