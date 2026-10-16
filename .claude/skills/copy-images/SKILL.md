@@ -11,8 +11,10 @@ deploy/scripts/copy_image.sh <source> <destination>
 ```
 
 - `<source>` is pinned by digest (`<repo>@sha256:...`); `<destination>` is `<repo>:<tag>`, normally
-  the source's own tag. One is ECR (`904277341831.dkr.ecr.us-east-1.amazonaws.com/arcasleep-train/<repo>`),
+  the source's own tag. One is ECR (`<aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/arcasleep-train/<repo>`),
   the other Artifact Registry (`us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/<repo>`).
+  Resolve `<aws-account-id>` from the active AWS credentials with
+  `aws sts get-caller-identity --query Account --output text`.
 - The script starts an `e2-standard-4` VM in `us-east4-a` that runs `skopeo copy
   --preserve-digests`, waits, checks that the destination digest equals the source's, and
   deletes the VM. The bytes move cloud to cloud; nothing passes through this machine.
