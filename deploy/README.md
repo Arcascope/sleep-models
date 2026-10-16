@@ -193,17 +193,28 @@ per phase under one run id, with the same results layout as S3.
     python3 deploy/scripts/run_task_gcp.py [options] FAMILY IMAGE [PHASE ...]
 
 Options match `run_task.sh` (`--config`, `--run-id`, `--env KEY=VALUE`,
-`--max-hours`, `--queue`, `--dry-run`), plus `--zones`, `--machine-type`,
-`--provisioning-model {STANDARD,SPOT}` and `--max-vms`. The launcher refuses a
+`--max-hours`, `--queue`, `--dry-run`), plus `--results-dir`, `--zones`,
+`--machine-type`, `--provisioning-model {STANDARD,SPOT}` and `--max-vms`. The launcher refuses a
 launch that would put more than `--max-vms` (default 4) training VMs in the
 project, counting other users' VMs, unless `--queue` is given. Each VM uploads
 to `gs://arcascope-sleep-models-data/training_outputs/<run id>/`; the launcher
 downloads that into `<family>/results/<run id>/` and deletes each VM.
+`--results-dir DIR` instead writes to `DIR/<run id>/`, including metadata and
+serial logs. Relative paths are resolved from the caller's current directory;
+the default stays under the launcher's checkout. For example, a worktree
+launcher can collect directly into another checkout's results root.
 `gcp-run.json` there records the image digest and each phase's zone, exit codes
 and cleanup status. A phase that finds no L4 in any zone is reported as
 `no-capacity`, and can be run on AWS under the same run id.
 
 The VM startup script is `deploy/gcp/train-startup.sh`.
+
+BiDoze full-recipe experiment execution has been verified on STANDARD
+`g2-standard-8`: eight phase records with `config/training-balanced.json`
+report successful training and upload, with VM cleanup confirmed. The launcher
+used for those runs matched `5c771dc` before the results-directory option.
+Experiment phase names such as `random/final` are supported. Full-recipe
+UNet remains unverified.
 
 ## Copying images between ECR and Artifact Registry
 
@@ -214,9 +225,14 @@ the other in Artifact Registry, in either direction. The script starts an
 `e2-standard-4` VM in `us-east4-a` that runs `skopeo copy --preserve-digests`,
 so the image crosses the cloud backbone instead of this machine and keeps its
 digest. The script then checks the digest in the destination registry and
-deletes the VM. A destination tag that already exists is not copied again.
-Use it for data images: build the data image on AWS, then copy it to Artifact
-Registry.
+deletes the VM. Cleanup retries up to three times and verifies that this
+invocation's VM is absent; failed or unverifiable cleanup makes the command
+fail. A destination tag that already exists is not copied again.
+
+Copy data images to reuse the exact cache bytes, or copy a complete training
+image for a run split between clouds. Building once and copying the training
+image preserves one manifest digest, including its dependency layers. Each
+launcher uses the URI in its own registry, pinned to the matching digest.
 
 Image copies use dedicated Google identities federated to repository-scoped AWS
 roles. Set `ARCASLEEP_PROJECT`, `COPY_SERVICE_ACCOUNT` and `COPY_AWS_ROLE_ARN`

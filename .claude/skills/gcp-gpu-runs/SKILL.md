@@ -14,8 +14,8 @@ everything here is the `aws-gpu-runs` skill, whose image and cache rules also
 apply (read its "Images" section once).
 
 `run_task_gcp.py` mirrors `run_task.sh`: `FAMILY IMAGE [PHASE ...]`, with
-`--config`, `--run-id`, `--env` and `--max-hours`. Each phase runs on its own
-L4 VM under one run id, and the layout of the results matches S3
+`--config`, `--run-id`, `--env`, `--results-dir` and `--max-hours`. Each phase
+runs on its own L4 VM under one run id, and the results layout matches S3
 (`training/<phase>/`).
 
 ## Dispatch: GCP first, AWS overflow
@@ -24,20 +24,28 @@ L4 VM under one run id, and the layout of the results matches S3
    then the rest) and is reported as `no-capacity` if none has an L4.
 2. **Overflow to AWS only the phases reported `no-capacity`.** Confirm no VM
    was left behind (Cleanup), then follow `aws-gpu-runs` from its step 1
-   with the same `--run-id`, naming only those phases, on an ECR image built
-   from the same commit (`remote_build.sh`). Its `status.sh` and slot limits
-   apply.
+   with the same `--run-id`, naming only those phases. For one image digest
+   across both clouds, copy the complete training image into ECR first (see
+   Shared image below). Its `status.sh` and slot limits apply.
 3. A phase that failed, timed out or was interrupted is **not** overflowed:
    report it and ask. Rerunning could repeat the same failure on a second bill.
 4. The results of an overflowed run are split: collect GCS phases with the
    launcher (it does so itself) and S3 phases with `aws s3 sync` into the same
-   `<family>/results/<run id>/`.
+   results root plus `<run id>/`; use `--results-dir` on the GCP launcher
+   to select that root.
 5. Say in the report which cloud ran each phase.
 
-An Artifact Registry image is not usable by ECS, and an ECR image is not
-usable here. A data image is copied between the registries with
-`deploy/scripts/copy_image.sh` (the `copy-images` skill); a training image
-is built on each cloud from the same commit.
+### Shared image for a run on both clouds
+
+Each launcher needs a registry URI in its own cloud. Build a training image
+once, pin its digest, and copy the complete image to the other registry with
+`deploy/scripts/copy_image.sh` (the `copy-images` skill). Both clouds can then
+run the same manifest digest, including the same dependency and data layers.
+Record the two registry URIs and their matching digest in the run provenance.
+
+Building separately from the same commit is also supported, but produces
+independent digests; the dependency images may differ as well. Record both
+digests when choosing that workflow.
 
 ## Limits
 
@@ -85,10 +93,11 @@ deploy/scripts/remote_build_gcp.sh train <family> \
 The data image for UNet's current cache is
 `data:12Hz_log_PSD_aligned-f9f44233ba28` (per `unet/config/inputs.json`, not
 the `jerkdt` cache). A new cache needs a prep build first, which exists only
-on AWS (`aws-gpu-runs` step 2); copy the resulting ECR data image here
-with the `copy-images` skill. `remote_build_gcp.sh data` fails (its build
-step has no `arcasleep`). `deps`
-rebuilds only when the jax or pisces-lite pin changes; ask the user first.
+on AWS (`aws-gpu-runs` step 2). Copy the resulting ECR data image here
+with the `copy-images` skill when identical bytes are required. The GCP
+data-build step now installs arcasleep under Python 3.12; a complete data
+build through that path still needs verification. `deps` rebuilds only when
+the jax or pisces-lite pin changes; ask the user first.
 Builds run in us-central1 and are unaffected by GPU stockout.
 
 ### 3. Launch
@@ -100,6 +109,10 @@ python3 deploy/scripts/run_task_gcp.py --max-hours 6 <family> <image> fold0 fold
 
 - Phases are `fold0`…`fold4` and `final` for the committed 5-fold plans; with
   none named, one VM runs all of them in order.
+- `--results-dir DIR` selects the local results root and writes `DIR/<run id>/`.
+  Relative paths are relative to the calling directory. The default is
+  `<family>/results` under the launcher's checkout. Use this option when
+  launching from a worktree but collecting into another checkout.
 - `--env KEY=VALUE` passes harness variables, such as
   `UNET_SPLIT_PLAN=config/splits/<plan>.json` or `BIDOZE_CV_CONFIG=...`.
 - `--zones` restricts the search; `--machine-type a2-highgpu-1g` selects an A100
@@ -118,8 +131,10 @@ cat <family>/results/<run id>/gcp-run.json
 
 ### 5. Results
 
-Downloaded into `<family>/results/<run id>/`, with `gcp-run.json` (image
-digest, per-phase zone, exit codes, `vm_deleted`) and `gcp/<phase>/serial.log`.
+Downloaded into `<results root>/<run id>/`, with `gcp-run.json` (image
+digest, local results root, per-phase zone, exit codes, `vm_deleted`) and
+`gcp/<phase>/serial.log`. `--results-dir` controls that root; metadata, serial
+logs and downloaded outputs all use the same destination.
 A phase is good only if its stage is `succeeded` (training and upload exit 0)
 and `vm_deleted` is `true`. Partial outputs of a failed phase are for
 diagnosis only. Then pool and compare as for a local run, and record the run id,
@@ -134,11 +149,13 @@ gcloud compute instances list --project=shiftapp-arcascope
 gcloud compute disks list --project=shiftapp-arcascope
 ```
 
-Both must be empty unless another agent has a run in flight. Delete only your
-own (`gcloud compute instances delete <name> --zone=<zone> --quiet`). A VM the
-launcher failed to delete is removed by GCE 30 minutes after `--max-hours`.
+Match VM names and zones to your run's `gcp-run.json`. Confirm those VMs
+and their boot disks are gone; other agents' resources can remain.
+Delete only your own (`gcloud compute instances delete <name> --zone=<zone> --quiet`).
+A VM the launcher failed to delete is removed by GCE 30 minutes after
+`--max-hours`.
 
-## Known pitfalls
+## Verification and known limits
 
 - COS `/root/.docker` is read-only and `/mnt` is a small tmpfs; the startup
   template uses `/var/lib/arcasleep-docker` and `/var/lib/arcasleep-results`.
@@ -146,5 +163,12 @@ launcher failed to delete is removed by GCE 30 minutes after `--max-hours`.
 - Both registries hold `deps:jax0.11.2-pisces4.2.0-e5e67063`, built
   separately, so the two digests differ. `deploy/scripts/deps_tag.sh` prints the tag
   that the current pins require.
-- BiDoze is supported by the launcher but has not been run on GCP, and has no
-  image in Artifact Registry yet.
+- BiDoze full-recipe experiment execution has been verified on STANDARD
+  `g2-standard-8`: eight phase records using `config/training-balanced.json`
+  report successful training, upload exit 0 and `vm_deleted: true`. The
+  launcher used for those runs matched PR head `5c771dc` before this
+  `--results-dir` addition. These records verify execution, upload and cleanup.
+- Experiment phase names such as `random/final` work. Split-cloud dispatch has
+  been exercised; the complete split-run outcome has not yet been validated.
+- Full-recipe UNet, `--queue`, the current SPOT launcher and A100 remain
+  unverified.

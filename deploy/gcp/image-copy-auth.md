@@ -133,13 +133,17 @@ deploy/scripts/copy_image.sh <source> <destination>
 
 For Artifact Registry to ECR, use `$AR_TO_ECR` and output `EcrPushRoleArn`.
 The caller still needs read-only image lookup permissions and permission to
-create/delete the GCP VM. Those launcher permissions are separate from the
-VM's restricted registry permissions. Every GCP call specifies the project.
+create, describe and delete the GCP VM. Those launcher permissions are
+separate from the VM's restricted registry permissions. Every GCP call
+specifies the project.
 
 The source tag is pinned before VM creation. A destination with a matching
 digest is skipped; a different existing digest is rejected. Unexpected
 lookup errors abort before launch. The launcher verifies the destination
-digest and deletes its own VM even after failure.
+digest and deletes its own VM even after failure. Cleanup makes up to three
+delete attempts and checks that the exact VM is absent after each attempt.
+An already-removed VM counts as clean; an error that prevents verification
+makes the command fail. Other users' VMs are excluded from cleanup.
 
 ## Verification (2026-10-16)
 

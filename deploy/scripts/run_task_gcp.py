@@ -9,7 +9,8 @@ repository. Each PHASE (fold0, fold1, ..., final) runs on its own VM under one
 run id; with no PHASE, one VM runs every phase in order. Each VM uploads to
 gs://BUCKET/training_outputs/RUN_ID/ (training/PHASE/ as on S3, plus
 gcp/PHASE/ with its log and exit code), then the launcher downloads the
-results into FAMILY/results/RUN_ID/ and deletes the VM.
+results into FAMILY/results/RUN_ID/ and deletes the VM. --results-dir DIR
+selects a different local results root, writing DIR/RUN_ID/.
 
 The launcher stays in the foreground until every VM has finished, so run it in
 the background. A VM that outlives --max-hours by 30 minutes is deleted by GCE.
@@ -52,6 +53,9 @@ def main() -> int:
                         "(default: unet config/training.json, bidoze config/training-balanced.json)")
     parser.add_argument("--run-id", help="run id: letters, digits, '.', '_' and '-' "
                         "(default FAMILY-gcp-<UTC launch time>)")
+    parser.add_argument("--results-dir", type=Path, metavar="DIR",
+                        help="local results root; writes DIR/RUN_ID "
+                        "(default: FAMILY/results under this checkout)")
     parser.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                         help="extra container environment; repeatable")
     parser.add_argument("--max-hours", type=int, default=24,
@@ -93,7 +97,8 @@ def main() -> int:
     config = args.config or family["config"]
     phases = args.phases or ["all"]
     run_id = args.run_id or f"{args.family}-gcp-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
-    output = root / args.family / "results" / run_id
+    results_dir = (args.results_dir or root / args.family / "results").expanduser().resolve()
+    output = results_dir / run_id
 
     def gcloud(*parts: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(["gcloud", *parts, "--project=" + args.project],
@@ -140,6 +145,7 @@ def main() -> int:
     print(f"    recipe   {config}")
     print(f"    phases   {' '.join(args.phases) if args.phases else 'all, in one VM'}")
     print(f"    run id   {run_id}")
+    print(f"    results  {output}")
     print(f"    machine  {args.machine_type} {args.provisioning_model}")
     print(f"    slots    {free} free of {args.max_vms} ({len(active)} active)")
     print(f"    limit    {args.max_hours} h per phase")
@@ -158,6 +164,7 @@ def main() -> int:
         "run_id": run_id, "family": args.family, "image": image, "project": args.project,
         "machine_type": args.machine_type, "provisioning_model": args.provisioning_model,
         "config": config, "env": args.env, "max_hours": args.max_hours,
+        "results_dir": str(results_dir),
         "phases": {p: {"stage": "waiting"} for p in phases}}
     lock = threading.Lock()
 

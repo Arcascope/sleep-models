@@ -24,16 +24,21 @@ deploy/scripts/copy_image.sh <source> <destination>
 - Expect about 5 minutes for a data image: the 14.5 GB BiDoze data image copied from
   ECR to Artifact Registry in 198 s, plus about 1 minute to boot and delete the VM.
 
-## Why not the obvious ways
+## Choosing a copy or a build
 
-- **Not `docker pull` + `docker push` on the workstation.** A 13 GB data image downloads and
-  uploads through the office link: two slow copies instead of one fast one.
-- **Not a GCP data build from a GCS copy of the cache.** `remote_build_gcp.sh data` runs
-  `arcasleep manifest-local` in a build step where arcasleep is not installed, and fails with
-  exit 127. Copying the ECR data image is also the only way to get the same bytes, and the
-  same tag, on both clouds.
-- `--preserve-digests` keeps the manifest as it is, so the image has one digest in both
-  registries and a run on either cloud can be pinned to it.
+Copy either a data image or a complete training image. For a run split
+between AWS and GCP, building the training image once and copying it gives
+both clouds one manifest digest, including identical dependency and data
+layers. Pass each launcher its own registry's URI, pinned to that digest.
+
+`--preserve-digests` keeps the manifest unchanged and the launcher verifies
+the destination digest. Independent builds can produce different digests,
+even from the same commit. Copying an existing data image also preserves
+its exact bytes and tag; the GCP data-build path now installs arcasleep under
+Python 3.12 but still needs a complete build verification.
+
+The VM transfers bytes directly between clouds. Pulling and pushing through
+the workstation adds both a download and an upload through its connection.
 
 ## Rules
 
@@ -46,10 +51,13 @@ deploy/scripts/copy_image.sh <source> <destination>
 - The VM obtains temporary AWS credentials using its Google identity; no
   password is supplied in metadata. Never fall back to the default service
   account or forward workstation credentials when federation fails.
-- The VM is deleted when the copy ends; GCE deletes it after 2 h regardless.
-  After a failure, check only this project's `copy-image-*` VMs:
+- Cleanup retries deletion up to three times and confirms that the exact VM
+  launched by this invocation is absent. A failed or unverifiable cleanup
+  makes the command fail; GCE's 2 h lifetime remains the backstop.
+  After a failure, use the reported VM name and zone to inspect that VM.
+  This inventory can help identify it:
   `gcloud compute instances list --filter='labels.purpose=image-copy' --project="$ARCASLEEP_PROJECT"`.
   Delete only VMs you started.
-- A training image is per cloud (it is built on the data image in that cloud's registry), so a
-  run on both clouds usually copies the data image and builds the training image on each side
-  from the same commit (`remote_build.sh train`, `remote_build_gcp.sh train`).
+- For one digest across clouds, copy the complete training image. For separate
+  builds, copy the data image and build on each cloud from the same commit
+  (`remote_build.sh train`, `remote_build_gcp.sh train`); record both digests.

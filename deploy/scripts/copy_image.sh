@@ -69,14 +69,34 @@ ECR_REGION=${BASH_REMATCH[2]}
 
 WORK=$(mktemp -d)
 VM=""
+cleanup_vm() {
+    local attempt
+    for attempt in 1 2 3; do
+        # A delete request can race with automatic deletion. Confirm absence
+        # separately, even when the request itself reported success.
+        gcloud compute instances delete "$VM" --project="$PROJECT" --zone="$ZONE" --quiet \
+            >"$WORK/delete-output" 2>"$WORK/delete-error" || true
+        if gcloud compute instances describe "$VM" --project="$PROJECT" --zone="$ZONE" \
+            --format='value(status)' >"$WORK/vm-status" 2>"$WORK/status-error"; then
+            echo "VM still exists after deletion attempt $attempt: $VM in $ZONE" >&2
+        elif grep -Eq 'was not found|NOT_FOUND|could not be found' "$WORK/status-error"; then
+            return 0
+        else
+            echo "Could not verify deletion of $VM in $ZONE (attempt $attempt)" >&2
+            cat "$WORK/status-error" >&2
+        fi
+        if [[ $attempt -lt 3 ]]; then sleep "$((attempt * 2))"; fi
+    done
+    cat "$WORK/delete-error" >&2
+    return 1
+}
+
 cleanup() {
     local status=$?
     trap - EXIT
-    if [[ -n "$VM" ]]; then
-        if ! gcloud compute instances delete "$VM" --project="$PROJECT" --zone="$ZONE" --quiet >/dev/null; then
-            echo "VM cleanup failed: $VM in $ZONE; its 2 h lifetime is the backstop" >&2
-            [[ $status -ne 0 ]] || status=1
-        fi
+    if [[ -n "$VM" ]] && ! cleanup_vm; then
+        echo "VM cleanup failed after 3 attempts: $VM in $ZONE; its 2 h lifetime is the backstop" >&2
+        [[ $status -ne 0 ]] || status=1
     fi
     rm -rf "$WORK"
     exit "$status"

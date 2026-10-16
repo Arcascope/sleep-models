@@ -129,6 +129,20 @@ deploy/scripts/remote_build.sh data <cache_prefix>   # prints the data image
 deploy/scripts/remote_build.sh train <family> <data image>   # prints the training image
 ```
 
+`<data image>` must be a full ECR URI, including the registry hostname:
+
+```text
+<aws-account-id>.dkr.ecr.<region>.amazonaws.com/arcasleep-train/data:<tag>@sha256:<digest>
+```
+
+A short name such as `arcasleep-train/data:<tag>` resolves to Docker Hub
+inside the build and fails at `COPY --from=data`. Use the full pinned URI
+printed by the data build.
+
+For a run split across clouds, an existing training image can be copied
+whole with `copy_image.sh`, preserving one digest across AWS and GCP.
+See the `copy-images` skill and its federation setup.
+
 `--no-wait` returns once the build has started; follow it with
 `aws logs tail /aws/codebuild/arcasleep-train --follow --region us-east-1`.
 

@@ -74,6 +74,8 @@ elif name == "docker":
             sys.exit(15)
     else:
         raise AssertionError(args)
+elif name == "sleep":
+    pass
 elif name in ("aws", "gcloud"):
     if name == "aws":
         assert args[:2] == ["ecr", "describe-images"], "launcher must not mint registry credentials"
@@ -96,7 +98,28 @@ elif name in ("aws", "gcloud"):
         print("copy-image: start\ncopy-image: exit " + code)
         sys.exit(0)
     elif args[:3] == ["compute", "instances", "delete"]:
-        sys.exit(1 if os.environ.get("HOST_FAILURE") == "cleanup" else 0)
+        counter = root / "delete-count"
+        count = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(count))
+        if os.environ.get("DELETE_ALREADY_GONE"):
+            print("The resource was not found", file=sys.stderr)
+            sys.exit(1)
+        failed = count <= int(os.environ.get("DELETE_FAILURES", "0"))
+        if os.environ.get("HOST_FAILURE") == "cleanup" or failed:
+            print("Transient deletion error", file=sys.stderr)
+            sys.exit(1)
+        if count > int(os.environ.get("DELETE_NOOPS", "0")):
+            (root / "deleted").touch()
+        sys.exit(0)
+    elif args[:3] == ["compute", "instances", "describe"]:
+        if os.environ.get("VERIFY_DENIED"):
+            print("Permission denied verifying VM", file=sys.stderr)
+            sys.exit(1)
+        if (root / "deleted").exists() or os.environ.get("DELETE_ALREADY_GONE"):
+            print("The resource was not found", file=sys.stderr)
+            sys.exit(1)
+        print("RUNNING")
+        sys.exit(0)
     else:
         raise AssertionError(args)
     if os.environ.get("LOOKUP_DENIED"):
@@ -363,3 +386,44 @@ def test_wrong_aws_account_fails_before_cloud_calls(harness):
     )
     assert result.returncode != 0
     assert not (root / "calls.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    "setting,value,attempts",
+    [
+        ("DELETE_FAILURES", "1", 2),
+        ("DELETE_NOOPS", "1", 2),
+        ("DELETE_ALREADY_GONE", "1", 1),
+    ],
+)
+def test_cleanup_retries_and_confirms_only_its_own_vm(harness, setting, value, attempts):
+    root, env = harness
+    env[setting] = value
+    result = subprocess.run(
+        ["bash", str(ROOT / "deploy/scripts/copy_image.sh"), *images("ecr-to-ar")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    events = calls(root)
+    created = next(args[3] for _, args in events if args[:3] == ["compute", "instances", "create"])
+    deletions = [args for _, args in events if args[:3] == ["compute", "instances", "delete"]]
+    descriptions = [args for _, args in events if args[:3] == ["compute", "instances", "describe"]]
+    assert len(deletions) == len(descriptions) == attempts
+    assert all(args[3] == created for args in deletions + descriptions)
+    assert not any(args[:3] == ["compute", "instances", "list"] for _, args in events)
+
+
+def test_cleanup_fails_when_deletion_cannot_be_verified(harness):
+    root, env = harness
+    env["VERIFY_DENIED"] = "1"
+    result = subprocess.run(
+        ["bash", str(ROOT / "deploy/scripts/copy_image.sh"), *images("ecr-to-ar")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "VM cleanup failed after 3 attempts" in result.stderr
+    assert sum(args[:3] == ["compute", "instances", "describe"] for _, args in calls(root)) == 3
