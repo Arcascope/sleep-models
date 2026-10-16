@@ -218,6 +218,11 @@ deletes the VM. A destination tag that already exists is not copied again.
 Use it for data images: build the data image on AWS, then copy it to Artifact
 Registry.
 
+Image copies use dedicated Google identities federated to repository-scoped AWS
+roles. Set `ARCASLEEP_PROJECT`, `COPY_SERVICE_ACCOUNT` and `COPY_AWS_ROLE_ARN`
+explicitly; see [image-copy authentication](gcp/image-copy-auth.md) for setup.
+The launcher never forwards a registry password in VM metadata.
+
 ## Google Cloud smoke run
 
 The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository

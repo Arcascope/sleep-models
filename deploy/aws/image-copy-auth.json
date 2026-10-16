@@ -1,0 +1,231 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Isolated Google-to-AWS federation for image copies. Creates only two new IAM roles; never changes existing repositories or training roles.",
+  "Parameters": {
+    "RoleNamePrefix": {
+      "Type": "String",
+      "Default": "arcasleep-image-copy",
+      "AllowedPattern": "[a-zA-Z0-9_-]{1,50}"
+    },
+    "GoogleEcrToArSubject": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{21}",
+      "Description": "Numeric uniqueId of the dedicated ECR-to-AR Google service account"
+    },
+    "GoogleArToEcrSubject": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{21}",
+      "Description": "Numeric uniqueId of the dedicated AR-to-ECR Google service account"
+    },
+    "Audience": {
+      "Type": "String",
+      "Default": "arcasleep-image-copy",
+      "AllowedPattern": "[a-zA-Z0-9][a-zA-Z0-9._:/-]+"
+    },
+    "EcrRegion": {
+      "Type": "String",
+      "Default": "us-east-1",
+      "AllowedPattern": "[a-z0-9-]+"
+    },
+    "EcrRepositoryArns": {
+      "Type": "CommaDelimitedList",
+      "AllowedPattern": "arn:aws:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9][a-z0-9._/-]*",
+      "Description": "Explicit existing repository ARNs; no wildcards"
+    }
+  },
+  "Rules": {
+    "SeparateIdentities": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "GoogleEcrToArSubject"
+                  },
+                  {
+                    "Ref": "GoogleArToEcrSubject"
+                  }
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "Use a different Google service account for each copy direction"
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "EcrPullRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${RoleNamePrefix}-ecr-pull"
+        },
+        "Description": "ECR pull for the dedicated GCP image-copy identity",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": "accounts.google.com"
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "accounts.google.com:aud": {
+                    "Ref": "GoogleEcrToArSubject"
+                  },
+                  "accounts.google.com:sub": {
+                    "Ref": "GoogleEcrToArSubject"
+                  },
+                  "accounts.google.com:oaud": {
+                    "Ref": "Audience"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ecr-pull",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "RegistryAuthentication",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "EcrRegion"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ApprovedRepositories",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer"
+                  ],
+                  "Resource": {
+                    "Ref": "EcrRepositoryArns"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "EcrPushRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Fn::Sub": "${RoleNamePrefix}-ecr-push"
+        },
+        "Description": "ECR push for the dedicated GCP image-copy identity",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": "accounts.google.com"
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "accounts.google.com:aud": {
+                    "Ref": "GoogleArToEcrSubject"
+                  },
+                  "accounts.google.com:sub": {
+                    "Ref": "GoogleArToEcrSubject"
+                  },
+                  "accounts.google.com:oaud": {
+                    "Ref": "Audience"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ecr-push",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "RegistryAuthentication",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestedRegion": {
+                        "Ref": "EcrRegion"
+                      }
+                    }
+                  }
+                },
+                {
+                  "Sid": "ApprovedRepositories",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchGetImage",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:PutImage"
+                  ],
+                  "Resource": {
+                    "Ref": "EcrRepositoryArns"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "EcrPullRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "EcrPullRole",
+          "Arn"
+        ]
+      }
+    },
+    "EcrPushRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "EcrPushRole",
+          "Arn"
+        ]
+      }
+    },
+    "Audience": {
+      "Value": {
+        "Ref": "Audience"
+      }
+    }
+  }
+}

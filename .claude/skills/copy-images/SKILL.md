@@ -12,7 +12,7 @@ deploy/scripts/copy_image.sh <source> <destination>
 
 - `<source>` is pinned by digest (`<repo>@sha256:...`); `<destination>` is `<repo>:<tag>`, normally
   the source's own tag. One is ECR (`<aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/arcasleep-train/<repo>`),
-  the other Artifact Registry (`us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/<repo>`).
+  the other Artifact Registry (`<location>-docker.pkg.dev/<gcp-project>/<ar-repository>/<image>`).
   Resolve `<aws-account-id>` from the active AWS credentials with
   `aws sts get-caller-identity --query Account --output text`.
 - The script starts an `e2-standard-4` VM in `us-east4-a` that runs `skopeo copy
@@ -39,10 +39,16 @@ deploy/scripts/copy_image.sh <source> <destination>
 
 - Copy what a run needs, pinned by digest; do not mirror whole repositories.
 - Copying AR → ECR pays GCP egress; ECR → AR pays AWS egress. Both are small next to GPU time.
-- The ECR password (valid 12 h) is passed to the VM as instance metadata. The VM is deleted
-  when the copy ends; GCE deletes it after 2 h regardless. After a failure, check that no
-  `copy-image-*` VM is left:
-  `gcloud compute instances list --filter='labels.purpose=image-copy' --project=shiftapp-arcascope`.
+- Follow `deploy/gcp/image-copy-auth.md` for one-time federation setup. Set
+  `ARCASLEEP_PROJECT`, `COPY_SERVICE_ACCOUNT` and `COPY_AWS_ROLE_ARN` explicitly
+  for the copy direction. Use the dedicated ECR-pull / AR-writer identity for
+  ECR to AR, and the separate ECR-push / AR-reader identity for AR to ECR.
+- The VM obtains temporary AWS credentials using its Google identity; no
+  password is supplied in metadata. Never fall back to the default service
+  account or forward workstation credentials when federation fails.
+- The VM is deleted when the copy ends; GCE deletes it after 2 h regardless.
+  After a failure, check only this project's `copy-image-*` VMs:
+  `gcloud compute instances list --filter='labels.purpose=image-copy' --project="$ARCASLEEP_PROJECT"`.
   Delete only VMs you started.
 - A training image is per cloud (it is built on the data image in that cloud's registry), so a
   run on both clouds usually copies the data image and builds the training image on each side
