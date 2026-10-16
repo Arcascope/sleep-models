@@ -2,7 +2,10 @@
 
 Every model is scored the same way: the mean of its three seeds' five output probabilities
 (wake, light, deep, REM, gap) per epoch, then the argmax, with no stage divisor and no GGIR
-filter. A scored epoch called gap counts as not sleep and as a miss in 4-stage κ.
+filter. A scored epoch called gap counts as not sleep and as a miss in 4-stage κ. Prediction
+CSVs hold the four stage columns rescaled to sum to 1 and ``gap_head`` as the model gave it;
+the stage columns are multiplied by ``1 - gap_head`` to recover the model's five
+probabilities before averaging.
 
 - Foundry windows are scored by the phase that held their person out (``random/final`` for
   ``random``); SleepAccel-Clinical and SENSE by each arm's ``final`` phase.
@@ -37,7 +40,6 @@ from scipy.stats import wilcoxon
 from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 
 ARMS = ["random", "foundry", "foundry-start"]
-CLASSES = ["wake", "light", "deep", "rem", "gap_head"]
 STAGES = ["wake", "light", "deep", "rem"]
 EPOCH_MIN = 0.5
 LEAD_EPOCHS = 240
@@ -77,9 +79,15 @@ def kappa(truth: np.ndarray, call: np.ndarray, classes: int) -> float:
     return cohen_kappa_from_confusion(cm)
 
 
+def softmax_of(frame: pd.DataFrame) -> np.ndarray:
+    """The model's five probabilities from a prediction CSV's rescaled stage columns."""
+    gap = frame["gap_head"].to_numpy()[:, None]
+    return np.hstack([frame[STAGES].to_numpy() * (1 - gap), gap])
+
+
 def score(paths: list[Path]) -> dict:
     frames = [pd.read_csv(p).set_index("epoch") for p in paths]
-    proba = np.mean([f[CLASSES].to_numpy() for f in frames], axis=0)
+    proba = np.mean([softmax_of(f) for f in frames], axis=0)
     psg = frames[0]["psg"]
     call = proba.argmax(axis=1)
     truth = psg.map({s: i for i, s in enumerate(STAGES)}).to_numpy()
