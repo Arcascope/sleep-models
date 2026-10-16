@@ -51,6 +51,8 @@ AR_TO_ECR=arcasleep-copy-ar-to-ecr@$ARCASLEEP_PROJECT.iam.gserviceaccount.com
 
 Create the two accounts and grant repository-scoped access. Neither account
 needs Service Account Token Creator or a service account key.
+New accounts can take a short time to propagate through Google IAM. Retry
+an account-not-found error after a short wait.
 
 ```bash
 gcloud iam service-accounts create arcasleep-copy-ecr-to-ar \
@@ -138,6 +140,19 @@ The source tag is pinned before VM creation. A destination with a matching
 digest is skipped; a different existing digest is rejected. Unexpected
 lookup errors abort before launch. The launcher verifies the destination
 digest and deletes its own VM even after failure.
+
+## Verification (2026-10-16)
+
+Live verification used the dedicated accounts and the startup flow in this
+repository, with additional denial assertions. A dependency image copied
+ECR → Artifact Registry → ECR preserved its manifest digest in both directions.
+Both identities rejected a wrong audience, the opposite role, unrelated ECR
+and Google repositories, S3 access and ECR token requests outside the approved
+region. Google's permission check confirmed the reader could not upload and
+neither identity could delete artifacts. AWS IAM simulation confirmed the
+pull role could not push and neither role could delete or administer repositories.
+All verification VMs and boot disks were removed. The offline auth suite
+also passed all 23 tests.
 
 ## References
 
