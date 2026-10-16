@@ -5,6 +5,8 @@
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # FREE_LIVING_TRAINING overrides the recipe, e.g. config/training-smoke.json for a wiring
 # check; the arm's segment_placement, shift_consistency_weight and crop keys are kept.
+# FREE_LIVING_SEEDS=<first>:<count> trains fit seeds first..first+count-1 instead of 0..2,
+# e.g. 3:1 to replace a stalled seed; the eval holdout (--split-seed 0) is unchanged.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,6 +29,11 @@ if [[ -n "${FREE_LIVING_TRAINING:-}" ]]; then
   TRAINING=$OUT/setup/training-override.json
 else
   cp "$TRAINING" "$OUT/setup/"
+fi
+if [[ -n "${FREE_LIVING_SEEDS:-}" ]]; then
+  python -c "import json,sys;t=json.load(open(sys.argv[1]));s,n=sys.argv[2].split(':');t.update(run_seed=int(s),seed_count=int(n));json.dump(t,open(sys.argv[3],'w'),indent=2)" \
+    "$TRAINING" "$FREE_LIVING_SEEDS" "$OUT/setup/training-seeds.json"
+  TRAINING=$OUT/setup/training-seeds.json
 fi
 cp "$CV" "$OUT/setup/"
 
