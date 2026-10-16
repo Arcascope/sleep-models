@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from pisces_lite.cv import SubjectRef
 
+from arcasleep.data.batching import pad_recording_input
 from arcasleep.data.cache import participant_id
 from arcasleep.data.constants import GAP_LABEL, SPECTROGRAM_PADDING_VALUE
 from arcasleep.evaluation.staging_metrics import scored_epoch_mask
@@ -177,7 +178,8 @@ def sample_balanced_segments(
     num_classes: int,
     frames_per_epoch: int,
     max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_nights: bool = False,
+) -> tuple[np.ndarray, ...]:
     """Pseudo-class-balanced online sampling (Olsen et al., Section II-E).
 
     Each segment draws a target stage uniformly, then draws (recording, start)
@@ -185,7 +187,8 @@ def sample_balanced_segments(
     bounds the search for a stage a short night may lack. Nights are
     ``(frames, labels)`` with ``frames_per_epoch`` frames per label. Segments
     shorter than ``segment_epochs`` are padded with absent frames and the gap
-    label.
+    label. With ``return_nights``, also returns the index into ``nights`` of
+    each segment's recording.
     """
     fpe = frames_per_epoch
     f_bins, channels = nights[0][0].shape[1:]
@@ -195,10 +198,12 @@ def sample_balanced_segments(
         dtype=np.float32,
     )
     ys = np.full((n_segments, segment_epochs), GAP_LABEL, dtype=np.int32)
+    drawn = np.zeros(n_segments, dtype=np.int64)
     for i in range(n_segments):
         target_class = int(rng.integers(num_classes))
         for _ in range(max_attempts):
-            night_x, night_y = nights[int(rng.integers(len(nights)))]
+            drawn[i] = int(rng.integers(len(nights)))
+            night_x, night_y = nights[drawn[i]]
             start = int(rng.integers(max(night_y.shape[0] - segment_epochs, 0) + 1))
             seg_x = night_x[start * fpe : (start + segment_epochs) * fpe]
             seg_y = night_y[start : start + segment_epochs]
@@ -206,6 +211,8 @@ def sample_balanced_segments(
                 break
         xs[i, : seg_x.shape[0]] = seg_x
         ys[i, : seg_y.shape[0]] = seg_y
+    if return_nights:
+        return xs, ys, drawn
     return xs, ys
 
 
@@ -214,6 +221,42 @@ def recorded_lengths(ys: np.ndarray) -> np.ndarray:
     labelled = np.asarray(ys) != GAP_LABEL
     last = ys.shape[1] - np.argmax(labelled[:, ::-1], axis=1)
     return np.where(labelled.any(axis=1), last, 0)
+
+
+def crop_rows(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    crop: np.ndarray,
+    rng: np.random.Generator,
+    frames_per_epoch: int,
+    min_epochs: int,
+    max_epochs: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Replace each padded row with ``crop`` true by a contiguous crop of its recording.
+
+    The crop's length is drawn uniformly from ``min_epochs``..``max_epochs``, at most
+    the recording's length; its start is drawn uniformly from the starts that keep it
+    inside the recording. The crop's frames and labels, gap row included, move to
+    epoch 0 and the rest of the row is padded as a recording of the crop's length is
+    padded (:func:`~arcasleep.data.batching.pad_recording_input`, gap label). A
+    recording no longer than ``min_epochs`` is kept whole.
+    """
+    fpe = frames_per_epoch
+    width = ys.shape[1]
+    xs, ys = xs.copy(), ys.copy()
+    lengths = recorded_lengths(ys)
+    for i in np.flatnonzero(crop):
+        n = int(lengths[i])
+        if n <= min_epochs:
+            continue
+        length = int(rng.integers(min_epochs, min(max_epochs, n) + 1))
+        start = int(rng.integers(n - length + 1))
+        frames = xs[i, start * fpe : (start + length) * fpe].copy()
+        labels = ys[i, start : start + length].copy()
+        xs[i] = pad_recording_input(frames, width, fpe)
+        ys[i] = GAP_LABEL
+        ys[i, :length] = labels
+    return xs, ys
 
 
 def placement_offsets(ys: np.ndarray, rng: np.random.Generator, placement: str) -> np.ndarray:

@@ -34,6 +34,7 @@ from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
     SEGMENT_PLACEMENTS,
+    crop_rows,
     placement_offsets,
     roll_rows,
     Patience,
@@ -3205,6 +3206,8 @@ class BiDozeNetModel(CVModel):
         score_start: bool = False,
         segment_placement: str = "start",
         shift_consistency_weight: float = 0.0,
+        crop: np.ndarray | None = None,
+        crop_epochs: tuple[int, int] = (0, 0),
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3245,6 +3248,11 @@ class BiDozeNetModel(CVModel):
         ``balance_beta`` near 1, ``1 - balance_beta`` is about the cross-entropy's
         weight on an epoch of a class common in the batch. Not with ``soft_targets``
         or ``segment_placement="start"``.
+
+        With ``crop`` ``(B,)``, each drawn row whose ``crop`` is true is replaced, before
+        it is placed, by a contiguous crop of its recording whose length is drawn from
+        ``crop_epochs`` (:func:`~arcasleep.training.balanced.crop_rows`), drawn anew at
+        every draw. The eval rows are not cropped. Not with ``soft_targets``.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3263,6 +3271,14 @@ class BiDozeNetModel(CVModel):
             raise ValueError(
                 "shift_consistency_weight needs labels and a segment_placement other than 'start'"
             )
+        if crop is not None:
+            crop = np.asarray(crop, dtype=bool)
+            if crop.shape != train_y.shape[:1]:
+                raise ValueError(f"crop must be {train_y.shape[:1]}, got {crop.shape}")
+            if soft_targets is not None:
+                raise ValueError("crop needs labels, not soft_targets")
+            if not 1 <= crop_epochs[0] <= crop_epochs[1]:
+                raise ValueError(f"crop_epochs must be 1 <= min <= max, got {crop_epochs}")
         place = segment_placement != "start"
         if place:
             eval_x, eval_y, _ = place_rows(
@@ -3401,7 +3417,7 @@ class BiDozeNetModel(CVModel):
                 step_fn = distill_step
             else:
                 # Rows are already the fit length, so each draw is a whole row.
-                xs, ys = sample_balanced_segments(
+                xs, ys, drawn = sample_balanced_segments(
                     rows,
                     rng,
                     n_segments=steps_per_epoch * batch_size,
@@ -3409,7 +3425,10 @@ class BiDozeNetModel(CVModel):
                     num_classes=num_classes,
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
+                    return_nights=True,
                 )
+                if crop is not None:
+                    xs, ys = crop_rows(xs, ys, crop[drawn], rng, fpe, *crop_epochs)
                 if paired:
                     offsets_a = placement_offsets(ys, rng, segment_placement)
                     offsets_b = placement_offsets(ys, rng, segment_placement)

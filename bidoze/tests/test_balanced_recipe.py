@@ -105,6 +105,7 @@ def _configs(
         {"segment_placement": "circular"},
         {"segment_placement": "wake-cut"},
         {"segment_placement": "wake-cut", "shift_consistency_weight": 1.0},
+        {"segment_placement": "random", "crop_sets": ["CohortA"], "crop_epochs": [4, 10]},
     ],
 )
 @pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
@@ -148,6 +149,9 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
         {"shift_consistency_weight": 1.0},
         {"segment_placement": "random", "shift_consistency_weight": -1.0},
         {"recipe": "curriculum", "shift_consistency_weight": 1.0},
+        {"recipe": "curriculum", "crop_sets": ["CohortA"]},
+        {"crop_sets": ["CohortA"], "crop_epochs": [10, 4]},
+        {"crop_sets": ["CohortA"], "crop_epochs": [4, 17]},
     ],
 )
 def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> None:

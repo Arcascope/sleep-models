@@ -13,6 +13,7 @@ from arcasleep.training.balanced import (
     Plateau,
     PlateauDecision,
     WAKE_CUT_MARGIN,
+    crop_rows,
     place_rows,
     placement_offsets,
     roll_rows,
@@ -200,3 +201,27 @@ def test_wake_cut_places_short_recordings_whole_and_cuts_long_ones_away_from_sle
         np.testing.assert_array_equal(placed_x[i], np.roll(xs[i], offsets[i] * fpe, axis=0))
     for i in range(50, len(ys)):
         assert (placed_y[i, :m] <= 0).all() and (placed_y[i, -m:] <= 0).all()
+
+
+@pytest.mark.parametrize("fpe", [1, 3])
+def test_cropped_rows_hold_a_contiguous_piece_of_their_recording_at_the_start(fpe: int) -> None:
+    width, lengths = 40, [36] * 200 + [5, 36]
+    xs, ys = _padded_rows(lengths, width, fpe)
+    crop = np.array([True] * 201 + [False])
+
+    cropped_x, cropped_y = crop_rows(xs, ys, crop, np.random.default_rng(0), fpe, 8, 30)
+
+    kept = recorded_lengths(cropped_y)
+    assert kept[:200].min() == 8 and kept[:200].max() == 30
+    starts = []
+    for i in range(200):
+        n = int(kept[i])
+        start = int(cropped_x[i, 0, 0, 0]) // fpe
+        starts.append(start)
+        assert start + n <= lengths[i]
+        np.testing.assert_array_equal(cropped_y[i, :n], ys[i, start : start + n])
+        np.testing.assert_array_equal(cropped_x[i, : n * fpe], xs[i, start * fpe : (start + n) * fpe])
+        assert (cropped_y[i, n:] == GAP_LABEL).all()
+    assert min(starts) == 0 and max(starts) > 20
+    np.testing.assert_array_equal(cropped_y[200:], ys[200:])
+    np.testing.assert_array_equal(cropped_x[200:], xs[200:])

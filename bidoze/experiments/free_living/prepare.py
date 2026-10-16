@@ -23,6 +23,10 @@ Arms:
                  disagreement between the two views' outputs added to the loss
                  (``shift_consistency_weight``).
 - wakecut-pair:  as foundry-wakecut-pair without Foundry.
+- foundry-crop:  as foundry, with each drawn Foundry window replaced by a contiguous crop of
+                 480–2,880 epochs at a uniformly drawn start (``crop_sets``, ``crop_epochs``),
+                 then placed as random places it, so a row holds the main sleep, part of it
+                 or none of it.
 
 Phases are ``<arm>/<held-out person>`` (eric, olivia, doug), training without that person's
 windows, and ``<arm>/final``, training on every person. Arms without Foundry (``random``,
@@ -39,7 +43,8 @@ Writes, under ``<run>/setup/``:
 - cv/<arm>/cv_<phase>.json
 - training-<arm>.json                 the repo's balanced recipe, run_seed 0, seed_count 3, the
                                       arm's segment_placement and, for the pair arms,
-                                      shift_consistency_weight
+                                      shift_consistency_weight; for foundry-crop, crop_sets
+                                      and crop_epochs
 
 Usage: python prepare.py <run dir> <cache root>
 (the cache root holds ``12Hz_log_PSD_aligned/`` with weaver_revised, SleepAccel,
@@ -63,16 +68,19 @@ WEAVER = "weaverMatched"
 OUTSIDE = ["SleepAccel-Clinical", "SENSE"]
 #: The pair arms' shift_consistency_weight.
 CONSISTENCY_WEIGHT = 10.0
-#: arm → (segment_placement, trains on Foundry, shift_consistency_weight)
+#: The foundry-crop arm's crop lengths, [min, max] epochs.
+CROP_EPOCHS = [480, 2880]
+#: arm → (segment_placement, trains on Foundry, shift_consistency_weight, crops Foundry windows)
 ARMS = {
-    "random": ("random", False, 0.0),
-    "foundry": ("random", True, 0.0),
-    "foundry-start": ("start", True, 0.0),
-    "circular": ("circular", False, 0.0),
-    "foundry-circular": ("circular", True, 0.0),
-    "foundry-wakecut": ("wake-cut", True, 0.0),
-    "foundry-wakecut-pair": ("wake-cut", True, CONSISTENCY_WEIGHT),
-    "wakecut-pair": ("wake-cut", False, CONSISTENCY_WEIGHT),
+    "random": ("random", False, 0.0, False),
+    "foundry": ("random", True, 0.0, False),
+    "foundry-start": ("start", True, 0.0, False),
+    "circular": ("circular", False, 0.0, False),
+    "foundry-circular": ("circular", True, 0.0, False),
+    "foundry-wakecut": ("wake-cut", True, 0.0, False),
+    "foundry-wakecut-pair": ("wake-cut", True, CONSISTENCY_WEIGHT, False),
+    "wakecut-pair": ("wake-cut", False, CONSISTENCY_WEIGHT, False),
+    "foundry-crop": ("random", True, 0.0, True),
 }
 
 
@@ -115,10 +123,13 @@ def main(run_dir: Path, cache_root: Path) -> None:
     people = sorted(windows)
 
     recipe = json.loads((BIDOZE / "config/training-balanced.json").read_text())
-    for arm, (placement, with_foundry, consistency) in ARMS.items():
+    for arm, (placement, with_foundry, consistency, crop) in ARMS.items():
         training = {**recipe, "run_seed": 0, "seed_count": SEEDS, "segment_placement": placement}
         if consistency:
             training["shift_consistency_weight"] = consistency
+        if crop:
+            training["crop_sets"] = [foundry_dataset(p) for p in people]
+            training["crop_epochs"] = CROP_EPOCHS
         write_json(setup / f"training-{arm}.json", training)
 
         cache = setup / "cache" / arm / CACHE_NAME

@@ -25,6 +25,7 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
 | `foundry-wakecut` | the people not held out | `wake-cut` |
 | `foundry-wakecut-pair` | the people not held out | `wake-cut`, `shift_consistency_weight` 10 |
 | `wakecut-pair` | none | `wake-cut`, `shift_consistency_weight` 10 |
+| `foundry-crop` | the people not held out, cropped to 480–2,880 epochs | `random` |
 
 - `segment_placement: wake-cut` places a recording that fills at most half the context as
   `random` does. A longer one, a Foundry window, is rotated by an offset drawn from those
@@ -36,6 +37,13 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
   epoch by epoch, outside 60 epochs of either view's context edges. The weight is relative
   to the class-balanced cross-entropy's weight on a common class (`1 - balance_beta`).
   Each step runs the model on both views, so a phase takes about twice as long.
+- `crop_sets` (the Foundry datasets) and `crop_epochs` (480–2,880) replace each drawn
+  Foundry window, at every draw and before it is placed, by a contiguous crop: the length is
+  drawn uniformly from 480–2,880 epochs, at most the window's length; the start is drawn
+  uniformly from the starts that keep the crop inside the window. Labels and the gap row are
+  cut with the spectrogram, and the rest of the row is padded as a recording of the crop's
+  length is padded. A row then holds the whole Apple sleep span, part of it or none of it.
+  The early-stopping rows are not cropped.
 
 - `segment_placement: circular` rotates each drawn row by a uniformly drawn number of epochs,
   at every draw. A recording longer than its padding is split: its end, then the padding,

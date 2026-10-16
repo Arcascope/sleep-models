@@ -49,6 +49,8 @@ BALANCED_ONLY_KEYS = (
     "distill_from",
     "segment_placement",
     "shift_consistency_weight",
+    "crop_sets",
+    "crop_epochs",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -107,6 +109,10 @@ class TrainingConfig:
     # disagreement between the two views' outputs, aligned epoch by epoch
     # (BiDozeNetModel.fit_balanced). Needs a segment_placement other than "start".
     shift_consistency_weight: float = 0.0
+    # Datasets whose drawn rows are replaced by a contiguous crop of the recording, with a
+    # length drawn uniformly from crop_epochs [min, max] (arcasleep.training.balanced.crop_rows).
+    crop_sets: tuple[str, ...] = ()
+    crop_epochs: tuple[int, int] = (480, 2880)
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -130,6 +136,7 @@ class TrainingConfig:
         missing = set(cls.REQUIRED_KEYS) - set(data)
         if missing:
             raise ValueError(f"training.json: missing keys {sorted(missing)}")
+        data = {k: tuple(v) if k in ("crop_sets", "crop_epochs") else v for k, v in data.items()}
         config = cls(**{k: v for k, v in data.items() if k in known})
         config.validate()
         return config
@@ -168,6 +175,11 @@ class TrainingConfig:
             raise ValueError("training.json: shift_consistency_weight must be nonnegative")
         if self.shift_consistency_weight > 0.0 and self.segment_placement == "start":
             raise ValueError("training.json: shift_consistency_weight needs a segment_placement other than 'start'")
+        crop_ok = len(self.crop_epochs) == 2 and 1 <= self.crop_epochs[0] <= self.crop_epochs[1] <= self.y_length
+        if self.crop_sets and not crop_ok:
+            raise ValueError("training.json: crop_epochs must be [min, max] with 1 <= min <= max <= y_length")
+        if self.crop_sets and self.distill_from is not None:
+            raise ValueError("training.json: crop_sets needs labels; it does not combine with distill_from")
         if self.lr <= 0.0:
             raise ValueError("training.json: lr must be positive")
         if self.weight_decay < 0.0:
@@ -367,6 +379,10 @@ def _train_fold_balanced(
         frames_per_epoch=frames_per_epoch,
     )
     print(f"  fit  X: {X_fit.shape}  y: {y_fit.shape}")
+    crop = None
+    if training.crop_sets:
+        crop = np.array([ref.dataset_name in training.crop_sets for ref in fit_refs])
+        print(f"  cropping {int(crop.sum())} fit rows of {list(training.crop_sets)} to {list(training.crop_epochs)} epochs")
     print(f"  eval X: {X_eval.shape}  y: {y_eval.shape}")
     soft_targets = None
     if training.distill_from is not None:
@@ -393,6 +409,8 @@ def _train_fold_balanced(
         score_start=training.init_weights is not None,
         segment_placement=training.segment_placement,
         shift_consistency_weight=training.shift_consistency_weight,
+        crop=crop,
+        crop_epochs=training.crop_epochs,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
