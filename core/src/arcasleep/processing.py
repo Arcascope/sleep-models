@@ -15,6 +15,10 @@ from pisces_lite.proc import ProcessingConfig
 #: ``ProcessingConfig`` field: the feature-cache directory name.
 CACHE_PREFIX_KEY = "cache_prefix"
 
+#: Largest acceleration, in g on any axis, kept by :func:`clean_accelerometer_rows`;
+#: the full-scale range of common wrist accelerometers.
+MAX_ABS_G = 16.0
+
 
 class FeatureExtractionError(RuntimeError):
     """A subject could not be turned into features, with the reason attached."""
@@ -40,11 +44,16 @@ def processing_config(data: dict, what: str) -> ProcessingConfig:
 
 
 def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
-    """Drop invalid rows and enforce strictly increasing timestamps."""
+    """Drop invalid rows and enforce strictly increasing timestamps.
+
+    A row is invalid when any value is non-finite or any axis is beyond
+    ±``MAX_ABS_G`` g; such samples are sensor or export errors, not motion.
+    """
     acc = np.asarray(accel, dtype=np.float64)
     acc = acc[np.all(np.isfinite(acc), axis=1)]
+    acc = acc[np.all(np.abs(acc[:, 1:]) <= MAX_ABS_G, axis=1)]
     if acc.shape[0] < 2:
-        raise FeatureExtractionError("need at least two finite accelerometer rows")
+        raise FeatureExtractionError("need at least two valid accelerometer rows")
     acc = acc[np.argsort(acc[:, 0], kind="mergesort")]
     acc = acc[np.concatenate([[True], np.diff(acc[:, 0]) > 0])]
     if acc.shape[0] < 2:
