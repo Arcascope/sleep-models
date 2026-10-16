@@ -21,9 +21,10 @@ CACHE_PREFIX_KEY = "cache_prefix"
 #: the full-scale range of common wrist accelerometers.
 MAX_ABS_G = 16.0
 
-#: Largest share of finite rows :func:`clean_accelerometer_rows` drops for range before it
-#: refuses the recording; a larger share usually means the input is not in g.
-MAX_OUT_OF_RANGE_SHARE = 0.001
+#: Range of the median acceleration magnitude, in g, that :func:`clean_accelerometer_rows`
+#: accepts. Gravity alone is 1 g, so a recording in g has a median close to 1; one in m/s²
+#: has a median close to 9.8, and one with gravity removed a median close to 0.
+MEDIAN_MAGNITUDE_RANGE_G = (0.5, 2.0)
 
 
 class FeatureExtractionError(RuntimeError):
@@ -54,21 +55,25 @@ def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
 
     A row is invalid when any value is non-finite or any axis is beyond
     ±``MAX_ABS_G`` g; such samples are sensor or export errors, not motion.
-    Rows dropped for range are reported with a ``RuntimeWarning``. More than
-    ``MAX_OUT_OF_RANGE_SHARE`` of the finite rows out of range raises
-    :class:`FeatureExtractionError`.
+    Rows dropped for range are reported with a ``RuntimeWarning``.
+
+    A median magnitude over the finite rows outside ``MEDIAN_MAGNITUDE_RANGE_G``
+    raises :class:`FeatureExtractionError`: the input is not acceleration in g
+    with gravity included.
     """
     acc = np.asarray(accel, dtype=np.float64)
     acc = acc[np.all(np.isfinite(acc), axis=1)]
+    if acc.shape[0] >= 2:
+        median = float(np.median(np.linalg.norm(acc[:, 1:], axis=1)))
+        low, high = MEDIAN_MAGNITUDE_RANGE_G
+        if not low <= median <= high:
+            raise FeatureExtractionError(
+                f"median accelerometer magnitude is {median:.3g}, outside {low:g}–{high:g} g; "
+                "acceleration must be in g with gravity included (divide m/s² by 9.81)"
+            )
     in_range = np.all(np.abs(acc[:, 1:]) <= MAX_ABS_G, axis=1)
     dropped = int(acc.shape[0] - np.count_nonzero(in_range))
     if dropped:
-        share = dropped / acc.shape[0]
-        if share > MAX_OUT_OF_RANGE_SHARE:
-            raise FeatureExtractionError(
-                f"{dropped} of {acc.shape[0]} accelerometer rows ({share:.2%}) have an axis "
-                f"beyond ±{MAX_ABS_G:g} g; acceleration must be in g (divide m/s² by 9.81)"
-            )
         warnings.warn(
             f"dropped {dropped} accelerometer rows with an axis beyond ±{MAX_ABS_G:g} g",
             RuntimeWarning,

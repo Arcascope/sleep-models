@@ -8,7 +8,6 @@ pytest.importorskip("pisces_lite")
 
 from arcasleep.processing import (  # noqa: E402
     MAX_ABS_G,
-    MAX_OUT_OF_RANGE_SHARE,
     FeatureExtractionError,
     clean_accelerometer_rows,
 )
@@ -31,10 +30,10 @@ def test_rows_beyond_the_range_are_dropped_with_a_warning() -> None:
     assert accel[1, 0] in clean[:, 0]
 
 
-def test_a_large_share_out_of_range_is_refused() -> None:
+@pytest.mark.parametrize("gravity", [9.81, 0.0])
+def test_input_not_in_g_with_gravity_is_refused(gravity: float) -> None:
     accel = still_rows(1000)
-    n = int(1000 * MAX_OUT_OF_RANGE_SHARE) + 1
-    accel[:n, 3] = 9.81 * MAX_ABS_G
+    accel[:, 3] = gravity
     with pytest.raises(FeatureExtractionError):
         clean_accelerometer_rows(accel)
 
