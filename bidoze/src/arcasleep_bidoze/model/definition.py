@@ -3205,6 +3205,7 @@ class BiDozeNetModel(CVModel):
         score_start: bool = False,
         segment_placement: str = "start",
         shift_consistency_weight: float = 0.0,
+        shift_consistency_ramp_steps: int = 0,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3244,7 +3245,9 @@ class BiDozeNetModel(CVModel):
         more than ``CONSISTENCY_EDGE_EPOCHS`` from either view's context edges. With
         ``balance_beta`` near 1, ``1 - balance_beta`` is about the cross-entropy's
         weight on an epoch of a class common in the batch. Not with ``soft_targets``
-        or ``segment_placement="start"``.
+        or ``segment_placement="start"``. With ``shift_consistency_ramp_steps`` above 0,
+        the weight rises linearly from 0 at the first optimizer step to
+        ``shift_consistency_weight`` after that many steps.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3259,6 +3262,8 @@ class BiDozeNetModel(CVModel):
         if shift_consistency_weight < 0.0:
             raise ValueError("shift_consistency_weight must be nonnegative")
         paired = shift_consistency_weight > 0.0
+        if shift_consistency_ramp_steps < 0:
+            raise ValueError("shift_consistency_ramp_steps must be nonnegative")
         if paired and (soft_targets is not None or segment_placement == "start"):
             raise ValueError(
                 "shift_consistency_weight needs labels and a segment_placement other than 'start'"
@@ -3301,8 +3306,13 @@ class BiDozeNetModel(CVModel):
 
         consistency_scale = shift_consistency_weight * (1.0 - balance_beta)
 
+        def ramp(steps_done: int) -> float:
+            if shift_consistency_ramp_steps == 0:
+                return 1.0
+            return min(1.0, steps_done / shift_consistency_ramp_steps)
+
         @jax.jit
-        def pair_step(params, opt_state, xa, ma, ya, xb, mb, yb, shift, keep, key):
+        def pair_step(params, opt_state, xa, ma, ya, xb, mb, yb, shift, keep, scale, key):
             key_a, key_b = jax.random.split(key)
 
             def loss_fn(p):
@@ -3320,7 +3330,7 @@ class BiDozeNetModel(CVModel):
                 log_b = jax.nn.log_softmax(logits_b, axis=-1)
                 divergence = 0.5 * jnp.sum((jnp.exp(log_a) - jnp.exp(log_b)) * (log_a - log_b), axis=-1)
                 consistency = jnp.sum(divergence * keep) / jnp.maximum(jnp.sum(keep), 1.0)
-                return ce + consistency_scale * consistency, consistency
+                return ce + scale * consistency, consistency
 
             (loss, consistency), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
@@ -3427,6 +3437,7 @@ class BiDozeNetModel(CVModel):
             epoch_loss = 0.0
             epoch_consistency = 0.0
             for step in range(steps_per_epoch):
+                steps_done = (epoch - 1) * steps_per_epoch + step
                 batch = slice(step * batch_size, (step + 1) * batch_size)
                 rng_key, step_key = jax.random.split(rng_key)
                 if paired:
@@ -3441,6 +3452,7 @@ class BiDozeNetModel(CVModel):
                         jnp.asarray(targets_b[batch]),
                         jnp.asarray(shifts[batch]),
                         jnp.asarray(consistency_keep(shifts[batch], ys.shape[1])),
+                        jnp.asarray(consistency_scale * ramp(steps_done), dtype=jnp.float32),
                         step_key,
                     )
                     epoch_loss += float(loss)

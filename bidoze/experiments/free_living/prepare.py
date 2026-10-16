@@ -21,7 +21,8 @@ Arms:
                  cut it at least 60 epochs from any sleep.
 - foundry-wakecut-pair: as foundry-wakecut, with each drawn row placed twice and the
                  disagreement between the two views' outputs added to the loss
-                 (``shift_consistency_weight``).
+                 (``shift_consistency_weight``), its weight rising linearly from 0 over the
+                 first 2,000 optimizer steps (``shift_consistency_ramp_steps``).
 - wakecut-pair:  as foundry-wakecut-pair without Foundry.
 
 Phases are ``<arm>/<held-out person>`` (eric, olivia, doug), training without that person's
@@ -39,7 +40,8 @@ Writes, under ``<run>/setup/``:
 - cv/<arm>/cv_<phase>.json
 - training-<arm>.json                 the repo's balanced recipe, run_seed 0, seed_count 3, the
                                       arm's segment_placement and, for the pair arms,
-                                      shift_consistency_weight
+                                      shift_consistency_weight and
+                                      shift_consistency_ramp_steps
 
 Usage: python prepare.py <run dir> <cache root>
 (the cache root holds ``12Hz_log_PSD_aligned/`` with weaver_revised, SleepAccel,
@@ -63,6 +65,8 @@ WEAVER = "weaverMatched"
 OUTSIDE = ["SleepAccel-Clinical", "SENSE"]
 #: The pair arms' shift_consistency_weight.
 CONSISTENCY_WEIGHT = 10.0
+#: The optimizer steps over which the pair arms' weight rises from 0 to CONSISTENCY_WEIGHT.
+CONSISTENCY_RAMP_STEPS = 2000
 #: arm → (segment_placement, trains on Foundry, shift_consistency_weight)
 ARMS = {
     "random": ("random", False, 0.0),
@@ -119,6 +123,7 @@ def main(run_dir: Path, cache_root: Path) -> None:
         training = {**recipe, "run_seed": 0, "seed_count": SEEDS, "segment_placement": placement}
         if consistency:
             training["shift_consistency_weight"] = consistency
+            training["shift_consistency_ramp_steps"] = CONSISTENCY_RAMP_STEPS
         write_json(setup / f"training-{arm}.json", training)
 
         cache = setup / "cache" / arm / CACHE_NAME

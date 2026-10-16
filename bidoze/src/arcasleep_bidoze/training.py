@@ -49,6 +49,7 @@ BALANCED_ONLY_KEYS = (
     "distill_from",
     "segment_placement",
     "shift_consistency_weight",
+    "shift_consistency_ramp_steps",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -107,6 +108,8 @@ class TrainingConfig:
     # disagreement between the two views' outputs, aligned epoch by epoch
     # (BiDozeNetModel.fit_balanced). Needs a segment_placement other than "start".
     shift_consistency_weight: float = 0.0
+    # Above 0, shift_consistency_weight rises linearly from 0 over this many optimizer steps.
+    shift_consistency_ramp_steps: int = 0
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -168,6 +171,10 @@ class TrainingConfig:
             raise ValueError("training.json: shift_consistency_weight must be nonnegative")
         if self.shift_consistency_weight > 0.0 and self.segment_placement == "start":
             raise ValueError("training.json: shift_consistency_weight needs a segment_placement other than 'start'")
+        if self.shift_consistency_ramp_steps < 0:
+            raise ValueError("training.json: shift_consistency_ramp_steps must be nonnegative")
+        if self.shift_consistency_ramp_steps > 0 and self.shift_consistency_weight == 0.0:
+            raise ValueError("training.json: shift_consistency_ramp_steps needs a shift_consistency_weight above 0")
         if self.lr <= 0.0:
             raise ValueError("training.json: lr must be positive")
         if self.weight_decay < 0.0:
@@ -393,6 +400,7 @@ def _train_fold_balanced(
         score_start=training.init_weights is not None,
         segment_placement=training.segment_placement,
         shift_consistency_weight=training.shift_consistency_weight,
+        shift_consistency_ramp_steps=training.shift_consistency_ramp_steps,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model

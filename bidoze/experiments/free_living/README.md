@@ -23,8 +23,8 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
 | `circular` | none | `circular` |
 | `foundry-circular` | the people not held out | `circular` |
 | `foundry-wakecut` | the people not held out | `wake-cut` |
-| `foundry-wakecut-pair` | the people not held out | `wake-cut`, `shift_consistency_weight` 10 |
-| `wakecut-pair` | none | `wake-cut`, `shift_consistency_weight` 10 |
+| `foundry-wakecut-pair` | the people not held out | `wake-cut`, `shift_consistency_weight` 10, ramped over 2,000 steps |
+| `wakecut-pair` | none | `wake-cut`, `shift_consistency_weight` 10, ramped over 2,000 steps |
 
 - `segment_placement: wake-cut` places a recording that fills at most half the context as
   `random` does. A longer one, a Foundry window, is rotated by an offset drawn from those
@@ -36,6 +36,8 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
   epoch by epoch, outside 60 epochs of either view's context edges. The weight is relative
   to the class-balanced cross-entropy's weight on a common class (`1 - balance_beta`).
   Each step runs the model on both views, so a phase takes about twice as long.
+  `shift_consistency_ramp_steps` 2000 raises the weight linearly from 0 at the first
+  optimizer step to 10 at step 2,000.
 
 - `segment_placement: circular` rotates each drawn row by a uniformly drawn number of epochs,
   at every draw. A recording longer than its padding is split: its end, then the padding,
