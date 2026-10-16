@@ -158,3 +158,21 @@ def test_placement_spreads_recordings_over_the_row() -> None:
 
     offsets = np.argmax(placed_y != GAP_LABEL, axis=1)
     assert offsets.min() == 0 and offsets.max() == 90
+
+
+def test_circular_placement_rotates_rows_and_wraps_long_recordings() -> None:
+    fpe, width = 2, 20
+    xs, ys = _padded_rows([18] * 200, width, fpe)
+    soft = np.eye(5, dtype=np.float32)[np.where(ys == GAP_LABEL, 4, ys)]
+
+    placed_x, placed_y, placed_soft = place_rows(
+        xs, ys, np.random.default_rng(0), fpe, extra=soft, circular=True
+    )
+
+    wrapped = 0
+    for i in range(len(ys)):
+        shift = next(k for k in range(width) if np.array_equal(np.roll(ys[i], k), placed_y[i]))
+        np.testing.assert_array_equal(placed_x[i], np.roll(xs[i], shift * fpe, axis=0))
+        np.testing.assert_array_equal(placed_soft[i], np.roll(soft[i], shift, axis=0))
+        wrapped += shift > width - 18
+    assert wrapped > 0

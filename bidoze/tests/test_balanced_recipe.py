@@ -97,7 +97,7 @@ def _configs(
     )
 
 
-@pytest.mark.parametrize("segment_placement", ["start", "random"])
+@pytest.mark.parametrize("segment_placement", ["start", "random", "circular"])
 @pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
 def test_balanced_recipe_trains_and_scores_end_to_end(
     tmp_path: Path, model_frames_per_epoch: int, segment_placement: str

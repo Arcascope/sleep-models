@@ -12,12 +12,16 @@ Arms:
 - foundry:       as random, plus the FoundryApple windows (Apple Watch sleep stages over
                  09:00–09:00) of the people the phase does not hold out.
 - foundry-start: as foundry, with every recording at epoch 0, as the release trained.
+- circular:      as random, with each row rotated by a uniformly drawn number of epochs
+                 (``segment_placement: circular``), so a recording can wrap from the
+                 context's end to its start.
+- foundry-circular: as foundry, with circular placement.
 
 Phases are ``<arm>/<held-out person>`` (eric, olivia, doug), training without that person's
-windows, and ``<arm>/final``, training on every person. ``random`` has only ``final``: it
-never trains on Foundry. Every phase scores SleepAccel-Clinical and SENSE, which no arm
-trains on; a person phase also scores that person's windows, and random/final scores all of
-them.
+windows, and ``<arm>/final``, training on every person. ``random`` and ``circular`` have only
+``final``: they never train on Foundry. Every phase scores SleepAccel-Clinical and SENSE,
+which no arm trains on; a person phase also scores that person's windows, and the ``final``
+phase of an arm without Foundry scores all of them.
 
 Writes, under ``<run>/setup/``:
 - cache/<arm>/12Hz_log_PSD_aligned/  symlinks only: the matched nights as ``weaverMatched``,
@@ -49,7 +53,14 @@ CACHE_NAME = "12Hz_log_PSD_aligned"
 SEEDS = 3
 WEAVER = "weaverMatched"
 OUTSIDE = ["SleepAccel-Clinical", "SENSE"]
-ARMS = {"random": "random", "foundry": "random", "foundry-start": "start"}
+#: arm → (segment_placement, trains on Foundry)
+ARMS = {
+    "random": ("random", False),
+    "foundry": ("random", True),
+    "foundry-start": ("start", True),
+    "circular": ("circular", False),
+    "foundry-circular": ("circular", True),
+}
 
 
 def person_of(window: str) -> str:
@@ -91,7 +102,7 @@ def main(run_dir: Path, cache_root: Path) -> None:
     people = sorted(windows)
 
     recipe = json.loads((BIDOZE / "config/training-balanced.json").read_text())
-    for arm, placement in ARMS.items():
+    for arm, (placement, with_foundry) in ARMS.items():
         write_json(setup / f"training-{arm}.json",
                    {**recipe, "run_seed": 0, "seed_count": SEEDS, "segment_placement": placement})
 
@@ -111,7 +122,7 @@ def main(run_dir: Path, cache_root: Path) -> None:
 
         base = [WEAVER, *plan.fold_names]
         phases = {"final": ([*base, *map(foundry_dataset, people)], OUTSIDE)}
-        if arm == "random":
+        if not with_foundry:
             phases["final"] = (base, [*map(foundry_dataset, people), *OUTSIDE])
         else:
             for held in people:

@@ -28,8 +28,10 @@ PATIENCE_UNITS = ("epochs", "steps")
 #: Recording draws per segment before the sampler gives up on its target class.
 CLASS_SAMPLE_MAX_ATTEMPTS = 100
 #: Where a drawn row's recording sits in the fit length: "start" keeps it at
-#: epoch 0; "random" moves it to a uniformly drawn epoch that still fits it whole.
-SEGMENT_PLACEMENTS = ("start", "random")
+#: epoch 0; "random" moves it to a uniformly drawn epoch that still fits it whole;
+#: "circular" rotates the row by a uniformly drawn number of epochs, so a
+#: recording can wrap from the row's end to its start.
+SEGMENT_PLACEMENTS = ("start", "random", "circular")
 
 
 @dataclass(frozen=True)
@@ -215,6 +217,7 @@ def place_rows(
     rng: np.random.Generator,
     frames_per_epoch: int,
     extra: np.ndarray | None = None,
+    circular: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Move each padded row's recording to a random epoch of the row.
 
@@ -222,12 +225,14 @@ def place_rows(
     The recording moves to an offset drawn uniformly from the offsets that keep
     it whole, and the padding that followed it fills the epochs before it.
     Padding epochs are identical within a row (the recording's median spectrum,
-    gap row at 1), so this is a roll. ``extra`` ``(B, T, ...)``, per-epoch
-    values such as soft targets, moves with the labels.
+    gap row at 1), so this is a roll. With ``circular`` the offset is drawn from
+    every epoch of the row: a recording longer than the padding is split, its
+    end first, then the padding, then its start. ``extra`` ``(B, T, ...)``,
+    per-epoch values such as soft targets, moves with the labels.
     """
     fpe = frames_per_epoch
     width = ys.shape[1]
-    offsets = rng.integers(width - recorded_lengths(ys) + 1)
+    offsets = rng.integers(width, size=len(ys)) if circular else rng.integers(width - recorded_lengths(ys) + 1)
     xs, ys = xs.copy(), ys.copy()
     extra = None if extra is None else extra.copy()
     for i, offset in enumerate(offsets):

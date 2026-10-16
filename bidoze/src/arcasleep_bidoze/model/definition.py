@@ -3209,6 +3209,8 @@ class BiDozeNetModel(CVModel):
         random epoch of the row (:func:`~arcasleep.training.balanced.place_rows`),
         drawn anew at every draw, so the model sees recordings at every position of
         the fit length. The eval rows are placed the same way once, from ``fit_seed``.
+        ``segment_placement="circular"`` rotates each row by any number of epochs
+        instead, so a recording can wrap from the row's end to its start.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3219,10 +3221,12 @@ class BiDozeNetModel(CVModel):
             raise ValueError(
                 f"segment_placement must be one of {SEGMENT_PLACEMENTS}, got {segment_placement!r}"
             )
-        place = segment_placement == "random"
+        place = segment_placement != "start"
+        circular = segment_placement == "circular"
         if place:
             eval_x, eval_y, _ = place_rows(
-                eval_x, eval_y, np.random.default_rng([fit_seed, 1]), cfg.frames_per_epoch
+                eval_x, eval_y, np.random.default_rng([fit_seed, 1]), cfg.frames_per_epoch,
+                circular=circular,
             )
         self._ensure_built(tuple(train_x.shape[1:]), seed=fit_seed)
         assert self.params is not None
@@ -3322,7 +3326,9 @@ class BiDozeNetModel(CVModel):
                 drawn = rng.integers(train_x.shape[0], size=steps_per_epoch * batch_size)
                 xs, targets = train_x[drawn], soft_targets[drawn]
                 if place:
-                    xs, _, targets = place_rows(xs, train_y[drawn], rng, fpe, extra=targets)
+                    xs, _, targets = place_rows(
+                        xs, train_y[drawn], rng, fpe, extra=targets, circular=circular
+                    )
                 ms = np.ones((len(drawn), train_y.shape[1] * fpe), dtype=np.float32)
                 step_fn = distill_step
             else:
@@ -3337,7 +3343,7 @@ class BiDozeNetModel(CVModel):
                     max_attempts=class_sample_max_attempts,
                 )
                 if place:
-                    xs, ys, _ = place_rows(xs, ys, rng, fpe)
+                    xs, ys, _ = place_rows(xs, ys, rng, fpe, circular=circular)
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
