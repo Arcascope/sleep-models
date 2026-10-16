@@ -106,6 +106,14 @@ class BiDozeNetConfig(ModelConfig):
         (0.3, 0.8, 2.0, 2.0, 1.0),
     )
     stage_focal_gammas: Tuple[float, float, float] = (2.0, 2.0, 2.0)
+    # With this `True` the gap output is not learned: an epoch whose gap row is
+    # 1 (no accelerometer frames) is absent -- its input is zeroed, it is hidden
+    # from attention as a key, and its output is gap -- and every other epoch
+    # gets gap probability 0. Needs `score_gap` for the 5-way output layout.
+    gap_from_row: bool = False
+    # "bidoze": one network. "roles": three BiDoze trunks with one logit each,
+    # wake vs sleep, deep vs light/REM, REM vs light (RoleBranchesModule).
+    architecture: str = "bidoze"
 
     @property
     def output_classes(self) -> int:
@@ -166,6 +174,13 @@ class BiDozeNetConfig(ModelConfig):
 
         if len(config.stage_epoch_fractions) != 3 or len(config.stage_focal_alphas) != 3:
             raise ValueError("BiDoze uses exactly three curriculum stages")
+
+        if config.architecture not in ("bidoze", "roles"):
+            raise ValueError("BiDozeNetConfig.architecture must be 'bidoze' or 'roles'")
+        if config.gap_from_row and not config.score_gap:
+            raise ValueError("gap_from_row sets the gap output, so it needs score_gap")
+        if config.architecture == "roles" and (config.num_classes != 4 or not config.gap_from_row):
+            raise ValueError("the roles architecture scores 4 stages with gap_from_row")
 
         return config
 
@@ -964,6 +979,7 @@ class ALiBiAttentionModule(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False) -> jnp.ndarray:
+        """``causal_mask`` is ``(T, T)`` or per row ``(B, T, T)``; ``True`` hides a key."""
         batch_size, time_steps, _ = x.shape
         qkv = nn.Dense(3 * self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="qkv")(x)
         qkv = qkv.reshape((batch_size, time_steps, 3, self.n_heads, self.d_head))
@@ -977,7 +993,8 @@ class ALiBiAttentionModule(nn.Module):
         bias = -self.slopes[:, None, None] * dist[None, :, :]
         attn = attn + bias[None, :, :, :]
         if causal_mask is not None:
-            attn = jnp.where(causal_mask[None, None, :, :], -1e9, attn)
+            hidden = causal_mask[:, None, :, :] if causal_mask.ndim == 3 else causal_mask[None, None, :, :]
+            attn = jnp.where(hidden, -1e9, attn)
 
         attn = jax.nn.softmax(attn, axis=-1)
         attn = nn.Dropout(rate=self.attn_dropout, name="attn_drop")(attn, deterministic=not train)
@@ -1020,7 +1037,8 @@ class BidirectionalCausalTransformerModule(nn.Module):
     use_bicausal: bool = True
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, train: bool = False) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, train: bool = False, present: jnp.ndarray | None = None) -> jnp.ndarray:
+        """``present`` ``(B, T)`` bool, when given, hides every other epoch as an attention key."""
         heads_per_direction = self.n_heads // 2
         d_stream = self.d_model // 2
         time_steps = x.shape[1]
@@ -1030,6 +1048,10 @@ class BidirectionalCausalTransformerModule(nn.Module):
         else:
             fwd_mask = None
             rev_mask = None
+        if present is not None:
+            absent_keys = ~present[:, None, :]
+            fwd_mask = absent_keys if fwd_mask is None else fwd_mask[None] | absent_keys
+            rev_mask = absent_keys if rev_mask is None else rev_mask[None] | absent_keys
 
         h_fwd = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_fwd")(x)
         h_rev = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_rev")(x)
@@ -1056,8 +1078,37 @@ class GatedFusionModule(nn.Module):
         return nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm")(fused)
 
 
+# A logit far enough below the others that its softmax probability is 0 in float32.
+FIXED_LOGIT_OFF = -1e4
+
+
+def present_from_gap_row(x: jnp.ndarray) -> jnp.ndarray:
+    """``(B, T)`` bool: the epochs of ``(B, T, F + 1, C)`` whose gap row is below 1.
+
+    The gap row (the last row of the frequency axis, ``arcasleep.data.batching.GAP_ROW``) is the
+    share of an epoch's frames with no accelerometer data; at 1 the epoch is absent, as
+    ``arcasleep.predict`` decides ``is_gap``.
+    """
+    if x.ndim != 4:
+        raise ValueError(f"gap_from_row reads the gap row of (B, T, F + 1, C) input, got {x.shape}")
+    return x[:, :, -1, 0] < 1.0
+
+
+def with_fixed_gap(stage_logits: jnp.ndarray, present: jnp.ndarray) -> jnp.ndarray:
+    """``(B, T, S + 1)``: the stage logits on present epochs, the gap logit on absent ones."""
+    off = jnp.asarray(FIXED_LOGIT_OFF, dtype=stage_logits.dtype)
+    stages = jnp.where(present[..., None], stage_logits, off)
+    gap = jnp.where(present, off, 0.0).astype(stage_logits.dtype)[..., None]
+    return jnp.concatenate([stages, gap], axis=-1)
+
+
 class BiDozeNetModule(nn.Module):
     cfg: BiDozeNetConfig
+    # The learned outputs of the head; ``None`` is ``cfg.output_classes`` (``cfg.num_classes``
+    # with ``gap_from_row``, whose gap output is set, not learned).
+    head_outputs: int | None = None
+    # With ``gap_from_row``, append the set gap logit to the head's stage logits.
+    append_gap: bool = True
 
     @nn.compact
     def __call__(
@@ -1071,6 +1122,11 @@ class BiDozeNetModule(nn.Module):
             x = _pool_frames_to_epochs(x, self.cfg.frames_per_epoch)
             if valid_mask is not None:
                 valid_mask = _pool_frames_to_epochs(valid_mask, self.cfg.frames_per_epoch)
+        present = None
+        if self.cfg.gap_from_row:
+            present = present_from_gap_row(x)
+            presence = present.astype(x.dtype)
+            valid_mask = presence if valid_mask is None else _normalize_valid_mask(x, valid_mask) * presence
         x = _flatten_timestep_features(x)
         # Zeroes invalid rows and passes the spectrogram through otherwise;
         # normalization is learned downstream by LayerNorm.
@@ -1096,7 +1152,7 @@ class BiDozeNetModule(nn.Module):
             self.cfg.attn_dropout,
             use_bicausal=self.cfg.use_bicausal,
             name="bi_causal_transformer",
-        )(h_local, train=train)
+        )(h_local, train=train, present=present)
         h_fused = GatedFusionModule(self.cfg.d_model, name="gated_fusion")(h_local, h_global)
 
         # One MLP readout head.
@@ -1108,12 +1164,17 @@ class BiDozeNetModule(nn.Module):
         )(h_fused)
         h = _gelu(h)
         h = nn.Dropout(rate=self.cfg.dropout, name="head_drop")(h, deterministic=not train)
+        learned = self.head_outputs
+        if learned is None:
+            learned = self.cfg.num_classes if self.cfg.gap_from_row else self.cfg.output_classes
         logits = nn.Dense(
-            self.cfg.output_classes,
+            learned,
             kernel_init=GLOROT_UNIFORM,
             bias_init=ZEROS,
             name="head_logits",
         )(h)
+        if present is not None and self.append_gap:
+            logits = with_fixed_gap(logits, present)
         if return_outputs:
             assert isinstance(learned_norm_outputs, dict)
             return {
@@ -1124,6 +1185,95 @@ class BiDozeNetModule(nn.Module):
                 "probabilities": jax.nn.softmax(logits, axis=-1),
             }
         return logits
+
+
+ROLE_BRANCHES = ("wake", "deep", "rem")
+
+
+def role_log_probabilities(w: jnp.ndarray, d: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
+    """``(..., 4)`` log p(wake, light, deep, REM) from the three role logits.
+
+    ``w`` is the log-odds of wake against sleep, ``d`` of deep against light/REM on sleep, and
+    ``r`` of REM against light on light/REM: p(wake) = σ(w), p(deep) = (1 − σ(w)) σ(d),
+    p(REM) = (1 − σ(w)) (1 − σ(d)) σ(r), p(light) = (1 − σ(w)) (1 − σ(d)) (1 − σ(r)).
+    """
+    sleep = jax.nn.log_sigmoid(-w)
+    not_deep = sleep + jax.nn.log_sigmoid(-d)
+    return jnp.stack(
+        [
+            jax.nn.log_sigmoid(w),
+            not_deep + jax.nn.log_sigmoid(-r),
+            sleep + jax.nn.log_sigmoid(d),
+            not_deep + jax.nn.log_sigmoid(r),
+        ],
+        axis=-1,
+    )
+
+
+class RoleBranchesModule(nn.Module):
+    """Three BiDoze trunks with one logit each, combined into 4 stages and the set gap.
+
+    Branch ``wake`` scores wake against sleep, ``deep`` deep against light/REM and ``rem`` REM
+    against light (:func:`role_log_probabilities`). The output is ``(B, T, 5)`` log
+    probabilities, which a softmax leaves unchanged; with ``return_branches`` it is a dict that
+    also holds the ``(B, T, 3)`` role logits.
+    """
+
+    cfg: BiDozeNetConfig
+
+    @nn.compact
+    def __call__(
+        self,
+        x: jnp.ndarray,
+        valid_mask: jnp.ndarray | None = None,
+        train: bool = False,
+        return_outputs: bool = False,
+        return_branches: bool = False,
+    ) -> jnp.ndarray | dict[str, jnp.ndarray]:
+        role_logits = jnp.concatenate(
+            [
+                BiDozeNetModule(self.cfg, head_outputs=1, append_gap=False, name=f"branch_{role}")(
+                    x, valid_mask, train=train
+                )
+                for role in ROLE_BRANCHES
+            ],
+            axis=-1,
+        )
+        stages = role_log_probabilities(role_logits[..., 0], role_logits[..., 1], role_logits[..., 2])
+        present = present_from_gap_row(
+            _pool_frames_to_epochs(x, self.cfg.frames_per_epoch) if self.cfg.frames_per_epoch > 1 else x
+        )
+        log_probs = jax.nn.log_softmax(with_fixed_gap(stages, present), axis=-1)
+        if return_branches or return_outputs:
+            return {"log_probabilities": log_probs, "role_logits": role_logits,
+                    "probabilities": jnp.exp(log_probs)}
+        return log_probs
+
+
+def role_targets(targets: jnp.ndarray) -> jnp.ndarray:
+    """``(..., 3)`` binary targets of the role branches from stage targets (wake 0, light 1,
+    deep 2, REM 3): class 0 is the branch's stage, class 1 the rest of its epochs, and −1
+    leaves an epoch out of the branch (wake for ``deep``; wake and deep for ``rem``)."""
+    wake = jnp.where(targets == 0, 0, jnp.where((targets >= 1) & (targets <= 3), 1, -1))
+    deep = jnp.where(targets == 2, 0, jnp.where((targets == 1) | (targets == 3), 1, -1))
+    rem = jnp.where(targets == 3, 0, jnp.where(targets == 1, 1, -1))
+    return jnp.stack([wake, deep, rem], axis=-1)
+
+
+def role_branch_loss(role_logits: jnp.ndarray, targets: jnp.ndarray, beta: float) -> jnp.ndarray:
+    """The sum over role branches of each branch's class-balanced binary cross-entropy."""
+    from arcasleep.training.balanced import balanced_cross_entropy as _bce
+
+    binary = role_targets(targets)
+    total = jnp.asarray(0.0, dtype=role_logits.dtype)
+    for k in range(len(ROLE_BRANCHES)):
+        z = role_logits[..., k]
+        total = total + _bce(jnp.stack([z, jnp.zeros_like(z)], axis=-1), binary[..., k], 2, beta)
+    return total
+
+
+def build_module(config: "BiDozeNetConfig") -> nn.Module:
+    return RoleBranchesModule(config) if config.architecture == "roles" else BiDozeNetModule(config)
 
 
 class TrainState(train_state.TrainState):
@@ -1731,7 +1881,7 @@ class BiDozeNetModel(CVModel):
     def __init__(self, config: BiDozeNetConfig):
         super().__init__(config)
         self.config = config
-        self.module = BiDozeNetModule(config)
+        self.module = build_module(config)
         self.params: FrozenDict[str, Any] | None = None
         self.model: dict[str, Any] | None = None
         self.input_shape: tuple[int, ...] | None = None
@@ -1920,6 +2070,32 @@ class BiDozeNetModel(CVModel):
         """The logits of ``params`` on ``x``; ``key`` seeds dropout and augmentation when training."""
         rngs = None if key is None else {"dropout": key, "augment": key}
         return self.module.apply({"params": params}, x, mask, train=train, rngs=rngs)
+
+    # Weight of the role branches' own binary losses (``architecture == "roles"``).
+    role_loss_weight: float = 0.0
+
+    def _balanced_loss(
+        self,
+        params: FrozenDict[str, Any],
+        x: jnp.ndarray,
+        mask: jnp.ndarray,
+        targets: jnp.ndarray,
+        key: jax.Array,
+        output_classes: int,
+        beta: float,
+    ) -> jnp.ndarray:
+        """The training loss of the balanced recipe: class-balanced cross-entropy on the output,
+        plus ``role_loss_weight`` times the role branches' own losses for the roles architecture."""
+        if self.config.architecture != "roles":
+            logits = self._apply(params, x, mask, train=True, key=key)
+            return balanced_cross_entropy(logits, targets, output_classes, beta)
+        out = self.module.apply(
+            {"params": params}, x, mask, train=True, rngs={"dropout": key, "augment": key}, return_branches=True
+        )
+        loss = balanced_cross_entropy(out["log_probabilities"], targets, output_classes, beta)
+        if self.role_loss_weight > 0:
+            loss = loss + self.role_loss_weight * role_branch_loss(out["role_logits"], targets, beta)
+        return loss
 
     def infer(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
         input_x = np.asarray(input_x, dtype=np.float32)
@@ -3193,6 +3369,7 @@ class BiDozeNetModel(CVModel):
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
+        max_train_seconds: float | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3214,6 +3391,12 @@ class BiDozeNetModel(CVModel):
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
+
+        With ``max_train_seconds`` the fit also stops after the first epoch that ends
+        past that many seconds, keeping the parameters of its best eval kappa.
+
+        With ``gap_from_row`` the gap output is set from the input, so gap and padding
+        epochs are left out of the loss.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3229,7 +3412,7 @@ class BiDozeNetModel(CVModel):
         output_classes = cfg.output_classes
         # With score_gap, gap and padding epochs train the extra logit; without
         # it they are masked like unscored epochs.
-        gap_class = num_classes if cfg.score_gap else -1
+        gap_class = num_classes if cfg.score_gap and not cfg.gap_from_row else -1
         apply = self._apply
 
         tx = optax.inject_hyperparams(optax.adamw)(
@@ -3238,11 +3421,12 @@ class BiDozeNetModel(CVModel):
         params = self.params
         opt_state = tx.init(params)
 
+        balanced_loss = self._balanced_loss
+
         @jax.jit
         def train_step(params, opt_state, xb, mb, yb, key):
             def loss_fn(p):
-                logits = apply(p, xb, mb, train=True, key=key)
-                return balanced_cross_entropy(logits, yb, output_classes, balance_beta)
+                return balanced_loss(p, xb, mb, yb, key, output_classes, balance_beta)
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
@@ -3307,6 +3491,7 @@ class BiDozeNetModel(CVModel):
             best_epoch = 0
             print(f"    epoch   0  eval_kappa {best_kappa:.4f}  (starting weights)", flush=True)
 
+        fit_start = time.time()
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
             if soft_targets is not None:
@@ -3367,6 +3552,10 @@ class BiDozeNetModel(CVModel):
 
             if decision.stop:
                 print(f"    early stop: {plateau.describe_stop()}")
+                break
+            if max_train_seconds is not None and time.time() - fit_start > max_train_seconds:
+                print(f"    time cap: stopped after {time.time() - fit_start:.0f}s (cap {max_train_seconds:.0f}s)")
+                history["time_capped"] = True
                 break
             if decision.drop_lr:
                 lr /= lr_drop_factor

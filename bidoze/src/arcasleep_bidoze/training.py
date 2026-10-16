@@ -48,6 +48,9 @@ BALANCED_ONLY_KEYS = (
     "init_weights",
     "distill_from",
     "joint_members",
+    "member_loss_weight",
+    "role_loss_weight",
+    "max_train_seconds",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -102,6 +105,13 @@ class TrainingConfig:
     # With 2 or more, one fit trains this many networks whose mean output takes the loss and
     # decides early stopping (arcasleep_bidoze.joint); each run seed is one such ensemble.
     joint_members: int = 1
+    # Joint fits: the weight β of each member's own loss beside the loss of the mean
+    # (arcasleep_bidoze.joint.JointEnsemble); 0 trains the mean alone.
+    member_loss_weight: float = 0.0
+    # The roles architecture: the weight of the three branches' own binary losses.
+    role_loss_weight: float = 0.0
+    # A wall-clock cap on each fit, in seconds; at the cap the fit keeps its best eval κ.
+    max_train_seconds: float | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -367,10 +377,12 @@ def _train_fold_balanced(
     if training.joint_members > 1:
         from arcasleep_bidoze.joint import JointEnsemble
 
-        model = JointEnsemble(config.model, training.joint_members)
-        print(f"  training {training.joint_members} networks jointly on their mean output")
+        model = JointEnsemble(config.model, training.joint_members, training.member_loss_weight)
+        print(f"  training {training.joint_members} networks jointly on their mean output"
+              f" (member loss weight {training.member_loss_weight})")
     else:
         model = BiDozeNetModel(config.model)
+        model.role_loss_weight = training.role_loss_weight
     if training.init_weights is not None:
         _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")
@@ -388,6 +400,7 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+        max_train_seconds=training.max_train_seconds,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
