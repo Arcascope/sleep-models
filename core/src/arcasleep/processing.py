@@ -7,6 +7,8 @@ steps as the recordings the bundle was trained on.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from pisces_lite.datasets.constants import PSG_DT
 from pisces_lite.proc import ProcessingConfig
@@ -14,6 +16,15 @@ from pisces_lite.proc import ProcessingConfig
 #: The one key in ``inputs.json`` and ``preprocessing.json`` that is not a
 #: ``ProcessingConfig`` field: the feature-cache directory name.
 CACHE_PREFIX_KEY = "cache_prefix"
+
+#: Largest acceleration, in g on any axis, kept by :func:`clean_accelerometer_rows`;
+#: above the brief 16–22 g readings some wrist devices report during real movement.
+MAX_ABS_G = 32.0
+
+#: Range of the median acceleration magnitude, in g, that :func:`clean_accelerometer_rows`
+#: accepts. Gravity alone is 1 g, so a recording in g has a median close to 1; one in m/s²
+#: has a median close to 9.8, and one with gravity removed a median close to 0.
+MEDIAN_MAGNITUDE_RANGE_G = (0.5, 2.0)
 
 
 class FeatureExtractionError(RuntimeError):
@@ -40,11 +51,37 @@ def processing_config(data: dict, what: str) -> ProcessingConfig:
 
 
 def clean_accelerometer_rows(accel: np.ndarray) -> np.ndarray:
-    """Drop invalid rows and enforce strictly increasing timestamps."""
+    """Drop invalid rows and enforce strictly increasing timestamps.
+
+    A row is invalid when any value is non-finite or any axis is beyond
+    ±``MAX_ABS_G`` g; such samples are sensor or export errors, not motion.
+    Rows dropped for range are reported with a ``RuntimeWarning``.
+
+    A median magnitude over the finite rows outside ``MEDIAN_MAGNITUDE_RANGE_G``
+    raises :class:`FeatureExtractionError`: the input is not acceleration in g
+    with gravity included.
+    """
     acc = np.asarray(accel, dtype=np.float64)
     acc = acc[np.all(np.isfinite(acc), axis=1)]
+    if acc.shape[0] >= 2:
+        median = float(np.median(np.linalg.norm(acc[:, 1:], axis=1)))
+        low, high = MEDIAN_MAGNITUDE_RANGE_G
+        if not low <= median <= high:
+            raise FeatureExtractionError(
+                f"median accelerometer magnitude is {median:.3g}, outside {low:g}–{high:g} g; "
+                "acceleration must be in g with gravity included (divide m/s² by 9.81)"
+            )
+    in_range = np.all(np.abs(acc[:, 1:]) <= MAX_ABS_G, axis=1)
+    dropped = int(acc.shape[0] - np.count_nonzero(in_range))
+    if dropped:
+        warnings.warn(
+            f"dropped {dropped} accelerometer rows with an axis beyond ±{MAX_ABS_G:g} g",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    acc = acc[in_range]
     if acc.shape[0] < 2:
-        raise FeatureExtractionError("need at least two finite accelerometer rows")
+        raise FeatureExtractionError("need at least two valid accelerometer rows")
     acc = acc[np.argsort(acc[:, 0], kind="mergesort")]
     acc = acc[np.concatenate([[True], np.diff(acc[:, 0]) > 0])]
     if acc.shape[0] < 2:
