@@ -59,7 +59,9 @@ def scored_prediction(
     stage_names = STAGE_NAMES[:num_classes]
 
     stage_mass = proba[:n_epochs, :num_classes]
-    probabilities = stage_mass / stage_mass.sum(axis=-1, keepdims=True)
+    # an epoch whose whole mass is on gap (an absent epoch under gap_from_row) gets stage probabilities 0
+    total = stage_mass.sum(axis=-1, keepdims=True)
+    probabilities = np.divide(stage_mass, total, out=np.zeros_like(stage_mass), where=total > 0)
     gap_head = proba[:n_epochs, num_classes] if proba.shape[1] > num_classes else None
 
     X = np.asarray(bundle.X[0])
