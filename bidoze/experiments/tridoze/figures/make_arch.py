@@ -2,7 +2,7 @@
 from arch_lib import arrow, box, canvas, label, save
 
 # Placeholder for the BiDoze-XL parameter ratio; change this one string.
-XL_PARAM_TEXT = "≈ N× release parameters"
+XL_PARAM_TEXT = "7.3 M parameters, 3.3× the release network (2.2 M)"
 
 
 def input_block(ax):

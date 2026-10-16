@@ -26,7 +26,8 @@ BASELINE = Path("/home/eric/Engineering/Work/autopisces/sleep-models/bidoze/resu
 OUT = Path("/home/eric/Engineering/Work/autopisces/sleep-models-research-logs-tridoze-alder/reviews/2026-10-16/figures")
 # validated categorical slots 1-4 (blue, orange, aqua, magenta); identity is also carried by the legend
 NEW_ARMS = {"tridoze_j": ("TriDoze-J", "#2a78d6"), "tridoze_r": ("TriDoze-R", "#eb6834"),
-            "bidoze_xl": ("BiDoze-XL", "#1baf7a"), "bidoze_g": ("BiDoze-G", "#e87ba4")}
+            "bidoze_xl": ("BiDoze-XL", "#1baf7a"), "bidoze_g": ("BiDoze-G", "#e87ba4"),
+            "tridoze_j_split": ("TriDoze-J, one fit over 2 bursts", "#0b3d91")}
 INK, MUTED, GRID, GREY = "#1f2328", "#57606a", "#e6e8eb", "#9aa1a9"
 
 
@@ -56,8 +57,8 @@ def main() -> None:
     draws = a.draws if a.draws else sorted({d for _, d in new}) or list(range(5))
 
     ncol = min(3, len(draws))
-    nrow = -(-(len(draws) + 1) // ncol)  # one extra cell for the legend
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.4 * ncol, 3.2 * nrow + 0.4), facecolor="white", squeeze=False)
+    nrow = -(-len(draws) // ncol)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.4 * ncol, 3.2 * nrow + 1.0), facecolor="white", squeeze=False)
     flat = list(axes.flat)
     for ax, d in zip(flat, draws):
         for i, fit in enumerate(f for f in parse_log(a.baseline / f"independent/draw{d}/training.log")):
@@ -85,10 +86,10 @@ def main() -> None:
     handles += [Line2D([], [], color=c, linewidth=1.4, label=name) for arm, (name, c) in NEW_ARMS.items()
                 if any(k[0] == arm for k in new)]
     handles.append(Line2D([], [], color=INK, marker="o", linestyle="none", markersize=6, label="Best eval κ of each curve"))
-    legend_ax = flat[len(draws)] if len(flat) > len(draws) else fig.add_axes([0, 0, 1, 0.01])
-    legend_ax.legend(handles=handles, loc="center left", frameon=False, fontsize=9, labelcolor=INK)
     fig.suptitle("Eval κ during training, by draw", x=0.01, ha="left", fontsize=11, color=INK)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.16, 1, 1))
+    fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.01, 0.0), ncol=3, frameon=False, fontsize=9,
+               labelcolor=INK)
     a.out_dir.mkdir(parents=True, exist_ok=True)
     out = a.out_dir / "tridoze-pilot-curves.png"
     fig.savefig(out, dpi=200, facecolor="white")
