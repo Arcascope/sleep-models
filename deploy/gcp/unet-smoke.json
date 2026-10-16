@@ -1,0 +1,57 @@
+{
+  "taskGroups": [{
+    "taskCount": 1,
+    "parallelism": 1,
+    "taskSpec": {
+      "runnables": [
+        {
+          "displayName": "unet-fold0-smoke",
+          "timeout": "3300s",
+          "container": {
+            "imageUri": "__IMAGE_REF__",
+            "entrypoint": "/bin/bash",
+            "commands": ["-c", "set -euo pipefail; nvidia-smi; python -c 'import jax; print(jax.devices()); assert any(d.platform == \"gpu\" for d in jax.devices())'; bash scripts/harness.sh fold0"],
+            "volumes": ["/var/lib/arcasleep-results:/results"]
+          },
+          "environment": {
+            "variables": {
+              "JAX_PLATFORMS": "cuda",
+              "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+              "UNET_TRAINING_CONFIG": "config/training-smoke.json",
+              "UNET_RESULTS_DIR": "/results",
+              "UNET_RUN_ID": "__RUN_ID__",
+              "UNET_RESULTS_S3_PREFIX": ""
+            }
+          }
+        },
+        {
+          "displayName": "upload-results-gcs",
+          "alwaysRun": true,
+          "timeout": "300s",
+          "container": {
+            "imageUri": "gcr.io/google.com/cloudsdktool/google-cloud-cli:stable",
+            "entrypoint": "gcloud",
+            "commands": ["storage", "rsync", "--recursive", "/results", "gs://arcascope-sleep-models-data/training_outputs"],
+            "volumes": ["/var/lib/arcasleep-results:/results:ro"]
+          }
+        }
+      ],
+      "computeResource": {"cpuMilli": 8000, "memoryMib": 28000},
+      "maxRetryCount": 0,
+      "maxRunDuration": "3600s"
+    }
+  }],
+  "allocationPolicy": {
+    "instances": [{
+      "installGpuDrivers": true,
+      "policy": {
+        "machineType": "g2-standard-8",
+        "provisioningModel": "STANDARD",
+        "reservation": "NO_RESERVATION",
+        "bootDisk": {"sizeGb": 100, "type": "pd-balanced"}
+      }
+    }]
+  },
+  "logsPolicy": {"destination": "CLOUD_LOGGING"},
+  "labels": {"model": "unet", "purpose": "training-smoke"}
+}

@@ -1,0 +1,96 @@
+# Cloud Build spec for the arcasleep-train images on GCP. The work is in
+# deploy/scripts/cloudbuild.sh; remote_build_gcp.sh starts a build and sets
+# BUILD_KIND, GIT_COMMIT and the kind's own variables.
+#
+# The GCP counterpart of deploy/aws/buildspec.yml. Artifact Registry replaces
+# ECR; the tags, the immutability rule and the deps-first ordering are the same,
+# so an image built here and an image built on AWS name the same inputs.
+substitutions:
+  _BUILD_KIND: deps
+  _GIT_COMMIT: unknown
+  _DEPS_REPO: us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/deps
+  _DATA_REPO: us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/data
+  _UNET_REPO: us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/unet
+  _BIDOZE_REPO: us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train/bidoze
+  _CACHE_GCS: gs://arcascope-sleep-models-data/feature_cache
+  _PISCES_LITE_VERSION: ''
+  _CACHE_PREFIX: unused
+  _MODEL_FAMILY: unused
+  _DATA_IMAGE: unused
+
+options:
+  machineType: E2_HIGHCPU_8
+  # A training image is ~8 GB and the data image layer is ~12 GB.
+  diskSizeGb: 200
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: docker-tools
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # buildx provides the named build contexts the Dockerfiles use, and
+        # Cloud Build's docker image does not always carry the plugin.
+        if ! docker buildx version >/dev/null 2>&1; then
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL -o ~/.docker/cli-plugins/docker-buildx \
+            https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64
+          chmod +x ~/.docker/cli-plugins/docker-buildx
+        fi
+        mkdir -p /workspace/.build-tools
+        cp "$$(command -v docker)" /workspace/.build-tools/docker
+        plugin="$$(docker info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "buildx"}}{{.Path}}{{end}}{{end}}')"
+        cp "$$plugin" /workspace/.build-tools/docker-buildx
+        cp /etc/ssl/certs/ca-certificates.crt /workspace/.build-tools/ca-certificates.crt
+
+  - id: image
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # Keep gcloud and Docker in the same step. The Docker builder does
+        # not include gcloud; both are needed by cloudbuild.sh.
+        export PATH="/workspace/.build-tools:$$PATH"
+        # Docker/buildx's Go TLS client needs the system trust bundle too;
+        # gcloud's Python certificate store does not supply it.
+        export SSL_CERT_FILE=/workspace/.build-tools/ca-certificates.crt
+        mkdir -p ~/.docker/cli-plugins
+        cp /workspace/.build-tools/docker-buildx ~/.docker/cli-plugins/docker-buildx
+        gcloud version
+        docker buildx version
+        # The host daemon's BuildKit is too old for named image contexts.
+        # Cloud Build allows the privileged BuildKit container used here.
+        docker buildx create --name arcasleep --driver docker-container \
+          --driver-opt network=cloudbuild --use
+        docker buildx inspect --bootstrap
+        export BUILD_KIND="$_BUILD_KIND"
+        export GIT_COMMIT="$_GIT_COMMIT"
+        export DEPS_REPO="$_DEPS_REPO" DATA_REPO="$_DATA_REPO"
+        export UNET_REPO="$_UNET_REPO" BIDOZE_REPO="$_BIDOZE_REPO"
+        export CACHE_GCS="$_CACHE_GCS" CACHE_PREFIX="$_CACHE_PREFIX"
+        export MODEL_FAMILY="$_MODEL_FAMILY" DATA_IMAGE="$_DATA_IMAGE"
+        # deps_tag.sh parses pyproject.toml with tomllib (Python 3.11+);
+        # this step's python is older, so the caller computes and passes it.
+        [[ -z "$_PISCES_LITE_VERSION" ]] || export PISCES_LITE_VERSION="$_PISCES_LITE_VERSION"
+        # build_data_image.sh runs `arcasleep manifest-local`. arcasleep needs
+        # Python >= 3.12, which this step lacks, so uv supplies one and the
+        # command is linked into the PATH directory above. The base install
+        # has no dependencies; the source archive has no .git.
+        if [[ "$_BUILD_KIND" == data ]]; then
+          pip install --quiet --user uv
+          export PATH="$$HOME/.local/bin:$$PATH"
+          uv venv --quiet --python 3.12 /workspace/.arcasleep-venv
+          SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 uv pip install --quiet \
+            --python /workspace/.arcasleep-venv/bin/python .
+          ln -s /workspace/.arcasleep-venv/bin/arcasleep /workspace/.build-tools/arcasleep
+          arcasleep --help >/dev/null
+        fi
+        export IMAGE_REF_FILE="$$PWD/image-ref.txt"
+        bash deploy/scripts/cloudbuild.sh
+
+timeout: 7200s

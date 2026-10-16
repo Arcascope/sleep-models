@@ -184,3 +184,103 @@ for a model that does not fit in 24 GB.
     aws cloudformation delete-stack --stack-name arcasleep-train
 
 The ECR repositories must be empty first, or the deletion stalls on them.
+
+## Google Cloud training run
+
+`run_task_gcp.py` is the GCP counterpart of `run_task.sh`: one on-demand L4 VM
+per phase under one run id, with the same results layout as S3.
+
+    python3 deploy/scripts/run_task_gcp.py [options] FAMILY IMAGE [PHASE ...]
+
+Options match `run_task.sh` (`--config`, `--run-id`, `--env KEY=VALUE`,
+`--max-hours`, `--queue`, `--dry-run`), plus `--results-dir`, `--zones`,
+`--machine-type`, `--provisioning-model {STANDARD,SPOT}` and `--max-vms`. The launcher refuses a
+launch that would put more than `--max-vms` (default 4) training VMs in the
+project, counting other users' VMs, unless `--queue` is given. Each VM uploads
+to `gs://arcascope-sleep-models-data/training_outputs/<run id>/`; the launcher
+downloads that into `<family>/results/<run id>/` and deletes each VM.
+`--results-dir DIR` instead writes to `DIR/<run id>/`, including metadata and
+serial logs. Relative paths are resolved from the caller's current directory;
+the default stays under the launcher's checkout. For example, a worktree
+launcher can collect directly into another checkout's results root.
+`gcp-run.json` there records the image digest and each phase's zone, exit codes
+and cleanup status. A phase that finds no L4 in any zone is reported as
+`no-capacity`, and can be run on AWS under the same run id.
+
+The VM startup script is `deploy/gcp/train-startup.sh`.
+
+BiDoze full-recipe experiment execution has been verified on STANDARD
+`g2-standard-8`: eight phase records with `config/training-balanced.json`
+report successful training and upload, with VM cleanup confirmed. The launcher
+used for those runs matched `5c771dc` before the results-directory option.
+Experiment phase names such as `random/final` are supported. Full-recipe
+UNet remains unverified.
+
+## Copying images between ECR and Artifact Registry
+
+    deploy/scripts/copy_image.sh [--dry-run] SOURCE DESTINATION
+
+SOURCE is pinned by digest; DESTINATION is `<repo>:<tag>`; one is in ECR and
+the other in Artifact Registry, in either direction. The script starts an
+`e2-standard-4` VM in `us-east4-a` that runs `skopeo copy --preserve-digests`,
+so the image crosses the cloud backbone instead of this machine and keeps its
+digest. The script then checks the digest in the destination registry and
+deletes the VM. Cleanup retries up to three times and verifies that this
+invocation's VM is absent; failed or unverifiable cleanup makes the command
+fail. A destination tag that already exists is not copied again.
+
+Copy data images to reuse the exact cache bytes, or copy a complete training
+image for a run split between clouds. Building once and copying the training
+image preserves one manifest digest, including its dependency layers. Each
+launcher uses the URI in its own registry, pinned to the matching digest.
+
+Image copies use dedicated Google identities federated to repository-scoped AWS
+roles. Set `ARCASLEEP_PROJECT`, `COPY_SERVICE_ACCOUNT` and `COPY_AWS_ROLE_ARN`
+explicitly; see [image-copy authentication](gcp/image-copy-auth.md) for setup.
+The launcher never forwards a registry password in VM metadata.
+
+## Google Cloud smoke run
+
+The GCP scripts use project `shiftapp-arcascope`, Artifact Registry repository
+`us-central1-docker.pkg.dev/shiftapp-arcascope/arcasleep-train`, and Cloud Build.
+Like CodeBuild, the build uploads committed `HEAD`; commit changes first.
+
+    deploy/scripts/remote_build_gcp.sh train unet <data image>
+    python3 deploy/scripts/run_spot_smoke_gcp.py <training image>
+
+The spot launcher resolves the image to a digest, discovers GPU-enabled zones,
+and tries them sequentially (US, then Europe, then other regions). Restrict
+that list with `--zones ZONE [ZONE ...]`. It provisions one `g2-standard-8` (L4, 32 GiB host
+memory), runs `fold0` with `config/training-smoke.json` (two epochs), uploads
+results to GCS, downloads them into `unet/results/<run id>/`, and deletes the
+VM. A one-hour VM lifetime with automatic deletion provides a backstop if
+the launcher is interrupted. Spot preemption can interrupt training or upload.
+
+The local run directory also holds `gcp-run.json` (image digest, zone, exit
+codes, cleanup status) and `serial.log`. COS installs the GPU driver on boot;
+Docker credentials and results use writable directories under `/var/lib`.
+Use `--provisioning-model STANDARD` for on-demand capacity. The default
+`g2-standard-8` has 32 GiB host RAM; `--machine-type g2-standard-4` selects
+16 GiB, and `--machine-type a2-highgpu-1g` selects a single A100 with 40 GB
+GPU memory. Each type requires existing quota and regional capacity.
+
+### On-demand Cloud Batch alternative
+
+    bash deploy/scripts/run_smoke_gcp.sh <training image> us-central1
+
+This submitter runs the same two-epoch phase on one on-demand L4. The task
+has a one-hour limit and no retries; queued jobs can wait for GPU capacity
+indefinitely. Delete a queued job if it is no longer needed.
+
+Results are written to a shared directory on the VM. A separate container
+uploads that directory to
+`gs://arcascope-sleep-models-data/training_outputs/<run id>/`, including partial
+outputs after a training failure. Training has a 55 minute runnable limit to
+leave time for upload; reaching the task's overall limit can prevent upload.
+The Batch service account needs Artifact Registry read and bucket write access.
+
+    gcloud batch jobs describe <run id> --location=us-central1 --project=shiftapp-arcascope
+    gcloud logging read 'labels.job_uid="<job uid>"' --project=shiftapp-arcascope
+    gcloud storage rsync --recursive gs://arcascope-sleep-models-data/training_outputs/<run id>/ unet/results/<run id>/
+
+The training harness's S3 upload is disabled for these smoke jobs.
