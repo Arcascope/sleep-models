@@ -77,6 +77,19 @@ steps:
         # deps_tag.sh parses pyproject.toml with tomllib (Python 3.11+);
         # this step's python is older, so the caller computes and passes it.
         [[ -z "$_PISCES_LITE_VERSION" ]] || export PISCES_LITE_VERSION="$_PISCES_LITE_VERSION"
+        # build_data_image.sh runs `arcasleep manifest-local`. arcasleep needs
+        # Python >= 3.12, which this step lacks, so uv supplies one and the
+        # command is linked into the PATH directory above. The base install
+        # has no dependencies; the source archive has no .git.
+        if [[ "$_BUILD_KIND" == data ]]; then
+          pip install --quiet --user uv
+          export PATH="$$HOME/.local/bin:$$PATH"
+          uv venv --quiet --python 3.12 /workspace/.arcasleep-venv
+          SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 uv pip install --quiet \
+            --python /workspace/.arcasleep-venv/bin/python .
+          ln -s /workspace/.arcasleep-venv/bin/arcasleep /workspace/.build-tools/arcasleep
+          arcasleep --help >/dev/null
+        fi
         export IMAGE_REF_FILE="$$PWD/image-ref.txt"
         bash deploy/scripts/cloudbuild.sh
 
