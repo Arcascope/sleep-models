@@ -35,7 +35,9 @@ L4 VM under one run id, and the layout of the results matches S3
 5. Say in the report which cloud ran each phase.
 
 An Artifact Registry image is not usable by ECS, and an ECR image is not
-usable here; each cloud needs its own build.
+usable here. A data image is copied between the registries with
+`deploy/scripts/copy_image.sh` (the `copy-images` skill); a training image
+is built on each cloud from the same commit.
 
 ## Limits
 
@@ -83,7 +85,9 @@ deploy/scripts/remote_build_gcp.sh train <family> \
 The data image for UNet's current cache is
 `data:12Hz_log_PSD_aligned-f9f44233ba28` (per `unet/config/inputs.json`, not
 the `jerkdt` cache). A new cache needs a prep build first, which exists only
-on AWS (`aws-gpu-runs` step 2) before it can be copied or built here. `deps`
+on AWS (`aws-gpu-runs` step 2); copy the resulting ECR data image here
+with the `copy-images` skill. `remote_build_gcp.sh data` fails (its build
+step has no `arcasleep`). `deps`
 rebuilds only when the jax or pisces-lite pin changes; ask the user first.
 Builds run in us-central1 and are unaffected by GPU stockout.
 
@@ -139,7 +143,8 @@ launcher failed to delete is removed by GCE 30 minutes after `--max-hours`.
 - COS `/root/.docker` is read-only and `/mnt` is a small tmpfs; the startup
   template uses `/var/lib/arcasleep-docker` and `/var/lib/arcasleep-results`.
   Do not move them.
-- ECR's `deps` image is stale (pisces 4.1.1); the Artifact Registry copy is
-  current.
+- Both registries hold `deps:jax0.11.2-pisces4.2.0-e5e67063`, built
+  separately, so the two digests differ. `deploy/scripts/deps_tag.sh` prints the tag
+  that the current pins require.
 - BiDoze is supported by the launcher but has not been run on GCP, and has no
   image in Artifact Registry yet.
