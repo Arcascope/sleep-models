@@ -22,6 +22,20 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
 | `foundry-start` | the people not held out | `start` |
 | `circular` | none | `circular` |
 | `foundry-circular` | the people not held out | `circular` |
+| `foundry-wakecut` | the people not held out | `wake-cut` |
+| `foundry-wakecut-pair` | the people not held out | `wake-cut`, `shift_consistency_weight` 10 |
+| `wakecut-pair` | none | `wake-cut`, `shift_consistency_weight` 10 |
+
+- `segment_placement: wake-cut` places a recording that fills at most half the context as
+  `random` does. A longer one, a Foundry window, is rotated by an offset drawn from those
+  whose cut, at the context's edges, has no sleep within 60 epochs on either side; the
+  night can then sit anywhere in the context, and no Foundry row starts or ends within 60
+  epochs of sleep. Without Foundry, `wake-cut` places every night as `random` does.
+- `shift_consistency_weight` places each drawn row twice, with independent offsets, and
+  adds to the loss the symmetric KL divergence between the two views' outputs, aligned
+  epoch by epoch, outside 60 epochs of either view's context edges. The weight is relative
+  to the class-balanced cross-entropy's weight on a common class (`1 - balance_beta`).
+  Each step runs the model on both views, so a phase takes about twice as long.
 
 - `segment_placement: circular` rotates each drawn row by a uniformly drawn number of epochs,
   at every draw. A recording longer than its padding is split: its end, then the padding,
@@ -38,12 +52,12 @@ sleep detection (research log 2026-10-15 §2). This experiment asks:
   `matched/final` seeds of `bidoze-adult-devices-0`).
 
 **Phases.** `<arm>/<person>` (eric, olivia, doug) trains without that person's windows;
-`<arm>/final` trains on all of them. `random` and `circular` have only `<arm>/final`. 3 seeds per phase,
+`<arm>/final` trains on all of them. Arms without Foundry have only `<arm>/final`. 3 seeds per phase,
 recipe `config/training-balanced.json`.
 
 **Scoring.**
 - Each person's windows are scored by the phase that held that person out (`<arm>/final`
-  for `random` and `circular`, which never train on Foundry).
+  for the arms without Foundry).
 - SleepAccel-Clinical (32) and SENSE (13, 23.4–25.0 h PSG recordings of shift workers) are
   scored by every phase; no arm trains on them.
 - Foundry labels are Apple Watch staging, not PSG. A gain on Foundry measures agreement with

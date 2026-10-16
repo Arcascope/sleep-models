@@ -8,7 +8,7 @@ the stage columns are multiplied by ``1 - gap_head`` to recover the model's five
 probabilities before averaging.
 
 - Foundry windows are scored by the phase that held their person out (``<arm>/final`` for
-  ``random`` and ``circular``); SleepAccel-Clinical and SENSE by each arm's ``final`` phase.
+  the arms without Foundry); SleepAccel-Clinical and SENSE by each arm's ``final`` phase.
 - Sleep recall and precision are over every scored epoch of the recording (24 h for Foundry
   and SENSE).
 - Foundry only: ``outside_sleep_min`` is the minutes called sleep outside Apple's first-to-last
@@ -39,7 +39,8 @@ from scipy.stats import wilcoxon
 
 from arcasleep.evaluation.staging_metrics import cohen_kappa_from_confusion
 
-ARMS = ["random", "foundry", "foundry-start", "circular", "foundry-circular"]
+ARMS = ["random", "foundry", "foundry-start", "circular", "foundry-circular", "foundry-wakecut",
+        "foundry-wakecut-pair", "wakecut-pair"]
 STAGES = ["wake", "light", "deep", "rem"]
 EPOCH_MIN = 0.5
 LEAD_EPOCHS = 240

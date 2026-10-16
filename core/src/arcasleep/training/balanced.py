@@ -30,8 +30,13 @@ CLASS_SAMPLE_MAX_ATTEMPTS = 100
 #: Where a drawn row's recording sits in the fit length: "start" keeps it at
 #: epoch 0; "random" moves it to a uniformly drawn epoch that still fits it whole;
 #: "circular" rotates the row by a uniformly drawn number of epochs, so a
-#: recording can wrap from the row's end to its start.
-SEGMENT_PLACEMENTS = ("start", "random", "circular")
+#: recording can wrap from the row's end to its start; "wake-cut" places a
+#: recording that fills at most half the row as "random" does, and rotates a longer
+#: one only by offsets whose cut has ``WAKE_CUT_MARGIN`` epochs of wake, unscored or
+#: padding on each side.
+SEGMENT_PLACEMENTS = ("start", "random", "circular", "wake-cut")
+#: Epochs on each side of a "wake-cut" rotation's cut that must hold no sleep.
+WAKE_CUT_MARGIN = 60
 
 
 @dataclass(frozen=True)
@@ -211,28 +216,46 @@ def recorded_lengths(ys: np.ndarray) -> np.ndarray:
     return np.where(labelled.any(axis=1), last, 0)
 
 
-def place_rows(
+def placement_offsets(ys: np.ndarray, rng: np.random.Generator, placement: str) -> np.ndarray:
+    """Per padded row of ``ys`` ``(B, T)``, the epochs ``placement`` rolls it by.
+
+    See ``SEGMENT_PLACEMENTS``. A roll by ``k`` puts the row's epoch ``(T - k) % T``
+    at epoch 0, so the context's edges cut the row there. A "wake-cut" row with no
+    such cut, or in a row no longer than ``2 * WAKE_CUT_MARGIN``, is placed as
+    "random" does.
+    """
+    if placement not in SEGMENT_PLACEMENTS:
+        raise ValueError(f"placement must be one of {SEGMENT_PLACEMENTS}, got {placement!r}")
+    width = ys.shape[1]
+    if placement == "start":
+        return np.zeros(len(ys), dtype=np.int64)
+    if placement == "circular":
+        return rng.integers(width, size=len(ys))
+    lengths = recorded_lengths(ys)
+    offsets = rng.integers(width - lengths + 1)
+    if placement == "wake-cut" and width > 2 * WAKE_CUT_MARGIN:
+        m = WAKE_CUT_MARGIN
+        for i in np.flatnonzero(2 * lengths > width):
+            # Wake is 0, unscored -1 and gap -2.
+            quiet = (ys[i] <= 0).astype(np.int64)
+            wrapped = np.concatenate([quiet[width - m :], quiet, quiet[:m]])
+            # quiet_around[c]: the epochs c - m .. c + m - 1 (mod T) hold no sleep.
+            quiet_around = np.convolve(wrapped, np.ones(2 * m, dtype=np.int64), "valid")[:width] == 2 * m
+            cuts = np.flatnonzero(quiet_around)
+            if cuts.size:
+                offsets[i] = (width - int(rng.choice(cuts))) % width
+    return offsets
+
+
+def roll_rows(
     xs: np.ndarray,
     ys: np.ndarray,
-    rng: np.random.Generator,
+    offsets: np.ndarray,
     frames_per_epoch: int,
     extra: np.ndarray | None = None,
-    circular: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    """Move each padded row's recording to a random epoch of the row.
-
-    Each row ``(frames, labels)`` holds a recording followed by gap padding.
-    The recording moves to an offset drawn uniformly from the offsets that keep
-    it whole, and the padding that followed it fills the epochs before it.
-    Padding epochs are identical within a row (the recording's median spectrum,
-    gap row at 1), so this is a roll. With ``circular`` the offset is drawn from
-    every epoch of the row: a recording longer than the padding is split, its
-    end first, then the padding, then its start. ``extra`` ``(B, T, ...)``,
-    per-epoch values such as soft targets, moves with the labels.
-    """
+    """Roll each row of ``xs``, ``ys`` and ``extra`` forward by its ``offsets`` epochs."""
     fpe = frames_per_epoch
-    width = ys.shape[1]
-    offsets = rng.integers(width, size=len(ys)) if circular else rng.integers(width - recorded_lengths(ys) + 1)
     xs, ys = xs.copy(), ys.copy()
     extra = None if extra is None else extra.copy()
     for i, offset in enumerate(offsets):
@@ -242,6 +265,31 @@ def place_rows(
             if extra is not None:
                 extra[i] = np.roll(extra[i], int(offset), axis=0)
     return xs, ys, extra
+
+
+def place_rows(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    rng: np.random.Generator,
+    frames_per_epoch: int,
+    extra: np.ndarray | None = None,
+    placement: str = "random",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Move each padded row's recording to a random epoch of the row.
+
+    Each row ``(frames, labels)`` holds a recording followed by gap padding.
+    With "random", the recording moves to an offset drawn uniformly from the
+    offsets that keep it whole, and the padding that followed it fills the epochs
+    before it. Padding epochs are identical within a row (the recording's median
+    spectrum, gap row at 1), so this is a roll. With "circular" the offset is drawn
+    from every epoch of the row: a recording longer than the padding is split, its
+    end first, then the padding, then its start. "wake-cut" splits only a recording
+    longer than half the row, and only where it holds no sleep
+    (:func:`placement_offsets`). ``extra`` ``(B, T, ...)``, per-epoch values such as
+    soft targets, moves with the labels.
+    """
+    offsets = placement_offsets(ys, rng, placement)
+    return roll_rows(xs, ys, offsets, frames_per_epoch, extra)
 
 
 def selection_confusion(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> np.ndarray:

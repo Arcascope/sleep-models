@@ -34,6 +34,8 @@ from arcasleep.training.balanced import (
     CLASS_SAMPLE_MAX_ATTEMPTS,
     LR_DROP_FACTOR,
     SEGMENT_PLACEMENTS,
+    placement_offsets,
+    roll_rows,
     Patience,
     Plateau,
     balanced_cross_entropy,
@@ -463,6 +465,25 @@ def feedback_adjustment_loss(
         focal_alpha,
         focal_gamma,
     )
+
+
+#: Epochs next to either view's context edges left out of the shift-consistency term;
+#: the two views see different neighbours there.
+CONSISTENCY_EDGE_EPOCHS = 60
+
+
+def consistency_keep(shifts: np.ndarray, width: int) -> np.ndarray:
+    """``(B, width)`` 1 where an epoch of the second view counts in the shift-consistency term.
+
+    The second view is the first rolled forward by ``shifts``; an epoch counts when it is
+    more than ``CONSISTENCY_EDGE_EPOCHS`` from the context edges of both views.
+    """
+    m = CONSISTENCY_EDGE_EPOCHS
+    t = np.arange(width)[None, :]
+    near_b = (t < m) | (t >= width - m)
+    in_a = (t - np.asarray(shifts)[:, None]) % width
+    near_a = (in_a < m) | (in_a >= width - m)
+    return (~(near_a | near_b)).astype(np.float32)
 
 
 def _roll_time_by_offsets(values: jnp.ndarray, offsets: jnp.ndarray) -> jnp.ndarray:
@@ -3183,6 +3204,7 @@ class BiDozeNetModel(CVModel):
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
         segment_placement: str = "start",
+        shift_consistency_weight: float = 0.0,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3210,7 +3232,19 @@ class BiDozeNetModel(CVModel):
         drawn anew at every draw, so the model sees recordings at every position of
         the fit length. The eval rows are placed the same way once, from ``fit_seed``.
         ``segment_placement="circular"`` rotates each row by any number of epochs
-        instead, so a recording can wrap from the row's end to its start.
+        instead, so a recording can wrap from the row's end to its start;
+        ``"wake-cut"`` rotates only recordings longer than half the row, and only at
+        cuts with no sleep nearby (:func:`~arcasleep.training.balanced.placement_offsets`).
+
+        With ``shift_consistency_weight`` above 0, each drawn row is placed twice,
+        with offsets drawn independently. The loss is the mean of the two views'
+        cross-entropies plus ``shift_consistency_weight * (1 - balance_beta)`` times
+        the symmetric KL divergence between the second view's output and the first
+        view's output rolled into the second view's epochs, averaged over epochs
+        more than ``CONSISTENCY_EDGE_EPOCHS`` from either view's context edges. With
+        ``balance_beta`` near 1, ``1 - balance_beta`` is about the cross-entropy's
+        weight on an epoch of a class common in the batch. Not with ``soft_targets``
+        or ``segment_placement="start"``.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3221,12 +3255,19 @@ class BiDozeNetModel(CVModel):
             raise ValueError(
                 f"segment_placement must be one of {SEGMENT_PLACEMENTS}, got {segment_placement!r}"
             )
+        shift_consistency_weight = float(shift_consistency_weight)
+        if shift_consistency_weight < 0.0:
+            raise ValueError("shift_consistency_weight must be nonnegative")
+        paired = shift_consistency_weight > 0.0
+        if paired and (soft_targets is not None or segment_placement == "start"):
+            raise ValueError(
+                "shift_consistency_weight needs labels and a segment_placement other than 'start'"
+            )
         place = segment_placement != "start"
-        circular = segment_placement == "circular"
         if place:
             eval_x, eval_y, _ = place_rows(
                 eval_x, eval_y, np.random.default_rng([fit_seed, 1]), cfg.frames_per_epoch,
-                circular=circular,
+                placement=segment_placement,
             )
         self._ensure_built(tuple(train_x.shape[1:]), seed=fit_seed)
         assert self.params is not None
@@ -3257,6 +3298,33 @@ class BiDozeNetModel(CVModel):
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), opt_state, loss
+
+        consistency_scale = shift_consistency_weight * (1.0 - balance_beta)
+
+        @jax.jit
+        def pair_step(params, opt_state, xa, ma, ya, xb, mb, yb, shift, keep, key):
+            key_a, key_b = jax.random.split(key)
+
+            def loss_fn(p):
+                logits_a = module.apply(
+                    {"params": p}, xa, ma, train=True, rngs={"dropout": key_a, "augment": key_a}
+                )
+                logits_b = module.apply(
+                    {"params": p}, xb, mb, train=True, rngs={"dropout": key_b, "augment": key_b}
+                )
+                ce = 0.5 * (
+                    balanced_cross_entropy(logits_a, ya, output_classes, balance_beta)
+                    + balanced_cross_entropy(logits_b, yb, output_classes, balance_beta)
+                )
+                log_a = jax.nn.log_softmax(_roll_time_by_offsets(logits_a, shift), axis=-1)
+                log_b = jax.nn.log_softmax(logits_b, axis=-1)
+                divergence = 0.5 * jnp.sum((jnp.exp(log_a) - jnp.exp(log_b)) * (log_a - log_b), axis=-1)
+                consistency = jnp.sum(divergence * keep) / jnp.maximum(jnp.sum(keep), 1.0)
+                return ce + consistency_scale * consistency, consistency
+
+            (loss, consistency), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+            updates, opt_state = tx.update(grads, opt_state, params)
+            return optax.apply_updates(params, updates), opt_state, loss, consistency
 
         @jax.jit
         def distill_step(params, opt_state, xb, mb, qb, key):
@@ -3327,7 +3395,7 @@ class BiDozeNetModel(CVModel):
                 xs, targets = train_x[drawn], soft_targets[drawn]
                 if place:
                     xs, _, targets = place_rows(
-                        xs, train_y[drawn], rng, fpe, extra=targets, circular=circular
+                        xs, train_y[drawn], rng, fpe, extra=targets, placement=segment_placement
                     )
                 ms = np.ones((len(drawn), train_y.shape[1] * fpe), dtype=np.float32)
                 step_fn = distill_step
@@ -3342,16 +3410,42 @@ class BiDozeNetModel(CVModel):
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
                 )
-                if place:
-                    xs, ys, _ = place_rows(xs, ys, rng, fpe, circular=circular)
+                if paired:
+                    offsets_a = placement_offsets(ys, rng, segment_placement)
+                    offsets_b = placement_offsets(ys, rng, segment_placement)
+                    xb_all, yb_all, _ = roll_rows(xs, ys, offsets_b, fpe)
+                    xs, ys, _ = roll_rows(xs, ys, offsets_a, fpe)
+                    shifts = (offsets_b - offsets_a) % ys.shape[1]
+                    ms_b = np.repeat(valid_mask(yb_all), fpe, axis=1)
+                    targets_b = np.where(yb_all <= GAP_LABEL, gap_class, yb_all)
+                elif place:
+                    xs, ys, _ = place_rows(xs, ys, rng, fpe, placement=segment_placement)
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
                 step_fn = train_step
             epoch_loss = 0.0
+            epoch_consistency = 0.0
             for step in range(steps_per_epoch):
                 batch = slice(step * batch_size, (step + 1) * batch_size)
                 rng_key, step_key = jax.random.split(rng_key)
+                if paired:
+                    params, opt_state, loss, consistency = pair_step(
+                        params,
+                        opt_state,
+                        jnp.asarray(xs[batch]),
+                        jnp.asarray(ms[batch]),
+                        jnp.asarray(targets[batch]),
+                        jnp.asarray(xb_all[batch]),
+                        jnp.asarray(ms_b[batch]),
+                        jnp.asarray(targets_b[batch]),
+                        jnp.asarray(shifts[batch]),
+                        jnp.asarray(consistency_keep(shifts[batch], ys.shape[1])),
+                        step_key,
+                    )
+                    epoch_loss += float(loss)
+                    epoch_consistency += float(consistency)
+                    continue
                 params, opt_state, loss = step_fn(
                     params,
                     opt_state,
@@ -3362,6 +3456,7 @@ class BiDozeNetModel(CVModel):
                 )
                 epoch_loss += float(loss)
             epoch_loss /= steps_per_epoch
+            epoch_consistency /= steps_per_epoch
 
             kappa = eval_kappa(params)
             decision = plateau.update(kappa)
@@ -3369,6 +3464,8 @@ class BiDozeNetModel(CVModel):
             history["eval_kappa"].append(kappa)
             history["smoothed_eval_kappa"].append(decision.smoothed_kappa)
             history["lr"].append(lr)
+            if paired:
+                history.setdefault("consistency", []).append(epoch_consistency)
 
             if np.isfinite(kappa) and kappa > best_kappa:
                 best_kappa = kappa
@@ -3377,7 +3474,8 @@ class BiDozeNetModel(CVModel):
 
             print(
                 f"    epoch {epoch:3d}  step {plateau.step}  loss {epoch_loss:.3e}  "
-                f"eval_kappa {kappa:.4f}  smoothed {decision.smoothed_kappa:.4f}  "
+                + (f"consistency {epoch_consistency:.3e}  " if paired else "")
+                + f"eval_kappa {kappa:.4f}  smoothed {decision.smoothed_kappa:.4f}  "
                 f"best {best_kappa:.4f}@{best_epoch}  lr {lr:.2e}  "
                 f"epoch_time={time.time() - epoch_start:.3f}s",
                 flush=True,

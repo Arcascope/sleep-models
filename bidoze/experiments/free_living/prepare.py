@@ -16,10 +16,17 @@ Arms:
                  (``segment_placement: circular``), so a recording can wrap from the
                  context's end to its start.
 - foundry-circular: as foundry, with circular placement.
+- foundry-wakecut: as foundry, with ``segment_placement: wake-cut``: the nights are placed
+                 as random does; a Foundry window is rotated only where the context's edges
+                 cut it at least 60 epochs from any sleep.
+- foundry-wakecut-pair: as foundry-wakecut, with each drawn row placed twice and the
+                 disagreement between the two views' outputs added to the loss
+                 (``shift_consistency_weight``).
+- wakecut-pair:  as foundry-wakecut-pair without Foundry.
 
 Phases are ``<arm>/<held-out person>`` (eric, olivia, doug), training without that person's
-windows, and ``<arm>/final``, training on every person. ``random`` and ``circular`` have only
-``final``: they never train on Foundry. Every phase scores SleepAccel-Clinical and SENSE,
+windows, and ``<arm>/final``, training on every person. Arms without Foundry (``random``,
+``circular``, ``wakecut-pair``) have only ``final``. Every phase scores SleepAccel-Clinical and SENSE,
 which no arm trains on; a person phase also scores that person's windows, and the ``final``
 phase of an arm without Foundry scores all of them.
 
@@ -30,8 +37,9 @@ Writes, under ``<run>/setup/``:
                                       (so the early-stopping holdout keeps a person on one
                                       side), SleepAccel-Clinical, SENSE
 - cv/<arm>/cv_<phase>.json
-- training-<arm>.json                 the repo's balanced recipe, run_seed 0, seed_count 3, and
-                                      the arm's segment_placement
+- training-<arm>.json                 the repo's balanced recipe, run_seed 0, seed_count 3, the
+                                      arm's segment_placement and, for the pair arms,
+                                      shift_consistency_weight
 
 Usage: python prepare.py <run dir> <cache root>
 (the cache root holds ``12Hz_log_PSD_aligned/`` with weaver_revised, SleepAccel,
@@ -53,13 +61,18 @@ CACHE_NAME = "12Hz_log_PSD_aligned"
 SEEDS = 3
 WEAVER = "weaverMatched"
 OUTSIDE = ["SleepAccel-Clinical", "SENSE"]
-#: arm → (segment_placement, trains on Foundry)
+#: The pair arms' shift_consistency_weight.
+CONSISTENCY_WEIGHT = 10.0
+#: arm → (segment_placement, trains on Foundry, shift_consistency_weight)
 ARMS = {
-    "random": ("random", False),
-    "foundry": ("random", True),
-    "foundry-start": ("start", True),
-    "circular": ("circular", False),
-    "foundry-circular": ("circular", True),
+    "random": ("random", False, 0.0),
+    "foundry": ("random", True, 0.0),
+    "foundry-start": ("start", True, 0.0),
+    "circular": ("circular", False, 0.0),
+    "foundry-circular": ("circular", True, 0.0),
+    "foundry-wakecut": ("wake-cut", True, 0.0),
+    "foundry-wakecut-pair": ("wake-cut", True, CONSISTENCY_WEIGHT),
+    "wakecut-pair": ("wake-cut", False, CONSISTENCY_WEIGHT),
 }
 
 
@@ -102,9 +115,11 @@ def main(run_dir: Path, cache_root: Path) -> None:
     people = sorted(windows)
 
     recipe = json.loads((BIDOZE / "config/training-balanced.json").read_text())
-    for arm, (placement, with_foundry) in ARMS.items():
-        write_json(setup / f"training-{arm}.json",
-                   {**recipe, "run_seed": 0, "seed_count": SEEDS, "segment_placement": placement})
+    for arm, (placement, with_foundry, consistency) in ARMS.items():
+        training = {**recipe, "run_seed": 0, "seed_count": SEEDS, "segment_placement": placement}
+        if consistency:
+            training["shift_consistency_weight"] = consistency
+        write_json(setup / f"training-{arm}.json", training)
 
         cache = setup / "cache" / arm / CACHE_NAME
         for sid in matched:

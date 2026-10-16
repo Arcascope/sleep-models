@@ -97,15 +97,24 @@ def _configs(
     )
 
 
-@pytest.mark.parametrize("segment_placement", ["start", "random", "circular"])
+@pytest.mark.parametrize(
+    "placement_overrides",
+    [
+        {"segment_placement": "start"},
+        {"segment_placement": "random"},
+        {"segment_placement": "circular"},
+        {"segment_placement": "wake-cut"},
+        {"segment_placement": "wake-cut", "shift_consistency_weight": 1.0},
+    ],
+)
 @pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
 def test_balanced_recipe_trains_and_scores_end_to_end(
-    tmp_path: Path, model_frames_per_epoch: int, segment_placement: str
+    tmp_path: Path, model_frames_per_epoch: int, placement_overrides: dict
 ) -> None:
     config = _configs(
         tmp_path / "config",
         {"frames_per_epoch": model_frames_per_epoch},
-        training_overrides={"segment_placement": segment_placement},
+        training_overrides=placement_overrides,
     )
     cache_root = tmp_path / "feature_cache"
     _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
@@ -136,6 +145,9 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
         {"recipe": "curriculum", "early_stop_patience": 5},
         {"recipe": "curriculum", "segment_placement": "random"},
         {"segment_placement": "end"},
+        {"shift_consistency_weight": 1.0},
+        {"segment_placement": "random", "shift_consistency_weight": -1.0},
+        {"recipe": "curriculum", "shift_consistency_weight": 1.0},
     ],
 )
 def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> None:
@@ -332,3 +344,31 @@ def test_teacher_probabilities_are_a_distribution(tmp_path: Path) -> None:
 
     assert p.shape == (3, 16, config.output_classes)
     np.testing.assert_allclose(p.sum(axis=-1), 1.0, rtol=1e-5)
+
+
+def test_shift_consistency_aligns_the_first_view_with_the_second() -> None:
+    import jax.numpy as jnp
+
+    from arcasleep.data.constants import GAP_LABEL
+    from arcasleep.training.balanced import placement_offsets, roll_rows
+    from arcasleep_bidoze.model.definition import (
+        CONSISTENCY_EDGE_EPOCHS,
+        _roll_time_by_offsets,
+        consistency_keep,
+    )
+
+    width, rng = 300, np.random.default_rng(0)
+    ys = np.full((8, width), GAP_LABEL, dtype=np.int32)
+    ys[:, :200] = np.arange(200) % 4
+    xs = np.zeros((8, width, 1, 1), dtype=np.float32)
+    offsets_a = placement_offsets(ys, rng, "circular")
+    offsets_b = placement_offsets(ys, rng, "circular")
+    _, ya, _ = roll_rows(xs, ys, offsets_a, 1)
+    _, yb, _ = roll_rows(xs, ys, offsets_b, 1)
+    shifts = (offsets_b - offsets_a) % width
+
+    aligned = np.asarray(_roll_time_by_offsets(jnp.asarray(ya[..., None]), jnp.asarray(shifts)))[..., 0]
+
+    np.testing.assert_array_equal(aligned, yb)
+    keep = consistency_keep(shifts, width)
+    assert keep[:, :CONSISTENCY_EDGE_EPOCHS].sum() == 0 and keep.sum() > 0

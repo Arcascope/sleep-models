@@ -12,7 +12,10 @@ from arcasleep.training.balanced import (
     Patience,
     Plateau,
     PlateauDecision,
+    WAKE_CUT_MARGIN,
     place_rows,
+    placement_offsets,
+    roll_rows,
     recorded_lengths,
     selection_confusion,
     split_train_eval,
@@ -166,7 +169,7 @@ def test_circular_placement_rotates_rows_and_wraps_long_recordings() -> None:
     soft = np.eye(5, dtype=np.float32)[np.where(ys == GAP_LABEL, 4, ys)]
 
     placed_x, placed_y, placed_soft = place_rows(
-        xs, ys, np.random.default_rng(0), fpe, extra=soft, circular=True
+        xs, ys, np.random.default_rng(0), fpe, extra=soft, placement="circular"
     )
 
     wrapped = 0
@@ -176,3 +179,24 @@ def test_circular_placement_rotates_rows_and_wraps_long_recordings() -> None:
         np.testing.assert_array_equal(placed_soft[i], np.roll(soft[i], shift, axis=0))
         wrapped += shift > width - 18
     assert wrapped > 0
+
+
+def test_wake_cut_places_short_recordings_whole_and_cuts_long_ones_away_from_sleep() -> None:
+    width, fpe = 400, 2
+    xs, ys = _padded_rows([150] * 50 + [380] * 50, width, fpe)
+    ys[:, :] = np.where(ys == GAP_LABEL, GAP_LABEL, 0)
+    ys[:50, 40:100] = 2
+    ys[50:, 200:300] = 1
+    rng = np.random.default_rng(0)
+
+    offsets = placement_offsets(ys, rng, "wake-cut")
+    placed_x, placed_y, _ = roll_rows(xs, ys, offsets, fpe)
+
+    m = WAKE_CUT_MARGIN
+    assert (offsets[:50] <= width - 150).all()
+    assert (offsets[50:] > width - 380).any()
+    for i in range(len(ys)):
+        np.testing.assert_array_equal(placed_y[i], np.roll(ys[i], offsets[i]))
+        np.testing.assert_array_equal(placed_x[i], np.roll(xs[i], offsets[i] * fpe, axis=0))
+    for i in range(50, len(ys)):
+        assert (placed_y[i, :m] <= 0).all() and (placed_y[i, -m:] <= 0).all()

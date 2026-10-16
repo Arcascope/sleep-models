@@ -4,7 +4,7 @@
 # Called by scripts/harness.sh with BIDOZE_EXPERIMENT=experiments/free_living;
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # FREE_LIVING_TRAINING overrides the recipe, e.g. config/training-smoke.json for a wiring
-# check; the arm's segment_placement is kept.
+# check; the arm's segment_placement and shift_consistency_weight are kept.
 # Usage: task.sh PHASE OUT_DIR
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +22,7 @@ CV=$S/cv/$ARM/cv_$K.json
 TRAINING=$S/training-$ARM.json
 mkdir -p "$OUT/setup"
 if [[ -n "${FREE_LIVING_TRAINING:-}" ]]; then
-  python -c "import json,sys;t=json.load(open(sys.argv[1]));t['segment_placement']=json.load(open(sys.argv[2]))['segment_placement'];json.dump(t,open(sys.argv[3],'w'),indent=2)" \
+  python -c "import json,sys;t=json.load(open(sys.argv[1]));a=json.load(open(sys.argv[2]));t.update({k:a[k] for k in ('segment_placement','shift_consistency_weight') if k in a});json.dump(t,open(sys.argv[3],'w'),indent=2)" \
     "$FREE_LIVING_TRAINING" "$TRAINING" "$OUT/setup/training-override.json"
   TRAINING=$OUT/setup/training-override.json
 else

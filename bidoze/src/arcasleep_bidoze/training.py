@@ -48,6 +48,7 @@ BALANCED_ONLY_KEYS = (
     "init_weights",
     "distill_from",
     "segment_placement",
+    "shift_consistency_weight",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -99,9 +100,13 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
-    # Where each drawn recording sits in the x_length context: "start" at epoch 0,
-    # "random" at a uniformly drawn epoch that keeps it whole, drawn at every draw.
+    # Where each drawn recording sits in the x_length context, drawn at every draw; one of
+    # arcasleep.training.balanced.SEGMENT_PLACEMENTS ("start" keeps it at epoch 0).
     segment_placement: str = "start"
+    # Above 0, each drawn row is placed twice and the loss adds this weight times the
+    # disagreement between the two views' outputs, aligned epoch by epoch
+    # (BiDozeNetModel.fit_balanced). Needs a segment_placement other than "start".
+    shift_consistency_weight: float = 0.0
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -159,6 +164,10 @@ class TrainingConfig:
             self.segment_placement, frozenset(SEGMENT_PLACEMENTS), "training.json segment_placement"
         )
 
+        if self.shift_consistency_weight < 0.0:
+            raise ValueError("training.json: shift_consistency_weight must be nonnegative")
+        if self.shift_consistency_weight > 0.0 and self.segment_placement == "start":
+            raise ValueError("training.json: shift_consistency_weight needs a segment_placement other than 'start'")
         if self.lr <= 0.0:
             raise ValueError("training.json: lr must be positive")
         if self.weight_decay < 0.0:
@@ -383,6 +392,7 @@ def _train_fold_balanced(
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
         segment_placement=training.segment_placement,
+        shift_consistency_weight=training.shift_consistency_weight,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
