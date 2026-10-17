@@ -121,3 +121,19 @@ def test_the_eval_holdout_keeps_every_recording_of_a_participant_on_one_side() -
         assert fit_participants.isdisjoint(eval_participants)
         assert len(eval_participants) == 9
         assert sorted(fit + held_out) == sorted(refs)
+
+
+def test_the_eval_holdout_does_not_depend_on_the_order_of_the_recordings() -> None:
+    refs = sorted(
+        SubjectRef(dataset, f"p{participant:02d}_{night}")
+        for dataset, participants in [("cohort_b", range(0, 12)), ("cohort_a", range(8, 20))]
+        for participant in participants
+        for night in ("n1", "n2")
+    )
+    rng = np.random.default_rng(0)
+
+    for seed in range(5):
+        split = split_train_eval(refs, 0.3, seed)
+        for _ in range(5):
+            permuted = [refs[i] for i in rng.permutation(len(refs))]
+            assert split_train_eval(permuted, 0.3, seed) == split
