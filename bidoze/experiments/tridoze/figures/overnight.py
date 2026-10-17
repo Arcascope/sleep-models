@@ -102,6 +102,13 @@ def diversity(run: Path, out: Path) -> None:
     plt.close(fig)
 
 
+def tick(model: str) -> str:
+    label = DISPLAY.get(model, model)
+    if "\n" in label:
+        return label
+    return label.replace(" member ", "\nmember ") if " member " in label else label.replace(" ", "\n", 1)
+
+
 def kappa_diffs(run: Path, out: Path, models: list[str], name: str, draws_csv: Path | None = None) -> None:
     draws = pd.read_csv(draws_csv or run / "analysis/full-test/draws.csv")
     metrics = [("kappa_4stage", "κ 4-stage", 1), ("kappa_sleep_wake", "κ sleep/wake", 1),
@@ -121,8 +128,7 @@ def kappa_diffs(run: Path, out: Path, models: list[str], name: str, draws_csv: P
                     half = 2.776 * diff.std(ddof=1) / np.sqrt(len(diff)) if len(diff) == 5 else np.nan
                     ax.errorbar(i + 0.25, diff.mean(), yerr=half, fmt="_", color="black", capsize=3)
             ax.axhline(0, color="#999999", lw=0.8)
-            ax.set_xticks(range(len(shown)), [DISPLAY.get(m, m).replace(" member ", "\nmember ").replace("independent ×3 ", "ind. ×3\n")
-                                              for m in shown], fontsize=7)
+            ax.set_xticks(range(len(shown)), [tick(m) for m in shown], fontsize=7)
             ax.set_title(f"{cohort}: {title}", fontsize=9)
             ax.spines[["top", "right"]].set_visible(False)
     axes[0, 0].set_ylabel("Model − independent ×3")
@@ -198,6 +204,28 @@ def second_member(run: Path, out: Path) -> None:
     plt.close(fig)
 
 
+def member_vs_ensemble(run: Path, out: Path) -> None:
+    t = pd.read_csv(run / "analysis/full-test/member_vs_ensemble.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
+    for ax, cohort in zip(axes, COHORTS):
+        c = t[t.cohort == cohort]
+        for e in ensembles_present(c):
+            g = c[c.ensemble == e]
+            ax.scatter(g.members, g.ensemble_kappa, s=12, color=COLORS[e], alpha=0.45)
+            ax.scatter(g.members.mean(), g.ensemble_kappa.mean(), s=70, color=COLORS[e], edgecolor="black", label=e)
+        lo = min(c.members.min(), c.ensemble_kappa.min()) - 0.01
+        hi = max(c.members.max(), c.ensemble_kappa.max()) + 0.01
+        ax.plot([lo, hi], [lo, hi], color="#999999", lw=0.8)
+        ax.set_xlabel("Members' mean κ 4-stage (each alone)")
+        ax.set_ylabel("Ensemble κ 4-stage (mean output)")
+        ax.set_title(cohort, fontsize=10)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].legend(frameon=False, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out / "tridoze-overnight-member-vs-ensemble.png", dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figures", type=Path)
@@ -208,7 +236,7 @@ def main() -> None:
     ap.add_argument("--draws-csv", type=Path, default=None, help="evaluate.py draws.csv (default analysis/full-test)")
     args = ap.parse_args()
     args.figures.mkdir(parents=True, exist_ok=True)
-    jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights, "second": second_member}
+    jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights, "second": second_member, "members": member_vs_ensemble}
     for name, job in jobs.items():
         if args.only is None or name in args.only:
             job(args.run, args.figures)
