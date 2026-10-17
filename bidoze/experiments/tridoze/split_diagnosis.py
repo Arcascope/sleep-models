@@ -69,8 +69,8 @@ def main() -> None:
     models["G ×3 (seeds 0–2)"] = [ind[k] for k in range(3)]
     models["independent K=7"] = list(ind.values())
     for arm in args.arms:
-        members = [es.pred_dir(args.run / arm, d, f"seed_0_member{m}") for m in range(es.SPLIT_ARMS[arm])]
-        models[arm] = [es.pred_dir(args.run / arm, d, "seed_0")]
+        members = [es.pred_dir(args.run / arm, d, es.split_name(arm, m)) for m in range(es.SPLIT_ARMS[arm])]
+        models[arm] = [es.pred_dir(args.run / arm, d, es.split_name(arm))]
         models |= {f"{arm} member {m}": [p] for m, p in enumerate(members)}
 
     cache_loaded = {}
@@ -140,7 +140,7 @@ def main() -> None:
                 subj.append({"arm": arm, "cohort": cohort, "subject_id": sid, "kappa_4stage_arm": a, "kappa_4stage_g3": b, "diff": a - b})
     for label, keys in {**{arm: [(arm, m) for m in range(es.SPLIT_ARMS[arm])] for arm in args.arms},
                         "independent G (7 seeds)": [("ind", k) for k in range(7)]}.items():
-        dirs = ([es.pred_dir(args.run / a, d, f"seed_0_member{m}") for a, m in keys] if label in args.arms
+        dirs = ([es.pred_dir(args.run / a, d, es.split_name(a, m)) for a, m in keys] if label in args.arms
                 else [ind[k] for k in range(7)])
         for ds, cohort in insight.COHORTS.items():
             ps = [np.concatenate([load(p, ds, sid)[1][(load(dirs[0], ds, sid)[0] >= 0) & (load(dirs[0], ds, sid)[0] < 4)].argmax(1)
