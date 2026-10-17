@@ -50,6 +50,7 @@ BALANCED_ONLY_KEYS = (
     "distill_from",
     "joint_members",
     "member_loss_weight",
+    "member_batch_split",
     "role_loss_weight",
     "max_train_seconds",
     "fit_state_path",
@@ -115,6 +116,10 @@ class TrainingConfig:
     # Joint fits: the weight β of each member's own loss beside the loss of the mean
     # (arcasleep_bidoze.joint.JointEnsemble); 0 trains the mean alone.
     member_loss_weight: float = 0.0
+    # Joint fits: each batch of joint_members * batch_size rows is split into joint_members
+    # groups of batch_size rows and member m trains on group m alone
+    # (arcasleep_bidoze.joint.SplitBatchEnsemble); the eval output is the mean of all members.
+    member_batch_split: bool = False
     # The roles architecture: the weight of the three branches' own binary losses.
     role_loss_weight: float = 0.0
     # A wall-clock cap on each fit, in seconds; at the cap the fit keeps its best eval κ.
@@ -211,6 +216,9 @@ class TrainingConfig:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
         if self.joint_members > 1 and (self.init_weights or self.distill_from):
             raise ValueError("training.json: joint_members > 1 starts from random weights and trains on labels")
+
+        if self.member_batch_split and (self.joint_members < 2 or self.member_loss_weight != 0.0):
+            raise ValueError("training.json: member_batch_split needs joint_members > 1 and member_loss_weight 0")
 
     @property
     def patience(self) -> Patience:
@@ -395,7 +403,15 @@ def _train_fold_balanced(
         soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
         print(f"  distilling the mean output of the teachers in {training.distill_from}")
 
-    if training.joint_members > 1:
+    fit_batch_size = training.batch_size
+    if training.member_batch_split:
+        from arcasleep_bidoze.joint import SplitBatchEnsemble
+
+        model = SplitBatchEnsemble(config.model, training.joint_members)
+        fit_batch_size = training.batch_size * training.joint_members
+        print(f"  training {training.joint_members} networks, each on its own {training.batch_size} rows"
+              f" of every batch of {fit_batch_size}")
+    elif training.joint_members > 1:
         from arcasleep_bidoze.joint import JointEnsemble
 
         model = JointEnsemble(config.model, training.joint_members, training.member_loss_weight)
@@ -416,7 +432,7 @@ def _train_fold_balanced(
         y_fit,
         X_eval,
         y_eval,
-        batch_size=training.batch_size,
+        batch_size=fit_batch_size,
         initial_lr=training.lr,
         weight_decay=training.weight_decay,
         balance_beta=training.balance_beta,

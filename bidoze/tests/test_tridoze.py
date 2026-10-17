@@ -100,3 +100,71 @@ def test_a_capped_fit_resumed_from_its_state_matches_an_uninterrupted_fit(make, 
     assert h_split["lr"] == h_whole["lr"]
     for a, b in zip(jax.tree_util.tree_leaves(whole.params), jax.tree_util.tree_leaves(second.params)):
         np.testing.assert_allclose(np.asarray(a), np.asarray(b), atol=1e-5)
+
+
+def split_batch_inputs(members: int, per_member: int):
+    rng = np.random.default_rng(5)
+    x = np.stack([recording(rng, 60, T) for _ in range(members * per_member)])
+    y = rng.integers(0, 4, (members * per_member, T)).astype(np.int32)
+    mask = np.ones((members * per_member, T), dtype=bool)
+    return jnp.asarray(x), jnp.asarray(mask), jnp.asarray(y)
+
+
+def test_a_split_batch_member_gets_gradient_from_its_own_group_only():
+    from arcasleep_bidoze.joint import SplitBatchEnsemble
+
+    members, b = 3, 2
+    model = SplitBatchEnsemble(small_config(), members)
+    model._ensure_built((T, F + 1, C), seed=0)
+    x, mask, y = split_batch_inputs(members, b)
+    key = jax.random.PRNGKey(0)
+
+    def grads(x_in):
+        return jax.grad(lambda p: model._balanced_loss(p, x_in, mask, y, key, 5, 0.999))(model.params)
+
+    g0 = grads(x)
+    x_changed = x.at[b:2 * b].add(1.0)  # group 1 only
+    g1 = grads(x_changed)
+    for m, same in [(0, True), (1, False), (2, True)]:
+        a = jax.tree_util.tree_leaves(jax.tree_util.tree_map(lambda leaf: leaf[m], g0))
+        c = jax.tree_util.tree_leaves(jax.tree_util.tree_map(lambda leaf: leaf[m], g1))
+        equal = all(np.allclose(u, v, atol=1e-7) for u, v in zip(a, c))
+        assert equal == same
+
+
+def test_a_split_batch_ensemble_outputs_the_mean_and_saves_each_member(tmp_path):
+    from arcasleep_bidoze.joint import SplitBatchEnsemble
+
+    model = SplitBatchEnsemble(small_config(), 3)
+    model._ensure_built((T, F + 1, C), seed=0)
+    x, mask, _ = split_batch_inputs(3, 1)
+    out = model._apply(model.params, x, mask, train=False)
+    assert out.shape == (3, T, 5)
+    model.savez(tmp_path / "model.pisces")
+    assert len(list(tmp_path.glob("model_member*.pisces"))) == 3
+    with pytest.raises(NotImplementedError):
+        model._balanced_loss(model.params, x, mask, mask.astype(jnp.int32), jax.random.PRNGKey(0), 5, 0.99,
+                             weights=jnp.ones(3))
+
+
+def test_a_split_batch_fit_runs():
+    from arcasleep.training.balanced import Patience
+    from arcasleep_bidoze.joint import SplitBatchEnsemble
+
+    model = SplitBatchEnsemble(small_config(), 3)
+    x, _, y = split_batch_inputs(3, 2)
+    x, y = np.asarray(x), np.asarray(y)
+    model.fit_balanced(
+        x, y, x, y, batch_size=6, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
+        patience=Patience(lr_drop=10, early_stop=20, unit="steps"), max_epochs=1, fit_seed=0,
+    )
+
+
+def test_training_config_accepts_member_batch_split():
+    from arcasleep_bidoze.training import TrainingConfig
+    from test_balanced_recipe import BALANCED_TRAINING
+
+    cfg = TrainingConfig.from_dict({**BALANCED_TRAINING, "joint_members": 7, "member_batch_split": True})
+    assert cfg.member_batch_split
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "member_batch_split": True})

@@ -104,3 +104,34 @@ class JointEnsemble(BiDozeNetModel):
         """One BiDoze checkpoint per member: ``<stem>_member<m>.pisces`` beside ``filepath``."""
         for member, path in zip(self.member_models(), self.member_paths(filepath), strict=True):
             member.savez(path)
+
+
+class SplitBatchEnsemble(JointEnsemble):
+    """Internal bagging: a batch of ``members * b`` rows is split into ``members`` consecutive
+    groups of ``b`` rows, and member m trains on group m alone with its own class-balanced loss.
+    The batch rows are a random draw, so the groups are a random split. The loss is the mean of
+    the members' losses; no loss is applied to the mean output. ``_apply`` (evaluation and
+    prediction) is the mean of all members on the full input."""
+
+    def __init__(self, config: BiDozeNetConfig, members: int):
+        super().__init__(config, members, 0.0)
+
+    def _balanced_loss(self, params, x, mask, targets, key, output_classes, beta, weights=None):
+        if weights is not None:
+            raise NotImplementedError("a split-batch ensemble does not use epoch weights")
+        rows = x.shape[0]
+        if rows % self.members:
+            raise ValueError("the batch size must be a multiple of the number of members")
+
+        def split(a):
+            return a.reshape(self.members, rows // self.members, *a.shape[1:])
+
+        single = BiDozeNetModel._apply
+        keys = jax.random.split(key, self.members)
+
+        def member_loss(p, xg, mg, tg, k):
+            log_proba = jax.nn.log_softmax(single(self, p, xg, mg, train=True, key=k), axis=-1)
+            return balanced_cross_entropy(log_proba, tg, output_classes, beta)
+
+        losses = jax.vmap(member_loss)(params, split(x), split(mask), split(targets), keys)
+        return jnp.mean(losses)
