@@ -18,7 +18,8 @@ import pandas as pd
 LABELS = {"independent_x3": "Independent ×3", "independent_seed0": "Independent seed 0",
           "independent_seed1": "Independent seed 1", "independent_seed2": "Independent seed 2",
           "tridoze_j": "T1 TriDoze-J", "tridoze_j_split": "T1 TriDoze-J, refit not capped",
-          "tridoze_r": "T2 TriDoze-R", "bidoze_xl": "T3 BiDoze-XL", "bidoze_g": "Control BiDoze-G"}
+          "tridoze_r": "T2 TriDoze-R", "bidoze_xl": "T3 BiDoze-XL", "bidoze_g": "Control BiDoze-G",
+          "tridoze_j_b025": "T1 β 0.25", "bidoze_g_x3": "BiDoze-G ×3", "bidoze_g_bag_x3": "Bagged G ×3"}
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 
 

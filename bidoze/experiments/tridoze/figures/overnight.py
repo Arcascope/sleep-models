@@ -21,7 +21,8 @@ import pandas as pd  # noqa: E402
 
 RUN = Path(__file__).resolve().parents[3] / "results/tridoze-2026-10-16"
 STAGES = ["wake", "light", "deep", "rem"]
-DISPLAY = {"bidoze_g": "BiDoze-G\nseed 0"}
+DISPLAY = {"bidoze_g": "BiDoze-G\nseed 0", "independent ×3 stacked": "Stacked\nmembers",
+           "independent ×3 stacked+movement": "Stacked\n+ movement", "independent ×3 stacked adults": "Stacked\nadults only"}
 STAGE_NAMES = {"wake": "Wake", "light": "Light", "deep": "Deep", "rem": "REM"}
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 COLORS = {"independent ×3": "#555555", "BiDoze-G ×3": "#1f77b4", "T1 β 0.5": "#d62728", "T1 β 0.25": "#ff9896",
@@ -204,8 +205,28 @@ def second_member(run: Path, out: Path) -> None:
     plt.close(fig)
 
 
-def member_vs_ensemble(run: Path, out: Path) -> None:
-    t = pd.read_csv(run / "analysis/full-test/member_vs_ensemble.csv")
+def member_vs_ensemble_table(draws: pd.DataFrame) -> pd.DataFrame:
+    """Per ensemble, draw and cohort: the members' mean κ 4-stage alone, the best member's, the
+    ensemble's (mean output, release decoding) and the gain of the ensemble over the members' mean."""
+    k = draws[draws.metric == "kappa_4stage"]
+    rows = []
+    for e in COLORS:
+        members = ([f"independent seed {s}" for s in range(3)] if e == "independent ×3"
+                   else [f"{e} member {m}" for m in range(3)])
+        for (d, cohort), g in k.groupby(["draw", "cohort"]):
+            v = g.set_index("model")["mean"]
+            if e not in v or not all(m in v for m in members):
+                continue
+            rows.append({"ensemble": e, "draw": d, "cohort": cohort, "members": v[members].mean(),
+                         "best_member": v[members].max(), "ensemble_kappa": v[e],
+                         "gain": v[e] - v[members].mean()})
+    return pd.DataFrame(rows)
+
+
+def member_vs_ensemble(run: Path, out: Path, draws_csv: Path | None = None) -> None:
+    draws_csv = draws_csv or run / "analysis/full-test/draws.csv"
+    t = member_vs_ensemble_table(pd.read_csv(draws_csv))
+    t.to_csv(draws_csv.parent / "member_vs_ensemble.csv", index=False)
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
     for ax, cohort in zip(axes, COHORTS):
         c = t[t.cohort == cohort]
@@ -239,7 +260,7 @@ def main() -> None:
     jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights, "second": second_member, "members": member_vs_ensemble}
     for name, job in jobs.items():
         if args.only is None or name in args.only:
-            job(args.run, args.figures)
+            job(args.run, args.figures, args.draws_csv) if name == "members" else job(args.run, args.figures)
     if args.models:
         kappa_diffs(args.run, args.figures, args.models, args.name, args.draws_csv)
 
