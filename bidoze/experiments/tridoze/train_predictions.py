@@ -34,7 +34,8 @@ CACHE_NAME = "12Hz_log_PSD_aligned"
 def training_split(run: Path, d: int, eval_fraction: float = 0.3, split_seed: int = 0):
     cv = json.loads((run / f"setup/cv/draw{d}.json").read_text())
     cached = discover_cached_subjects(cv["train_sets"], run / f"setup/cache/draw{d}" / CACHE_NAME)
-    refs = [s.ref for subjects in cached.values() for s in subjects]
+    # Training splits the fold's sorted subject list; split_train_eval's split depends on the order.
+    refs = sorted(s.ref for subjects in cached.values() for s in subjects)
     fit_refs, eval_refs = split_train_eval(refs, eval_fraction, split_seed)
     return cached, fit_refs, eval_refs
 
