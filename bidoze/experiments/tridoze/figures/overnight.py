@@ -23,7 +23,8 @@ RUN = Path(__file__).resolve().parents[3] / "results/tridoze-2026-10-16"
 STAGES = ["wake", "light", "deep", "rem"]
 DISPLAY = {"bidoze_g": "BiDoze-G\nseed 0", "independent ×3 stacked": "Stacked\nmembers",
            "independent ×3 stacked+movement": "Stacked\n+ movement", "independent ×3 stacked adults": "Stacked\nadults only",
-           **{f"Boosted G ×3 member {k}": f"Boosted\nmember {k}" for k in range(3)}}
+           "Boosted G ×3 member 0": "Member 0\n(BiDoze-G\nseed 0)",
+           **{f"Boosted G ×3 member {k}": f"Boosted\nmember {k}" for k in (1, 2)}}
 STAGE_NAMES = {"wake": "Wake", "light": "Light", "deep": "Deep", "rem": "REM"}
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 COLORS = {"independent ×3": "#555555", "BiDoze-G ×3": "#1f77b4", "T1 β 0.5": "#d62728", "T1 β 0.25": "#ff9896",
