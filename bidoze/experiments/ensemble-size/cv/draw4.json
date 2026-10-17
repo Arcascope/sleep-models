@@ -1,0 +1,14 @@
+{
+  "mode": "transfer",
+  "train_sets": [
+    "weaverDraw",
+    "trainSleepAccel",
+    "trainClinical"
+  ],
+  "test_sets": [
+    "testSleepAccel",
+    "testClinical"
+  ],
+  "validation_sets": [],
+  "fold_label": "draw4"
+}
