@@ -75,6 +75,26 @@ def half_width(x) -> float:
     return float(stats.t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))) if len(x) > 1 else np.nan
 
 
+def score_subjects(logger, divisor: np.ndarray, subjects: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]]) -> dict[str, dict[str, float]]:
+    """Cohort means of the metrics for ``{test set: {subject id: (labels, 5-way probabilities)}}``, decoded as the release decodes."""
+    result = {}
+    for ds, cohort in insight.COHORTS.items():
+        per = []
+        for y, p5 in subjects[ds].values():
+            calls = evaluate.hybrid_calls(p5, p5, divisor)
+            m = evaluate.subject_metrics(logger, y, p5, calls)
+            scored = (y >= 0) & (y < GAP)
+            mins = evaluate.sleep_minutes(y[scored], calls[scored])
+            tst = mins["pred_tst_minutes"] - mins["psg_tst_minutes"]
+            waso = mins["pred_waso_minutes"] - mins["psg_waso_minutes"]
+            per.append({**{k: m[k] for k in METRICS[:4]}, "tst_bias_minutes": tst, "tst_mae_minutes": abs(tst),
+                        "waso_bias_minutes": waso, "waso_mae_minutes": abs(waso)})
+        mean = pd.DataFrame(per).mean().to_dict()
+        mean[WS95] = 100 * evaluate.wake_specificity_at(subjects[ds], 0.95)
+        result[cohort] = mean
+    return result
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, default=evaluate.RESULTS / "ensemble-size-2026-10-17")
@@ -130,25 +150,12 @@ def main() -> None:
             return loaded[(p, ds, sid)]
 
         def score(dirs: list[Path]) -> dict[str, dict[str, float]]:
-            result = {}
-            for ds, cohort in insight.COHORTS.items():
-                per, subjects = [], {}
+            subjects = {ds: {} for ds in insight.COHORTS}
+            for ds in insight.COHORTS:
                 for sid in draws[name][ds]:
                     ls = [get(p, ds, sid) for p in dirs]
-                    y, p5 = ls[0][0], np.mean([q for _, q in ls], axis=0)
-                    calls = evaluate.hybrid_calls(p5, p5, divisor)
-                    m = evaluate.subject_metrics(logger, y, p5, calls)
-                    scored = (y >= 0) & (y < GAP)
-                    mins = evaluate.sleep_minutes(y[scored], calls[scored])
-                    tst = mins["pred_tst_minutes"] - mins["psg_tst_minutes"]
-                    waso = mins["pred_waso_minutes"] - mins["psg_waso_minutes"]
-                    per.append({**{k: m[k] for k in METRICS[:4]}, "tst_bias_minutes": tst, "tst_mae_minutes": abs(tst),
-                                "waso_bias_minutes": waso, "waso_mae_minutes": abs(waso)})
-                    subjects[sid] = (y, p5)
-                mean = pd.DataFrame(per).mean().to_dict()
-                mean[WS95] = 100 * evaluate.wake_specificity_at(subjects, 0.95)
-                result[cohort] = mean
-            return result
+                    subjects[ds][sid] = (ls[0][0], np.mean([q for _, q in ls], axis=0))
+            return score_subjects(logger, divisor, subjects)
 
         for fam, (have, ens) in groups.items():
             idx = sorted(have)
