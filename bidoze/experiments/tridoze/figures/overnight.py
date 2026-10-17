@@ -21,6 +21,7 @@ import pandas as pd  # noqa: E402
 
 RUN = Path(__file__).resolve().parents[3] / "results/tridoze-2026-10-16"
 STAGES = ["wake", "light", "deep", "rem"]
+DISPLAY = {"bidoze_g": "BiDoze-G\nseed 0"}
 STAGE_NAMES = {"wake": "Wake", "light": "Light", "deep": "Deep", "rem": "REM"}
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 COLORS = {"independent ×3": "#555555", "BiDoze-G ×3": "#1f77b4", "T1 β 0.5": "#d62728", "T1 β 0.25": "#ff9896",
@@ -120,7 +121,8 @@ def kappa_diffs(run: Path, out: Path, models: list[str], name: str, draws_csv: P
                     half = 2.776 * diff.std(ddof=1) / np.sqrt(len(diff)) if len(diff) == 5 else np.nan
                     ax.errorbar(i + 0.25, diff.mean(), yerr=half, fmt="_", color="black", capsize=3)
             ax.axhline(0, color="#999999", lw=0.8)
-            ax.set_xticks(range(len(shown)), [m.replace("independent ×3 ", "ind. ×3\n").replace("G ×3 ", "G ×3\n") for m in shown], fontsize=7)
+            ax.set_xticks(range(len(shown)), [DISPLAY.get(m, m).replace(" member ", "\nmember ").replace("independent ×3 ", "ind. ×3\n")
+                                              for m in shown], fontsize=7)
             ax.set_title(f"{cohort}: {title}", fontsize=9)
             ax.spines[["top", "right"]].set_visible(False)
     axes[0, 0].set_ylabel("Model − independent ×3")
@@ -134,7 +136,8 @@ def boost_weights(run: Path, out: Path) -> None:
     rows = []
     for k in (1, 2):
         for d in range(5):
-            p = run / f"bidoze_g_boost{k}/draw{d}/epoch_weights.json"
+            p = run / f"bidoze_g_boost{k}r/draw{d}/epoch_weights.json"
+            p = p if p.exists() else run / f"bidoze_g_boost{k}/draw{d}/epoch_weights.json"
             if p.exists():
                 s = json.loads(p.read_text())
                 rows.append({"member": k, "draw": d, **{f"w_{x}": s["stage_weight_share"][x] for x in STAGES},
@@ -171,6 +174,30 @@ def boost_weights(run: Path, out: Path) -> None:
     plt.close(fig)
 
 
+def second_member(run: Path, out: Path) -> None:
+    df = pd.read_csv(run / "analysis/iter2-boost/second_member.csv")
+    df = df[~df.pair.str.startswith("BiDoze-G")]
+    df["pair"] = df.pair.str.replace("independent: seed . given seed 0", "independent seed 1 or 2", regex=True)
+    groups = ["second right | first wrong", "second right | first right", "both wrong"]
+    labels = ["Right where\nmember 0 is wrong", "Right where\nmember 0 is right", "Both wrong\n(share of all epochs)"]
+    g = 100 * df.groupby("pair")[groups].mean()
+    fig, ax = plt.subplots(figsize=(7, 3.2))
+    colors = {"boosted: member 1 given member 0": "#9467bd", "independent seed 1 or 2": "#555555"}
+    names = {"boosted: member 1 given member 0": "Boosted member 1", "independent seed 1 or 2": "Independent seed 1 or 2"}
+    for i, (pair, row) in enumerate(g.iterrows()):
+        x = np.arange(len(groups)) + (i - 0.5) * 0.38
+        ax.bar(x, row[groups], 0.38, color=colors[pair], label=names[pair])
+        for xi, v in zip(x, row[groups]):
+            ax.text(xi, v + 1, f"{v:.1f}", ha="center", fontsize=8)
+    ax.set_xticks(np.arange(len(groups)), labels)
+    ax.set_ylabel("% of fit epochs")
+    ax.legend(frameon=False, fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out / "tridoze-overnight-second-member.png", dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("figures", type=Path)
@@ -181,7 +208,7 @@ def main() -> None:
     ap.add_argument("--draws-csv", type=Path, default=None, help="evaluate.py draws.csv (default analysis/full-test)")
     args = ap.parse_args()
     args.figures.mkdir(parents=True, exist_ok=True)
-    jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights}
+    jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights, "second": second_member}
     for name, job in jobs.items():
         if args.only is None or name in args.only:
             job(args.run, args.figures)
