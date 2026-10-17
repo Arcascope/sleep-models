@@ -73,14 +73,14 @@ class JointEnsemble(BiDozeNetModel):
             logits = jax.vmap(lambda p, k: single(self, p, x, mask, train=train, key=k))(params, keys)
         return jax.nn.log_softmax(logits, axis=-1)
 
-    def _balanced_loss(self, params, x, mask, targets, key, output_classes, beta):
+    def _balanced_loss(self, params, x, mask, targets, key, output_classes, beta, weights=None):
         log_proba = self._member_log_probabilities(params, x, mask, train=True, key=key)
         mean = jax.nn.logsumexp(log_proba, axis=0) - jnp.log(self.members)
-        loss = balanced_cross_entropy(mean, targets, output_classes, beta)
+        loss = balanced_cross_entropy(mean, targets, output_classes, beta, weights)
         if self.member_loss_weight == 0.0:
             return loss
         own = jnp.mean(jnp.stack(
-            [balanced_cross_entropy(log_proba[m], targets, output_classes, beta) for m in range(self.members)]
+            [balanced_cross_entropy(log_proba[m], targets, output_classes, beta, weights) for m in range(self.members)]
         ))
         return (1.0 - self.member_loss_weight) * loss + self.member_loss_weight * own
 

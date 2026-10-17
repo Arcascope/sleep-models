@@ -142,12 +142,14 @@ def balanced_cross_entropy(
     labels: jnp.ndarray,
     num_classes: int,
     beta: float,
+    weights: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Effective-number class-balanced cross-entropy (Olsen et al., eq. 1).
 
     Class counts are the batch's validly labelled epochs; labels outside
     ``0..num_classes-1`` are masked. The sum is normalised by every epoch in
-    the batch, masked ones included.
+    the batch, masked ones included. ``weights`` (the shape of ``labels``)
+    multiplies each epoch's term; the class counts stay unweighted.
     """
     valid = (labels >= 0) & (labels < num_classes)
     safe_labels = jnp.where(valid, labels, 0)
@@ -156,6 +158,8 @@ def balanced_cross_entropy(
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     ce = -jnp.take_along_axis(log_probs, safe_labels[..., None], axis=-1)[..., 0]
     weighted = class_weights[safe_labels] * ce * valid.astype(jnp.float32)
+    if weights is not None:
+        weighted = weighted * weights
     return jnp.sum(weighted) / float(labels.size)
 
 
@@ -167,7 +171,8 @@ def sample_balanced_segments(
     num_classes: int,
     frames_per_epoch: int,
     max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_rows: bool = False,
+) -> tuple[np.ndarray, ...]:
     """Pseudo-class-balanced online sampling (Olsen et al., Section II-E).
 
     Each segment draws a target stage uniformly, then draws (recording, start)
@@ -175,7 +180,8 @@ def sample_balanced_segments(
     bounds the search for a stage a short night may lack. Nights are
     ``(frames, labels)`` with ``frames_per_epoch`` frames per label. Segments
     shorter than ``segment_epochs`` are padded with absent frames and the gap
-    label.
+    label. With ``return_rows``, also returns each segment's night index and
+    start epoch, ``(n_segments, 2)``.
     """
     fpe = frames_per_epoch
     f_bins, channels = nights[0][0].shape[1:]
@@ -185,10 +191,12 @@ def sample_balanced_segments(
         dtype=np.float32,
     )
     ys = np.full((n_segments, segment_epochs), GAP_LABEL, dtype=np.int32)
+    drawn = np.zeros((n_segments, 2), dtype=np.int64)
     for i in range(n_segments):
         target_class = int(rng.integers(num_classes))
         for _ in range(max_attempts):
-            night_x, night_y = nights[int(rng.integers(len(nights)))]
+            night = int(rng.integers(len(nights)))
+            night_x, night_y = nights[night]
             start = int(rng.integers(max(night_y.shape[0] - segment_epochs, 0) + 1))
             seg_x = night_x[start * fpe : (start + segment_epochs) * fpe]
             seg_y = night_y[start : start + segment_epochs]
@@ -196,6 +204,9 @@ def sample_balanced_segments(
                 break
         xs[i, : seg_x.shape[0]] = seg_x
         ys[i, : seg_y.shape[0]] = seg_y
+        drawn[i] = night, start
+    if return_rows:
+        return xs, ys, drawn
     return xs, ys
 
 

@@ -1,7 +1,7 @@
 """The BiDoze training recipe: its ``training.json`` and one fold's fit."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -52,6 +52,8 @@ BALANCED_ONLY_KEYS = (
     "role_loss_weight",
     "max_train_seconds",
     "fit_state_path",
+    "bootstrap_seed",
+    "epoch_weights",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -116,6 +118,12 @@ class TrainingConfig:
     # Where a fit stopped by max_train_seconds saves its state, and resumes from it when the
     # file exists; the fit seed is appended to the file name.
     fit_state_path: str | None = None
+    # Bagging: the fit trains on a bootstrap resample of its fit recordings (drawn with
+    # replacement, as many as there are), seeded by this; the early-stopping share is unchanged.
+    bootstrap_seed: int | None = None
+    # Boosting: an .npz of per-epoch loss weights keyed "<dataset>/<subject_id>", one array of
+    # y_length per fit recording (arcasleep_bidoze.boosting); a recording it lacks weighs 1.
+    epoch_weights: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -361,6 +369,10 @@ def _train_fold_balanced(
             f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
             f"(fraction {training.eval_fraction}, seed {split_seed})"
         )
+    if training.bootstrap_seed is not None:
+        fit_refs = bootstrap_recordings(fit_refs, training.bootstrap_seed)
+        print(f"  bootstrap (seed {training.bootstrap_seed}): {len(fit_refs)} draws, "
+              f"{len(set(fit_refs))} distinct recordings")
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
     X_fit, y_fit = assemble_batch(
@@ -390,6 +402,10 @@ def _train_fold_balanced(
     if training.init_weights is not None:
         _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")
+    train_weights = None
+    if training.epoch_weights is not None:
+        train_weights = load_epoch_weights(Path(training.epoch_weights), fit_refs, y_fit.shape[1])
+        print(f"  epoch weights from {training.epoch_weights}")
     history = model.fit_balanced(
         X_fit,
         y_fit,
@@ -406,9 +422,29 @@ def _train_fold_balanced(
         score_start=training.init_weights is not None,
         max_train_seconds=training.max_train_seconds,
         fit_state_path=_seeded_state_path(training.fit_state_path, fit_seed),
+        train_weights=train_weights,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
+
+
+def bootstrap_recordings(refs: Sequence[SubjectRef], seed: int) -> list[SubjectRef]:
+    """A bootstrap resample of ``refs`` by recording: ``len(refs)`` draws with replacement."""
+    refs = sorted(refs)
+    drawn = np.random.default_rng(seed).integers(len(refs), size=len(refs))
+    return [refs[i] for i in drawn]
+
+
+def load_epoch_weights(path: Path, refs: Sequence[SubjectRef], y_length: int) -> np.ndarray:
+    """``(len(refs), y_length)`` loss weights from an .npz keyed ``<dataset>/<subject_id>``."""
+    out = np.ones((len(refs), y_length), dtype=np.float32)
+    with np.load(path) as stored:
+        for i, ref in enumerate(refs):
+            key = f"{ref.dataset_name}/{ref.subject_id}"
+            if key in stored:
+                w = stored[key][:y_length]
+                out[i, : w.shape[0]] = w
+    return out
 
 
 def _seeded_state_path(path: str | None, fit_seed: int) -> Path | None:

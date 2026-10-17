@@ -2083,16 +2083,18 @@ class BiDozeNetModel(CVModel):
         key: jax.Array,
         output_classes: int,
         beta: float,
+        weights: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         """The training loss of the balanced recipe: class-balanced cross-entropy on the output,
-        plus ``role_loss_weight`` times the role branches' own losses for the roles architecture."""
+        plus ``role_loss_weight`` times the role branches' own losses for the roles architecture.
+        ``weights`` ``(B, T)`` multiplies each epoch's term of the output's loss."""
         if self.config.architecture != "roles":
             logits = self._apply(params, x, mask, train=True, key=key)
-            return balanced_cross_entropy(logits, targets, output_classes, beta)
+            return balanced_cross_entropy(logits, targets, output_classes, beta, weights)
         out = self.module.apply(
             {"params": params}, x, mask, train=True, rngs={"dropout": key, "augment": key}, return_branches=True
         )
-        loss = balanced_cross_entropy(out["log_probabilities"], targets, output_classes, beta)
+        loss = balanced_cross_entropy(out["log_probabilities"], targets, output_classes, beta, weights)
         if self.role_loss_weight > 0:
             loss = loss + self.role_loss_weight * role_branch_loss(out["role_logits"], targets, beta)
         return loss
@@ -3371,6 +3373,7 @@ class BiDozeNetModel(CVModel):
         score_start: bool = False,
         max_train_seconds: float | None = None,
         fit_state_path: str | os.PathLike | None = None,
+        train_weights: np.ndarray | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3404,6 +3407,9 @@ class BiDozeNetModel(CVModel):
 
         With ``gap_from_row`` the gap output is set from the input, so gap and padding
         epochs are left out of the loss.
+
+        With ``train_weights`` ``(B, T)``, each training epoch's term of the loss is multiplied
+        by its weight; the class counts of the balanced loss stay unweighted.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3438,6 +3444,22 @@ class BiDozeNetModel(CVModel):
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), opt_state, loss
+
+        @jax.jit
+        def weighted_step(params, opt_state, xb, mb, yb, wb, key):
+            def loss_fn(p):
+                return balanced_loss(p, xb, mb, yb, key, output_classes, balance_beta, wb)
+
+            loss, grads = jax.value_and_grad(loss_fn)(params)
+            updates, opt_state = tx.update(grads, opt_state, params)
+            return optax.apply_updates(params, updates), opt_state, loss
+
+        if train_weights is not None:
+            train_weights = np.asarray(train_weights, dtype=np.float32)
+            if train_weights.shape != train_y.shape:
+                raise ValueError(f"train_weights must be {train_y.shape}, got {train_weights.shape}")
+            if soft_targets is not None:
+                raise ValueError("train_weights apply to the balanced loss, not to distillation")
 
         @jax.jit
         def distill_step(params, opt_state, xb, mb, qb, key):
@@ -3529,7 +3551,7 @@ class BiDozeNetModel(CVModel):
                 step_fn = distill_step
             else:
                 # Rows are already the fit length, so each draw is a whole row.
-                xs, ys = sample_balanced_segments(
+                xs, ys, drawn = sample_balanced_segments(
                     rows,
                     rng,
                     n_segments=steps_per_epoch * batch_size,
@@ -3537,15 +3559,26 @@ class BiDozeNetModel(CVModel):
                     num_classes=num_classes,
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
+                    return_rows=True,
                 )
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
                 step_fn = train_step
+                if train_weights is not None:
+                    # Each segment is a whole row (start 0), so its weights are the row's.
+                    ws = train_weights[drawn[:, 0]]
             epoch_loss = 0.0
             for step in range(steps_per_epoch):
                 batch = slice(step * batch_size, (step + 1) * batch_size)
                 rng_key, step_key = jax.random.split(rng_key)
+                if train_weights is not None and soft_targets is None:
+                    params, opt_state, loss = weighted_step(
+                        params, opt_state, jnp.asarray(xs[batch]), jnp.asarray(ms[batch]),
+                        jnp.asarray(targets[batch]), jnp.asarray(ws[batch]), step_key,
+                    )
+                    epoch_loss += float(loss)
+                    continue
                 params, opt_state, loss = step_fn(
                     params,
                     opt_state,

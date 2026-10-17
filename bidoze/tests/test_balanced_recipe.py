@@ -378,3 +378,61 @@ def test_a_joint_ensemble_outputs_its_members_mean_and_starts_from_their_seeds(t
 def test_joint_members_start_from_random_weights() -> None:
     with pytest.raises(ValueError):
         TrainingConfig.from_dict({**BALANCED_TRAINING, "joint_members": 2, "init_weights": "release"})
+
+
+def _run_with_training(tmp_path: Path, training: dict, model_overrides: dict | None = None) -> Path:
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
+    _configs(tmp_path / "config", model_overrides)
+    (tmp_path / "config" / "training.json").write_text(json.dumps({**BALANCED_TRAINING, **training}))
+    config = RunConfig.from_paths(
+        family=BIDOZE,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    results = tmp_path / "results" / "training"
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="test")
+    return results
+
+
+def test_a_bootstrap_fit_trains_and_saves_a_checkpoint(tmp_path: Path) -> None:
+    results = _run_with_training(tmp_path, {"bootstrap_seed": 3})
+    (checkpoint,) = (results / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+@pytest.mark.parametrize("training", [{}, {"joint_members": 2, "member_loss_weight": 0.5}])
+def test_a_fit_with_epoch_weights_trains_and_saves_a_checkpoint(tmp_path: Path, training: dict) -> None:
+    weights = tmp_path / "weights.npz"
+    np.savez(weights, **{f"CohortA/a{i}": np.linspace(0.5, 2.0, 12) for i in range(3)})
+    results = _run_with_training(tmp_path, {"epoch_weights": str(weights), **training}, {"gap_from_row": True})
+    assert list((results / "model_outputs").glob("*.pisces"))
+
+
+def test_a_bootstrap_resample_draws_its_size_from_the_recordings() -> None:
+    from pisces_lite.cv import SubjectRef
+
+    from arcasleep_bidoze.training import bootstrap_recordings
+
+    refs = [SubjectRef("CohortA", f"a{i}") for i in range(20)]
+    drawn = bootstrap_recordings(refs, 7)
+    assert len(drawn) == len(refs)
+    assert set(drawn) <= set(refs)
+    assert drawn == bootstrap_recordings(list(reversed(refs)), 7)
+
+
+def test_unit_epoch_weights_leave_the_balanced_loss_unchanged() -> None:
+    import jax.numpy as jnp
+
+    from arcasleep.training.balanced import balanced_cross_entropy
+
+    rng = np.random.default_rng(0)
+    logits = jnp.asarray(rng.normal(size=(2, 10, 5)))
+    labels = jnp.asarray(rng.integers(-1, 5, size=(2, 10)))
+    plain = balanced_cross_entropy(logits, labels, 5, 0.999)
+    weighted = balanced_cross_entropy(logits, labels, 5, 0.999, jnp.ones((2, 10)))
+    assert float(plain) == pytest.approx(float(weighted))
