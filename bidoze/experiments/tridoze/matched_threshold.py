@@ -24,9 +24,11 @@ Writes to ``<run>/analysis/matched-threshold/``:
 - draws.csv      the mean over each draw's test subjects;
 - summary.csv    per operating point, model, cohort and metric: mean over draws ± 95% t half-width,
                  and the difference to independent ×3 at the same operating point (mean ± 95% t
-                 half-width, draws higher).
+                 half-width, draws higher);
+- matched-threshold.png  ``--figure-model`` (default BiDoze-G ×3) minus independent ×3 per draw at
+                 each operating point, by cohort.
 
-Usage: python matched_threshold.py [--run RUN] [--draws 0 1 2 3 4] [--ensemble label ...]
+Usage: python matched_threshold.py [--run RUN] [--draws 0 1 2 3 4] [--ensemble label ...] [--figure-model LABEL]
 """
 from __future__ import annotations
 
@@ -36,8 +38,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import matplotlib
 import pandas as pd
 from scipy import stats
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -99,6 +105,33 @@ def half_width(x: pd.Series) -> float:
     return float(stats.t.ppf(0.975, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))) if len(x) > 1 else np.nan
 
 
+SHOWN = {"kappa_sleep_wake": ("κ sleep/wake", 1), "sleep_sensitivity": ("Sleep sensitivity (pts)", 100),
+         "wake_specificity": ("Wake specificity (pts)", 100), "tst_abs_error_minutes": ("TST MAE (min)", 1),
+         "waso_abs_error_minutes": ("WASO MAE (min)", 1)}
+
+
+def figure(draw_table: pd.DataFrame, model: str, path: Path) -> None:
+    points = ["decoded", *SETS]
+    cohorts = list(insight.COHORTS.values())
+    fig, axes = plt.subplots(len(cohorts), len(SHOWN), figsize=(3.0 * len(SHOWN), 3.2 * len(cohorts)), squeeze=False)
+    for r, cohort in enumerate(cohorts):
+        for c, (metric, (title, scale)) in enumerate(SHOWN.items()):
+            ax = axes[r, c]
+            for x, point in enumerate(points):
+                t = draw_table[(draw_table.point == point) & (draw_table.cohort == cohort)].set_index(["model", "draw"])[metric]
+                diffs = scale * (t.loc[model] - t.loc[BASE]).dropna()
+                ax.scatter(np.full(len(diffs), x) + np.linspace(-0.12, 0.12, len(diffs)), diffs, s=14, color="#4c72b0", alpha=0.7)
+                ax.errorbar(x + 0.25, diffs.mean(), yerr=half_width(diffs), fmt="o", color="black", capsize=3)
+            ax.axhline(0, color="grey", lw=0.8)
+            ax.set_xticks(range(len(points)), ["Decoded", "Eval share", "Eval adults"], fontsize=8)
+            ax.set_title(title if r == 0 else "", fontsize=10)
+            if c == 0:
+                ax.set_ylabel(f"{cohort}\n{model} − {BASE}", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, default=insight.RUN)
@@ -106,6 +139,7 @@ def main() -> None:
     ap.add_argument("--labels-root", type=Path, default=evaluate.LABELS)
     ap.add_argument("--draws", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     ap.add_argument("--ensemble", nargs="+", default=None)
+    ap.add_argument("--figure-model", default="BiDoze-G ×3")
     args = ap.parse_args()
     out = args.run / "analysis/matched-threshold"
     out.mkdir(parents=True, exist_ok=True)
@@ -189,6 +223,8 @@ def main() -> None:
                         **{f"diff_draw{d}": v for d, v in diffs.items()}}
             summary.append(row)
     pd.DataFrame(summary).to_csv(out / "summary.csv", index=False)
+    if args.figure_model in set(draw_table.model):
+        figure(draw_table, args.figure_model, out / "matched-threshold.png")
     print(f"wrote {out}")
 
 
