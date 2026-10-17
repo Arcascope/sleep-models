@@ -58,12 +58,23 @@ VS = ["kappa_4stage", "kappa_sleep_wake", WS95]
 REFERENCE = "BiDoze-G ×3"
 SPECIAL = {"independent": (0, 1, 2), "bagged": (0, 1, 2)}
 LABEL = {"independent": REFERENCE, "bagged": "Bagged G ×3"}
-SPLIT_ARMS = {"split7_1x": 7, "split7_3x": 7}  # arm -> number of members
+SPLIT_ARMS = {"split7_1x": 7, "split7_1x_boot": 7, "split7_1x_half": 7, "split7_3x": 7, "split7_3x_s1": 7}  # arm -> members
+SPLIT_SEED = {"split7_3x_s1": 1}  # run seed of an arm (default 0)
+FAMILIES = {"independent": "Independent", "bagged": "Bagged", "subagged": "Subagged"}
+
+
+def split_name(arm: str, member: int | None = None) -> str:
+    """Prediction directory name of a split arm's output, or of its member."""
+    base = f"seed_{SPLIT_SEED.get(arm, 0)}"
+    return base if member is None else f"{base}_member{member}"
 
 
 def arm_label(arm: str) -> str:
-    m = re.match(r"split(\d+)_(\d+)x", arm)
-    return f"Split-batch, {m.group(1)} members, {m.group(2)}× width" if m else arm
+    m = re.match(r"split(\d+)_(\d+)x(?:_(\w+))?", arm)
+    if not m:
+        return arm
+    extra = {None: "", "boot": ", own bootstraps", "half": ", own halves"}.get(m.group(3), f", {m.group(3)}")
+    return f"Split-batch, {m.group(1)} members, {m.group(2)}× width{extra}"
 
 
 def pred_dir(arm_dir: Path, d: int, name: str) -> Path:
@@ -75,7 +86,8 @@ def family_members(run: Path, tri: Path, d: int, n: int) -> dict[str, dict[int, 
     seeds = {k: tri / ("bidoze_g" if k == 0 else f"bidoze_g_s{k}") if k < 3 else run / f"bidoze_g_s{k}" for k in range(n)}
     bags = {k: (tri if k < 3 else run) / f"bidoze_g_bag{k}" for k in range(n)}
     return {"independent": {k: pred_dir(a, d, f"seed_{k}") for k, a in seeds.items()},
-            "bagged": {k: pred_dir(a, d, f"seed_{k}") for k, a in bags.items()}}
+            "bagged": {k: pred_dir(a, d, f"seed_{k}") for k, a in bags.items()},
+            "subagged": {k: pred_dir(run / f"bidoze_g_sub{k}", d, f"seed_{k}") for k in range(n)}}
 
 
 def half_width(x) -> float:
@@ -116,6 +128,11 @@ def main() -> None:
     args = ap.parse_args()
     for spec in args.split_arm:
         SPLIT_ARMS[spec.split(":")[0]] = int(spec.split(":")[1])
+        if spec.count(":") > 1:
+            SPLIT_SEED[spec.split(":")[0]] = int(spec.split(":")[2])
+    for arm in [a for a in SPLIT_ARMS if not (args.run / a / f"draw{args.draws[0]}/predictions").exists()]:
+        print(f"skip split arm {arm}: no predictions")
+        del SPLIT_ARMS[arm]
     out = args.run / "analysis"
     out.mkdir(parents=True, exist_ok=True)
 
@@ -143,9 +160,9 @@ def main() -> None:
             groups[fam] = (have, None)
         for arm in SPLIT_ARMS:
             arm_dir = args.run / arm
-            members = {m: pred_dir(arm_dir, d, f"seed_0_member{m}") for m in range(SPLIT_ARMS[arm])}
+            members = {m: pred_dir(arm_dir, d, split_name(arm, m)) for m in range(SPLIT_ARMS[arm])}
             have = {m: p for m, p in members.items() if complete(p)}
-            ens = pred_dir(arm_dir, d, "seed_0")
+            ens = pred_dir(arm_dir, d, split_name(arm))
             if not complete(ens):
                 print(f"skip draw {d} {arm} ensemble output: predictions missing")
                 ens = None
@@ -201,8 +218,7 @@ def main() -> None:
     # difference to BiDoze-G ×3
     ref = long[(long.label == REFERENCE)].set_index(["draw", "cohort", "metric"])["value"]
     models = []
-    for fam in ("independent", "bagged"):
-        pretty = {"independent": "Independent", "bagged": "Bagged"}[fam]
+    for fam, pretty in FAMILIES.items():
         for k, combo in ((5, "0 1 2 3 4"), (7, "0 1 2 3 4 5 6")):
             g = long[(long.family == fam) & (long.kind == "subset") & (long.K == k)]
             models.append((f"{pretty} K={k}, mean over subsets", g.groupby(["draw", "cohort", "metric"])["value"].mean()))
@@ -247,7 +263,7 @@ def parameter_counts(run: Path, d: int) -> dict[str, dict[str, float]]:
     g = count(run / f"bidoze_g_s3/draw{d}/model_outputs/model_draw{d}_seed_3.pisces")
     out = {"bidoze_g": {"per_member": g, "total": g, "k_equivalent": 1.0}}
     for arm in SPLIT_ARMS:
-        per = count(run / arm / f"draw{d}/model_outputs/model_draw{d}_seed_0_member0.pisces")
+        per = count(run / arm / f"draw{d}/model_outputs/model_draw{d}_{split_name(arm, 0)}.pisces")
         out[arm] = {"per_member": per, "total": SPLIT_ARMS[arm] * per, "k_equivalent": SPLIT_ARMS[arm] * per / g}
     return out
 
@@ -301,7 +317,7 @@ def inference_seconds(run: Path, d: int) -> dict[str, float]:
     import time
     from arcasleep_bidoze.model import BiDozeNetModel
     paths = {"bidoze_g": run / f"bidoze_g_s3/draw{d}/model_outputs/model_draw{d}_seed_3.pisces",
-             **{arm: run / arm / f"draw{d}/model_outputs/model_draw{d}_seed_0_member0.pisces" for arm in SPLIT_ARMS}}
+             **{arm: run / arm / f"draw{d}/model_outputs/model_draw{d}_{split_name(arm, 0)}.pisces" for arm in SPLIT_ARMS}}
     x = np.zeros((2, 3000, 61, 2), dtype=np.float32)
     out = {}
     for name, path in paths.items():
@@ -322,7 +338,7 @@ def ensembles_table(subsets: pd.DataFrame, run: Path, tri: Path, d: int, infer: 
     train = train_seconds(run, tri, d)
     sub = subsets[subsets.draw == d]
     rows = []
-    for fam in ("independent", "bagged"):
+    for fam in FAMILIES:
         for k in KS:
             g = sub[(sub.family == fam) & (sub.kind == "subset") & (sub.K == k)]
             if g.empty:
@@ -348,8 +364,8 @@ def figure(table: pd.DataFrame, curve: pd.DataFrame, path: Path) -> None:
     metrics = [("kappa_4stage", "κ 4-stage"), ("kappa_sleep_wake", "κ sleep/wake"), (WS95, "Wake spec. at 95% sens. (%)")]
     cohorts = list(insight.COHORTS.values())
     ink, muted, grid, bg = "#1a1a19", "#6b6b66", "#e4e4e0", "#fcfcfb"
-    style = {"independent": ("#2a78d6", "Independent seeds"), "bagged": ("#eb6834", "Bagged")}
-    shapes = ["s", "D", "^", "v", "P", "X"]
+    style = {"independent": ("#2a78d6", "Independent seeds"), "bagged": ("#eb6834", "Bagged"), "subagged": ("#1baf7a", "Subagged (halves)")}
+    shapes = ["s", "^", "v", "D", "P", "X"]
     fig, axes = plt.subplots(len(cohorts), len(metrics), figsize=(13, 7.2), squeeze=False, facecolor=bg)
     for r, cohort in enumerate(cohorts):
         for c, (metric, title) in enumerate(metrics):
@@ -366,7 +382,7 @@ def figure(table: pd.DataFrame, curve: pd.DataFrame, path: Path) -> None:
             for i, arm in enumerate(SPLIT_ARMS):
                 t = table[(table.family == arm) & (table.cohort == cohort)]
                 if len(t):
-                    ax.plot(t.total_parameters, t[metric], shapes[i % len(shapes)], color="#1baf7a", ms=9, mec=bg, mew=1.5,
+                    ax.plot(t.total_parameters, t[metric], shapes[i % len(shapes)], color=ink, ms=9, mec=bg, mew=1.5,
                             ls="", label=arm_label(arm))
             ax.set_xscale("log")
             ticks = [k * table[table.family == "independent"].total_parameters.iloc[0] / table[table.family == "independent"].K.iloc[0] for k in KS]
