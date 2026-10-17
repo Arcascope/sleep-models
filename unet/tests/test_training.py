@@ -17,7 +17,7 @@ from arcasleep.data.cache import CACHE_SUFFIX, SUBJECT_SEPARATOR, load_bundles  
 from arcasleep.evaluation.run import RunIdentity, run_evaluation  # noqa: E402
 from arcasleep.models import checkpoint_family, get_family  # noqa: E402
 from arcasleep.training.config import RunConfig  # noqa: E402
-from arcasleep.training.driver import RunPaths, run_training  # noqa: E402
+from arcasleep.training.driver import FIT_EVAL_SPLITS_DIRNAME, RunPaths, run_training  # noqa: E402
 from arcasleep_unet.training import split_train_eval  # noqa: E402
 
 UNET = get_family("unet")
@@ -115,6 +115,11 @@ def test_training_then_evaluation_runs_end_to_end(tmp_path: Path) -> None:
     assert scored == {"b0", "b1"}
     (checkpoint,) = (results / "model_outputs").glob("*.pisces")
     assert checkpoint_family(checkpoint) == "unet"
+    split = json.loads((results / FIT_EVAL_SPLITS_DIRNAME / "0.json").read_text())
+    assert tuple(
+        [SubjectRef(row["dataset"], row["subject_id"]) for row in split[side]]
+        for side in ("fit", "eval")
+    ) == split_train_eval([SubjectRef("CohortA", f"a{i}") for i in range(6)], 0.3, split_seed=0)
 
     output_dir = tmp_path / "results" / "evaluation"
     run_evaluation(

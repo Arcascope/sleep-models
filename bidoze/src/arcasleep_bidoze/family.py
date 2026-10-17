@@ -46,6 +46,11 @@ class BiDozeFamily(ModelFamily):
             f"{training.deblip_adjustment_epochs} epochs @ {training.deblip_logit_weight}"
         )
 
+    def fit_eval_split(self, config, fold, split_seed):
+        from arcasleep_bidoze.training import fit_eval_split
+
+        return fit_eval_split(config, fold, split_seed)
+
     def train_fold(self, config, *, fold, fit_seed, split_seed, features, datasets):
         from arcasleep_bidoze.training import train_fold
 

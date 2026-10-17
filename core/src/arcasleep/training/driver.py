@@ -37,6 +37,8 @@ from arcasleep.training.folds import build_dataset_index, build_folds
 
 
 RULE = "=" * 80
+#: Subdirectory of a results directory holding each fold's fit/eval split.
+FIT_EVAL_SPLITS_DIRNAME = "fit_eval_splits"
 
 
 def softmax(logits: np.ndarray) -> np.ndarray:
@@ -160,6 +162,7 @@ def run_training(
 
     _snapshot_configs(config, paths.results)
     _write_json(paths.results / "config" / "split-manifest.json", split_summary)
+    _record_fit_eval_splits(config, folds, resolved_split_seed, paths.results)
 
     logger = MetricsLogger(config.metrics)
     csv_path = paths.results / f"cv_results_{config.model.num_classes}_stages.csv"
@@ -190,6 +193,28 @@ def run_training(
 
     print(f"\nResults: {paths.results}")
     return paths.results
+
+
+def _record_fit_eval_splits(
+    config: RunConfig, folds: list[Fold], split_seed: int, results: Path
+) -> None:
+    """Write each fold's fit and eval subjects to ``fit_eval_splits/<fold label>.json``.
+
+    The split does not depend on the fit seed, so one file covers every seed of a fold.
+    """
+    for fold in folds:
+        if not fold.train_subjects:
+            continue
+        split = config.family.fit_eval_split(config, fold, split_seed)
+        if split is None:
+            continue
+        _write_json(
+            results / FIT_EVAL_SPLITS_DIRNAME / f"{_fold_label(config, fold)}.json",
+            {
+                side: [{"dataset": ref.dataset_name, "subject_id": ref.subject_id} for ref in refs]
+                for side, refs in zip(("fit", "eval"), split)
+            },
+        )
 
 
 def _fold_label(config, fold: Fold) -> str:

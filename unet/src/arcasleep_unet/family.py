@@ -40,6 +40,11 @@ class UNetFamily(ModelFamily):
             f"eval_fraction={training.eval_fraction}"
         )
 
+    def fit_eval_split(self, config, fold, split_seed):
+        from arcasleep_unet.training import fit_eval_split
+
+        return fit_eval_split(config, fold, split_seed)
+
     def train_fold(self, config, *, fold, fit_seed, split_seed, features, datasets):
         from arcasleep_unet.training import train_fold
 

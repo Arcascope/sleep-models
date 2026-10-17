@@ -121,10 +121,12 @@ def split_train_eval(
 
     The split is by participant, so every recording of a participant (other
     nights, other devices, the same subject listed under several datasets)
-    lands on one side.
+    lands on one side. The participants are permuted in the order they first
+    appear in the sorted ``refs``, so the same recordings in any order give the
+    same split.
     """
     groups: dict[str, list[SubjectRef]] = {}
-    for ref in refs:
+    for ref in sorted(refs):
         groups.setdefault(participant_id(ref.subject_id), []).append(ref)
     group_refs = list(groups.values())
 

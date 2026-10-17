@@ -117,6 +117,16 @@ class ModelFamily(ABC):
         """
 
     @abstractmethod
+    def fit_eval_split(
+        self, config: RunConfig, fold: Fold, split_seed: int
+    ) -> tuple[list[SubjectRef], list[SubjectRef]] | None:
+        """The ``(fit, eval)`` subjects :meth:`train_fold` early-stops with on ``fold``.
+
+        ``None`` when the configured recipe holds no training subjects out, such
+        as BiDoze's curriculum recipe.
+        """
+
+    @abstractmethod
     def load_checkpoint(
         self, path: Path, input_shape: tuple[int, ...] | None = None
     ) -> SleepModel:

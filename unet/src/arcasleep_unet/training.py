@@ -112,6 +112,13 @@ def _check_cv(config: RunConfig) -> None:
         raise ValueError(f"cv.json: the unet recipe does not use {named}")
 
 
+def fit_eval_split(
+    config: RunConfig, fold: Fold, split_seed: int
+) -> tuple[list[SubjectRef], list[SubjectRef]]:
+    """The fit and eval subjects: a held-out share of the training participants."""
+    return split_train_eval(fold.train_subjects, config.training.eval_fraction, split_seed)
+
+
 def train_fold(
     config: RunConfig,
     *,
@@ -127,9 +134,7 @@ def train_fold(
     _check_cv(config)
     training: TrainingConfig = config.training
     model_config = config.model
-    fit_refs, eval_refs = split_train_eval(
-        fold.train_subjects, training.eval_fraction, split_seed
-    )
+    fit_refs, eval_refs = fit_eval_split(config, fold, split_seed)
     print(
         f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
         f"(fraction {training.eval_fraction}, seed {split_seed})"

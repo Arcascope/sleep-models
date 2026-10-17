@@ -10,12 +10,14 @@ import pytest
 
 pytest.importorskip("jax")
 
+from pisces_lite.cv import SubjectRef  # noqa: E402
+
 from arcasleep.data.bundle import CacheBundle  # noqa: E402
 from arcasleep.data.cache import CACHE_SUFFIX, SUBJECT_SEPARATOR  # noqa: E402
 from arcasleep.models import checkpoint_family, get_family  # noqa: E402
-from arcasleep.training.balanced import Patience  # noqa: E402
+from arcasleep.training.balanced import Patience, split_train_eval  # noqa: E402
 from arcasleep.training.config import RunConfig  # noqa: E402
-from arcasleep.training.driver import RunPaths, run_training  # noqa: E402
+from arcasleep.training.driver import FIT_EVAL_SPLITS_DIRNAME, RunPaths, run_training  # noqa: E402
 from arcasleep_bidoze.training import TrainingConfig  # noqa: E402
 
 BIDOZE = get_family("bidoze")
@@ -43,6 +45,15 @@ def _write_cache(cache_dir: Path, dataset: str, subjects: list[str], epochs: int
         CacheBundle(
             X=X, y=y, datasets=np.array([dataset]), subject_ids=np.array([subject])
         ).save_npz(cache_dir / f"{dataset}{SUBJECT_SEPARATOR}{subject}{CACHE_SUFFIX}")
+
+
+def _recorded_split(results: Path) -> tuple[list[SubjectRef], list[SubjectRef]]:
+    (path,) = (results / FIT_EVAL_SPLITS_DIRNAME).glob("*.json")
+    split = json.loads(path.read_text())
+    return tuple(
+        [SubjectRef(row["dataset"], row["subject_id"]) for row in split[side]]
+        for side in ("fit", "eval")
+    )
 
 
 def _configs(
@@ -111,6 +122,9 @@ def test_balanced_recipe_trains_and_scores_end_to_end(
     assert scored == {"b0", "b1"}
     (checkpoint,) = (results / "model_outputs").glob("*.pisces")
     assert checkpoint_family(checkpoint) == "bidoze"
+    assert _recorded_split(results) == split_train_eval(
+        [SubjectRef("CohortA", f"a{i}") for i in range(6)], 0.3, 0
+    )
 
     (fold_dir,) = (results / "predictions").iterdir()
     for subject in ("b0", "b1"):
@@ -140,7 +154,7 @@ def test_options_the_chosen_recipe_does_not_use_are_refused(overrides: dict) -> 
 def test_cv_options_the_balanced_recipe_does_not_use_are_refused(
     tmp_path: Path, cv_overrides: dict
 ) -> None:
-    from pisces_lite.cv import Fold, SubjectRef
+    from pisces_lite.cv import Fold
 
     config = _configs(tmp_path / "config", cv_overrides=cv_overrides)
     fold = Fold(
@@ -188,6 +202,10 @@ def test_balanced_recipe_early_stops_on_validation_sets(tmp_path: Path) -> None:
 
     (checkpoint,) = (results / "model_outputs").glob("*.pisces")
     assert checkpoint_family(checkpoint) == "bidoze"
+    assert _recorded_split(results) == (
+        [SubjectRef("CohortA", f"a{i}") for i in range(3)],
+        [SubjectRef("CohortC", "c0"), SubjectRef("CohortC", "c1")],
+    )
 
 
 def _release(directory: Path, config) -> Path:

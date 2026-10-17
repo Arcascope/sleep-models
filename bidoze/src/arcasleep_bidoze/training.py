@@ -316,6 +316,21 @@ def _check_balanced_cv(config: RunConfig) -> None:
         raise ValueError(f"cv.json: the balanced recipe does not use {named}")
 
 
+def fit_eval_split(
+    config: RunConfig, fold: Fold, split_seed: int
+) -> tuple[list[SubjectRef], list[SubjectRef]] | None:
+    """The balanced recipe's fit and eval subjects; ``None`` under the curriculum recipe.
+
+    The eval subjects are ``cv.json``'s validation sets when it names any, and
+    otherwise a held-out share of the training participants.
+    """
+    if config.training.recipe != "balanced":
+        return None
+    if fold.val_subjects:
+        return sorted(fold.train_subjects), sorted(fold.val_subjects)
+    return split_train_eval(fold.train_subjects, config.training.eval_fraction, split_seed)
+
+
 def _train_fold_balanced(
     config: RunConfig,
     *,
@@ -329,13 +344,10 @@ def _train_fold_balanced(
 
     _check_balanced_cv(config)
     training: TrainingConfig = config.training
+    fit_refs, eval_refs = fit_eval_split(config, fold, split_seed)
     if fold.val_subjects:
-        fit_refs, eval_refs = sorted(fold.train_subjects), sorted(fold.val_subjects)
         print(f"  train/eval: {len(fit_refs)} fit, {len(eval_refs)} eval (validation sets)")
     else:
-        fit_refs, eval_refs = split_train_eval(
-            fold.train_subjects, training.eval_fraction, split_seed
-        )
         print(
             f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
             f"(fraction {training.eval_fraction}, seed {split_seed})"
