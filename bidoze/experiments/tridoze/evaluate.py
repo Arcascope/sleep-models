@@ -22,7 +22,9 @@ An arm or draw whose predictions are missing is skipped with a note.
 Writes to ``<run>/analysis/``:
 - draws.csv    per draw, model, cohort and metric: the mean over the draw's test subjects (wake
                specificity at 95% sleep sensitivity, ``wake_spec_at_95_sens``, is pooled over them);
-- subjects.csv per draw, model, cohort and subject;
+- subjects.csv per draw, model, cohort and subject, with TST and WASO in minutes by PSG and by the
+               model over the PSG-scored epochs (WASO: wake from the first to the last sleep epoch of
+               that scorer; a gap call is neither sleep nor wake);
 - summary.csv  per model, cohort and metric: mean and SD over the pilot draws; for each arm and its
                W branch, the difference to independent ×3 per draw (mean, SD, draws higher) and the
                Wilcoxon p over (draw, subject) pairs;
@@ -72,8 +74,25 @@ CACHE_NAME, BETA, BIDOZE = joint.CACHE_NAME, joint.BETA, joint.BIDOZE
 subject_metrics, load_subject, night_counts, wake_specificity_at = (
     joint.subject_metrics, joint.load_subject, joint.night_counts, joint.wake_specificity_at)
 EXTRA = ["rem%"]
-SLEEP_WAKE_ONLY = ["kappa_sleep_wake", "sleep_sensitivity", "wake_specificity"]
+MINUTES = ["psg_tst_minutes", "pred_tst_minutes", "psg_waso_minutes", "pred_waso_minutes"]
+SLEEP_WAKE_ONLY = ["kappa_sleep_wake", "sleep_sensitivity", "wake_specificity", *MINUTES]
+EPOCH_MINUTES = 0.5
 SHOWN = ["kappa_4stage", "kappa_sleep_wake", WAKE_SPEC_95, "sleep_sensitivity", "deep%", "rem%"]
+
+
+def waso_minutes(labels: np.ndarray) -> float:
+    """Minutes of wake (0) from the first to the last sleep epoch (1–3); gap calls (4) count as neither."""
+    sleep = np.flatnonzero((labels > 0) & (labels < len(STAGES)))
+    if sleep.size == 0:
+        return 0.0
+    return EPOCH_MINUTES * float(np.sum(labels[sleep[0]:sleep[-1] + 1] == 0))
+
+
+def sleep_minutes(psg: np.ndarray, calls: np.ndarray) -> dict[str, float]:
+    """TST and WASO in minutes by PSG and by the model, both over the PSG-scored epochs only."""
+    return {"psg_tst_minutes": EPOCH_MINUTES * float(np.sum(psg > 0)),
+            "pred_tst_minutes": EPOCH_MINUTES * float(np.sum((calls > 0) & (calls < len(STAGES)))),
+            "psg_waso_minutes": waso_minutes(psg), "pred_waso_minutes": waso_minutes(calls)}
 
 
 def prediction_dir(arm_dir: Path, d: int, name: str) -> Path:
@@ -178,6 +197,7 @@ def main() -> None:
                     scored = (y >= 0) & (y < len(STAGES))
                     stage_calls = calls[sid][scored]
                     m["rem%"] = 100 * np.mean(stage_calls == 3) / max(np.mean(stage_calls < 4), 1e-9)
+                    m.update(sleep_minutes(y[scored], stage_calls))
                     if only_sleep_wake:
                         m = {k: (v if k in SLEEP_WAKE_ONLY else np.nan) for k, v in m.items()}
                     rows.append({"draw": d, "model": model, "cohort": cohort, "subject_id": sid, **m})
