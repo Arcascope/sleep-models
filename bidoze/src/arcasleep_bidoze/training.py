@@ -44,6 +44,7 @@ BALANCED_ONLY_KEYS = (
     "lr_drop_patience",
     "early_stop_patience",
     "eval_smoothing_steps",
+    "patience_start_kappa",
     "eval_fraction",
     "init_weights",
     "distill_from",
@@ -97,6 +98,9 @@ class TrainingConfig:
     lr_drop_patience: int = 10
     early_stop_patience: int = 25
     eval_smoothing_steps: int = 0
+    # The patience counts only from the first epoch whose eval kappa exceeds this; None counts
+    # from the first epoch.
+    patience_start_kappa: float | None = None
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
     # A release bundle or a checkpoint (.pisces) whose weights the fit starts from; None starts
@@ -216,6 +220,7 @@ class TrainingConfig:
             early_stop=self.early_stop_patience,
             unit=self.patience_unit,
             smoothing_steps=self.eval_smoothing_steps,
+            start_kappa=self.patience_start_kappa,
         )
 
     @property

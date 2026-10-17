@@ -98,6 +98,19 @@ def test_an_evaluation_without_a_kappa_is_left_out_of_the_smoothing() -> None:
     assert decisions[-1].smoothed_kappa == pytest.approx(0.3)
 
 
+def test_patience_counts_only_from_the_first_kappa_above_the_start() -> None:
+    kappas = [0.05] * 10 + [0.4] + [0.3] * 10
+    counted = Plateau(Patience(lr_drop=50, early_stop=3, unit="steps"), 1)
+    started = Plateau(Patience(lr_drop=50, early_stop=3, unit="steps", start_kappa=0.3), 1)
+
+    counted_decisions = _run(counted, kappas)
+    started_decisions = _run(started, kappas)
+
+    assert len(counted_decisions) == 4 and counted_decisions[-1].stop
+    assert started.best_step == 11
+    assert len(started_decisions) == 14 and started_decisions[-1].stop
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"unit": "minutes"}, {"lr_drop": 0}, {"early_stop": 0}, {"smoothing_steps": -1}],

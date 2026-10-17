@@ -44,12 +44,17 @@ class Patience:
     single high evaluation does not reset the patience. No evaluation counts
     as an improvement before the fit has run ``smoothing_steps`` steps. The fit keeps the
     parameters of the epoch with the best unsmoothed kappa either way.
+
+    With ``start_kappa``, the patience counts only from the first evaluation
+    whose (unsmoothed) kappa exceeds it: before that the learning rate does
+    not drop and the fit does not stop.
     """
 
     lr_drop: int
     early_stop: int
     unit: str = "epochs"
     smoothing_steps: int = 0
+    start_kappa: float | None = None
 
     def __post_init__(self) -> None:
         if self.unit not in PATIENCE_UNITS:
@@ -83,6 +88,7 @@ class Plateau:
         self.best_smoothed = -np.inf
         self.best_step = 0
         self.last_reset_step = 0
+        self.started = patience.start_kappa is None
         self._window: deque[tuple[int, float]] = deque()
 
     def update(self, kappa: float) -> PlateauDecision:
@@ -94,6 +100,11 @@ class Plateau:
         while self._window and self._window[0][0] <= self.step - span:
             self._window.popleft()
         smoothed = float(np.mean([k for _, k in self._window])) if self._window else float("nan")
+        if not self.started:
+            self.started = np.isfinite(kappa) and kappa > self.patience.start_kappa
+            if not self.started:
+                self.best_step = self.last_reset_step = self.step
+                return PlateauDecision(smoothed, False, False, False)
 
         # Until the window spans smoothing_steps it holds fewer evaluations
         # than it should, and its mean is no smoother than one evaluation.
