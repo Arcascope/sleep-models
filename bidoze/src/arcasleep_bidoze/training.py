@@ -38,6 +38,7 @@ CURRICULUM_ONLY_KEYS = (
     "anchor_l2_weight",
     "disable_swa",
 )
+MEMBER_RECORDINGS = ("bootstrap", "half")
 BALANCED_ONLY_KEYS = (
     "balance_beta",
     "patience_unit",
@@ -55,6 +56,10 @@ BALANCED_ONLY_KEYS = (
     "max_train_seconds",
     "fit_state_path",
     "bootstrap_seed",
+    "subsample_fraction",
+    "subsample_seed",
+    "member_recordings",
+    "member_seed",
     "epoch_weights",
 )
 
@@ -131,6 +136,16 @@ class TrainingConfig:
     # Bagging: the fit trains on a bootstrap resample of its fit recordings (drawn with
     # replacement, as many as there are), seeded by this; the early-stopping share is unchanged.
     bootstrap_seed: int | None = None
+    # Subagging: the fit trains on this fraction of its fit recordings, drawn without
+    # replacement with subsample_seed; the early-stopping share is unchanged.
+    subsample_fraction: float | None = None
+    subsample_seed: int | None = None
+    # Split-batch ensembles: "bootstrap" gives member k a bootstrap resample of the fit
+    # recordings (with replacement, as many as there are) and "half" gives it half of them
+    # (without replacement); the member draws its rows only from its own recordings.
+    # Member k's draw is seeded by member_seed + k. None lets every member draw from all.
+    member_recordings: str | None = None
+    member_seed: int = 0
     # Boosting: an .npz of per-epoch loss weights keyed "<dataset>/<subject_id>", one array of
     # y_length per fit recording (arcasleep_bidoze.boosting); a recording it lacks weighs 1.
     epoch_weights: str | None = None
@@ -220,6 +235,15 @@ class TrainingConfig:
 
         if self.member_batch_split and (self.joint_members < 2 or self.member_loss_weight != 0.0):
             raise ValueError("training.json: member_batch_split needs joint_members > 1 and member_loss_weight 0")
+
+        if self.member_recordings is not None:
+            require_one_of(self.member_recordings, MEMBER_RECORDINGS, "training.json member_recordings")
+            if not self.member_batch_split:
+                raise ValueError("training.json: member_recordings needs member_batch_split")
+        if (self.subsample_fraction is None) != (self.subsample_seed is None):
+            raise ValueError("training.json: subsample_fraction and subsample_seed go together")
+        if self.subsample_fraction is not None and not 0.0 < self.subsample_fraction < 1.0:
+            raise ValueError("training.json: subsample_fraction must be in (0, 1)")
 
     @property
     def patience(self) -> Patience:
@@ -387,6 +411,16 @@ def _train_fold_balanced(
         fit_refs = bootstrap_recordings(fit_refs, training.bootstrap_seed)
         print(f"  bootstrap (seed {training.bootstrap_seed}): {len(fit_refs)} draws, "
               f"{len(set(fit_refs))} distinct recordings")
+    if training.subsample_fraction is not None:
+        fit_refs = subsample_recordings(fit_refs, training.subsample_fraction, training.subsample_seed)
+        print(f"  subsample (seed {training.subsample_seed}): {len(fit_refs)} of the fit recordings")
+    member_rows = None
+    if training.member_recordings is not None:
+        member_rows = member_recording_rows(
+            fit_refs, training.member_recordings, training.member_seed, training.joint_members
+        )
+        for k, rows in enumerate(member_rows):
+            print(f"  member {k}: {len(rows)} draws, {len(set(rows))} distinct recordings")
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
     X_fit, y_fit = assemble_batch(
@@ -434,6 +468,7 @@ def _train_fold_balanced(
         X_eval,
         y_eval,
         batch_size=fit_batch_size,
+        member_rows=member_rows,
         initial_lr=training.lr,
         weight_decay=training.weight_decay,
         balance_beta=training.balance_beta,
@@ -455,6 +490,30 @@ def bootstrap_recordings(refs: Sequence[SubjectRef], seed: int) -> list[SubjectR
     refs = sorted(refs)
     drawn = np.random.default_rng(seed).integers(len(refs), size=len(refs))
     return [refs[i] for i in drawn]
+
+
+def subsample_recordings(refs: Sequence[SubjectRef], fraction: float, seed: int) -> list[SubjectRef]:
+    """``round(fraction * len(refs))`` of ``refs``, drawn without replacement."""
+    refs = sorted(refs)
+    keep = np.random.default_rng(seed).choice(len(refs), size=max(1, round(fraction * len(refs))), replace=False)
+    return [refs[i] for i in sorted(keep)]
+
+
+def member_recording_rows(
+    refs: Sequence[SubjectRef], mode: str, seed: int, members: int
+) -> list[list[int]]:
+    """Each member's rows of ``refs``: member k draws with seed ``seed + k``, a bootstrap resample
+    (``mode`` "bootstrap", repeated rows possible) or half of the rows without replacement
+    ("half")."""
+    index = {ref: i for i, ref in enumerate(refs)}
+    out = []
+    for k in range(members):
+        if mode == "bootstrap":
+            drawn = bootstrap_recordings(refs, seed + k)
+        else:
+            drawn = subsample_recordings(refs, 0.5, seed + k)
+        out.append([index[ref] for ref in drawn])
+    return out
 
 
 def load_epoch_weights(path: Path, refs: Sequence[SubjectRef], y_length: int) -> np.ndarray:

@@ -168,3 +168,60 @@ def test_training_config_accepts_member_batch_split():
     assert cfg.member_batch_split
     with pytest.raises(ValueError):
         TrainingConfig.from_dict({**BALANCED_TRAINING, "member_batch_split": True})
+
+
+def test_member_recording_rows_and_subsamples():
+    from arcasleep.data.cache import SubjectRef
+    from arcasleep_bidoze.training import member_recording_rows, subsample_recordings
+
+    refs = [SubjectRef("CohortA", f"a{i}") for i in range(20)]
+    boot = member_recording_rows(refs, "bootstrap", 5, 4)
+    half = member_recording_rows(refs, "half", 5, 4)
+    assert [len(r) for r in boot] == [20] * 4
+    assert [len(set(r)) for r in half] == [10] * 4 and [len(r) for r in half] == [10] * 4
+    assert len({tuple(r) for r in half}) > 1
+    assert half == member_recording_rows(refs, "half", 5, 4)
+    sub = subsample_recordings(refs, 0.5, 3)
+    assert len(sub) == 10 and len(set(sub)) == 10 and set(sub) <= set(refs)
+    assert sub == subsample_recordings(refs, 0.5, 3)
+
+
+def test_members_draw_rows_only_from_their_own_recordings(monkeypatch):
+    from arcasleep.training.balanced import Patience
+    from arcasleep_bidoze.joint import SplitBatchEnsemble
+    from arcasleep_bidoze.model import definition
+
+    calls = []
+    real = definition.sample_balanced_segments
+
+    def spy(nights, rng, **kw):
+        out = real(nights, rng, **kw)
+        calls.append((len(nights), out[2][:, 0].copy()))
+        return out
+
+    monkeypatch.setattr(definition, "sample_balanced_segments", spy)
+    model = SplitBatchEnsemble(small_config(), 2)
+    x, _, y = split_batch_inputs(2, 3)
+    x, y = np.asarray(x), np.asarray(y)
+    model.fit_balanced(
+        x, y, x, y, batch_size=4, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
+        patience=Patience(lr_drop=10, early_stop=20, unit="steps"), max_epochs=1, fit_seed=0,
+        member_rows=[[0, 1], [4, 5]],
+    )
+    assert [n for n, _ in calls] == [2, 2]
+    assert all(0 <= r < 2 for r in calls[0][1]) and all(0 <= r < 2 for r in calls[1][1])
+
+
+def test_training_config_accepts_member_recordings_and_subsampling():
+    from arcasleep_bidoze.training import TrainingConfig
+    from test_balanced_recipe import BALANCED_TRAINING
+
+    split = {**BALANCED_TRAINING, "joint_members": 7, "member_batch_split": True}
+    cfg = TrainingConfig.from_dict({**split, "member_recordings": "half", "member_seed": 3})
+    assert cfg.member_recordings == "half"
+    cfg = TrainingConfig.from_dict({**BALANCED_TRAINING, "subsample_fraction": 0.5, "subsample_seed": 200})
+    assert cfg.subsample_fraction == 0.5
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "member_recordings": "half"})
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "subsample_fraction": 0.5})

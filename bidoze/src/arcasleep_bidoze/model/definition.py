@@ -3374,6 +3374,7 @@ class BiDozeNetModel(CVModel):
         max_train_seconds: float | None = None,
         fit_state_path: str | os.PathLike | None = None,
         train_weights: np.ndarray | None = None,
+        member_rows: Sequence[Sequence[int]] | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3407,6 +3408,10 @@ class BiDozeNetModel(CVModel):
 
         With ``gap_from_row`` the gap output is set from the input, so gap and padding
         epochs are left out of the loss.
+
+        With ``member_rows`` (one list of training-row indices per member of a split-batch
+        ensemble), the members' groups of every batch are drawn each from its own rows, in
+        member order; ``batch_size`` is then the members' groups together.
 
         With ``train_weights`` ``(B, T)``, each training epoch's term of the loss is multiplied
         by its weight; the class counts of the balanced loss stay unweighted.
@@ -3551,16 +3556,37 @@ class BiDozeNetModel(CVModel):
                 step_fn = distill_step
             else:
                 # Rows are already the fit length, so each draw is a whole row.
-                xs, ys, drawn = sample_balanced_segments(
-                    rows,
-                    rng,
-                    n_segments=steps_per_epoch * batch_size,
+                draw = dict(
                     segment_epochs=train_y.shape[1],
                     num_classes=num_classes,
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
                     return_rows=True,
                 )
+                if member_rows is None:
+                    xs, ys, drawn = sample_balanced_segments(
+                        rows, rng, n_segments=steps_per_epoch * batch_size, **draw
+                    )
+                else:
+                    if batch_size % len(member_rows):
+                        raise ValueError("batch_size must be a multiple of the number of members")
+                    per_member = batch_size // len(member_rows)
+                    parts = []
+                    for own in member_rows:
+                        px, py, pd = sample_balanced_segments(
+                            [rows[i] for i in own], rng, n_segments=steps_per_epoch * per_member, **draw
+                        )
+                        pd = pd.copy()
+                        pd[:, 0] = np.asarray(own)[pd[:, 0]]
+                        parts.append((px, py, pd))
+
+                    def by_step(i):
+                        # (steps, members, per_member, ...) read as steps of members' groups
+                        stacked = np.stack([part[i].reshape(steps_per_epoch, per_member, *part[i].shape[1:])
+                                            for part in parts], axis=1)
+                        return stacked.reshape(steps_per_epoch * batch_size, *stacked.shape[3:])
+
+                    xs, ys, drawn = by_step(0), by_step(1), by_step(2)
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)
                 targets = np.where(ys <= GAP_LABEL, gap_class, ys)
