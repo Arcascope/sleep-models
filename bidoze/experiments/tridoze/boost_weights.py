@@ -10,7 +10,8 @@ fit epochs. Unscored and gap epochs carry no loss and keep weight 1.
 Writes ``<out>.npz`` (keyed ``<dataset>/<subject_id>``, for training's ``epoch_weights``) and
 ``<out>.json``: err, α, and how concentrated the weights are:
 - ``ess_fraction``: effective sample size (Σw)²/(N·Σw²) over N scored epochs, 1 for equal weights;
-- ``top10_epoch_share``: share of the total weight on the 10% heaviest epochs;
+- ``top5_epoch_share``, ``top10_epoch_share``: share of the total weight on the 5% and 10% heaviest
+  epochs;
 - ``transition_*``: epochs within 1 epoch of a PSG stage change, as a share of epochs and of weight
   (where PSG scorers disagree most, so weight that moves there may follow label noise);
 - per stage: share of epochs and share of weight;
@@ -63,12 +64,14 @@ def main(out: Path, paths: list[Path]) -> None:
     w_all = np.concatenate([weights[k][scored[k]] for k in proba])
     y_all = np.concatenate([labels[k][scored[k]] for k in proba])
     t_all = np.concatenate([transition_mask(labels[k])[scored[k]] for k in proba])
-    top = np.sort(w_all)[::-1][: max(1, len(w_all) // 10)]
+    ordered = np.sort(w_all)[::-1]
+    top = ordered[: max(1, len(w_all) // 10)]
     per_recording = np.sort([float(weights[k][scored[k]].sum()) for k in proba])[::-1]
     stats = {
         "members": [p.name for p in paths], "fit_recordings": len(proba), "scored_epochs": n_scored,
         "err": err, "alpha": alpha, "wrong_weight": float(np.exp(alpha) * scale), "right_weight": float(scale),
         "ess_fraction": float(w_all.sum() ** 2 / (len(w_all) * (w_all**2).sum())),
+        "top5_epoch_share": float(ordered[: max(1, len(w_all) // 20)].sum() / w_all.sum()),
         "top10_epoch_share": float(top.sum() / w_all.sum()),
         "top10_recording_share": float(per_recording[: max(1, len(per_recording) // 10)].sum() / per_recording.sum()),
         "transition_epoch_share": float(t_all.mean()),

@@ -16,6 +16,10 @@ Writes to ``<run>/analysis/insight/``:
                     with the mean output's accuracy on those epochs;
 - diversity.csv     per PSG stage: mean member log loss − log loss of the mean output (nats per epoch),
                     the part of the ensemble's log loss that averaging removes;
+- aligned.csv       operating-point check: each member's 4 stage log-probabilities are shifted by
+                    per-stage offsets until its call shares equal the mean output's on the cohort
+                    (no labels used); then the share of epochs where members differ, each member's
+                    κ 4-stage (argmax, pooled epochs), and the κ of the mean output, before and after;
 - confidence.csv    per member: AUROC of the member's top probability for whether its call is right;
                     on disagreement epochs, accuracy of the mean output, of the most confident member,
                     of the majority vote, and the share where at least one member is right.
@@ -54,6 +58,13 @@ def ensembles(run: Path, baseline: Path) -> dict[str, callable]:
             return [pred(arm_dir, d, f"seed_0_member{m}") for m in range(3)]
         return dirs
 
+    def boosted(d):
+        # A draw whose boosted members stalled is rerun as bidoze_g_boost<k>r, with the patience
+        # counted from the first eval kappa above 0.3; the rerun replaces both boosted members.
+        rerun = all(pred(run / f"bidoze_g_boost{k}r", d, f"seed_{k}").is_dir() for k in (1, 2))
+        arms = ["bidoze_g", *(f"bidoze_g_boost{k}{'r' if rerun else ''}" for k in (1, 2))]
+        return [pred(run / a, d, f"seed_{s}") for s, a in enumerate(arms)]
+
     return {
         "independent ×3": lambda d: [pred(baseline / "independent", d, f"seed_{s}") for s in range(3)],
         "BiDoze-G ×3": lambda d: [pred(run / a, d, f"seed_{s}") for s, a in
@@ -61,8 +72,7 @@ def ensembles(run: Path, baseline: Path) -> dict[str, callable]:
         "T1 β 0.5": t1("tridoze_j"),
         "T1 β 0.25": t1("tridoze_j_b025"),
         "Bagged G ×3": lambda d: [pred(run / f"bidoze_g_bag{s}", d, f"seed_{s}") for s in range(3)],
-        "Boosted G ×3": lambda d: [pred(run / a, d, f"seed_{s}") for s, a in
-                                   enumerate(["bidoze_g", "bidoze_g_boost1", "bidoze_g_boost2"])],
+        "Boosted G ×3": boosted,
     }
 
 
@@ -91,6 +101,16 @@ def transition_mask(y: np.ndarray) -> np.ndarray:
     change[1:] |= step
     change[:-1] |= step
     return change
+
+
+def align_offsets(logp: np.ndarray, target: np.ndarray, steps: int = 300) -> np.ndarray:
+    """Per-stage offsets b so that argmax(logp + b) calls each stage on the ``target`` share of epochs."""
+    b = np.zeros(logp.shape[1])
+    for _ in range(steps):
+        share = np.bincount((logp + b).argmax(axis=1), minlength=logp.shape[1]) / len(logp)
+        b += 0.5 * (np.log(np.clip(target, 1e-4, None)) - np.log(np.clip(share, 1e-4, None)))
+        b -= b.mean()
+    return b
 
 
 def collect(run: Path, baseline: Path, label: str, dirs_for, d: int, draws_json: dict):
@@ -143,7 +163,7 @@ def main() -> None:
     pd.DataFrame([{"cohort": c, "tertile_1_upper_deg_per_5s": v[0], "tertile_2_upper_deg_per_5s": v[1]}
                   for c, v in cuts.items()]).to_csv(out / "movement_levels.csv", index=False)
 
-    conf_rows, recall_rows, dis_rows, div_rows, cfd_rows = [], [], [], [], []
+    conf_rows, recall_rows, dis_rows, div_rows, cfd_rows, aligned_rows = [], [], [], [], [], []
     for (label, d), per_cohort in data.items():
         for cohort, (y, P, trans, move) in per_cohort.items():
             mean = P.mean(axis=0)
@@ -160,6 +180,19 @@ def main() -> None:
                     recall_rows.append({**key, "member": name, "stage": s,
                                         "recall": float(np.mean(c[y == i] == i)) if np.any(y == i) else np.nan,
                                         "call_share": float(np.mean(c == i))})
+            from sklearn.metrics import cohen_kappa_score
+
+            logp4 = np.log(np.clip(P[:, :, :4], 1e-9, None))
+            target = np.bincount(mean[:, :4].argmax(axis=1), minlength=4) / len(y)
+            shifted = np.stack([logp4[m] + align_offsets(logp4[m], target) for m in range(3)])
+            a_calls = shifted.argmax(axis=2)
+            a_mean = np.exp(shifted - np.log(np.exp(shifted).sum(axis=2, keepdims=True))).mean(axis=0).argmax(axis=1)
+            for when, c3, cm in [("as trained", P[:, :, :4].argmax(axis=2), mean[:, :4].argmax(axis=1)),
+                                 ("aligned", a_calls, a_mean)]:
+                aligned_rows.append({**key, "members": when,
+                                     "disagree_share": float(np.mean(~((c3[0] == c3[1]) & (c3[1] == c3[2])))),
+                                     **{f"kappa_member{m}": float(cohen_kappa_score(y, c3[m])) for m in range(3)},
+                                     "kappa_mean_output": float(cohen_kappa_score(y, cm))})
             disagree = ~((calls[0] == calls[1]) & (calls[1] == calls[2]))
             pair = np.mean([np.mean(calls[a] != calls[b]) for a, b in combinations(range(3), 2)])
             level = np.digitize(move, cuts[cohort])
@@ -201,7 +234,7 @@ def main() -> None:
                                  "majority_accuracy": float(np.mean(majority == yd)),
                                  "any_member_right": float(np.mean((c3 == yd).any(axis=0)))})
     for name, rows in [("confusion", conf_rows), ("recall", recall_rows), ("disagreement", dis_rows),
-                       ("diversity", div_rows), ("confidence", cfd_rows)]:
+                       ("diversity", div_rows), ("confidence", cfd_rows), ("aligned", aligned_rows)]:
         pd.DataFrame(rows).to_csv(out / f"{name}.csv", index=False)
 
     rec = pd.DataFrame(recall_rows)
@@ -220,6 +253,12 @@ def main() -> None:
     print("\nOn disagreement epochs (accuracy, mean over draws):\n",
           dd.groupby(["ensemble", "cohort"])[["mean_output_accuracy", "most_confident_accuracy", "majority_accuracy",
                                               "any_member_right"]].mean().round(3).to_string())
+    al = pd.DataFrame(aligned_rows)
+    al["kappa_members_mean"] = al[[f"kappa_member{m}" for m in range(3)]].mean(axis=1)
+    al["ensemble_gain"] = al.kappa_mean_output - al.kappa_members_mean
+    print("\nOperating-point check (members shifted to the mean output's call shares):\n",
+          al.groupby(["ensemble", "cohort", "members"])[["disagree_share", "kappa_members_mean", "kappa_mean_output",
+                                                         "ensemble_gain"]].mean().round(3).to_string())
     au = cfd[cfd.member.isin([0, 1, 2])]
     print("\nAUROC of a member's top probability for its own correctness:\n",
           au.groupby(["ensemble", "cohort"]).auroc_top_prob_vs_right.mean().round(3).to_string())

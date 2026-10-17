@@ -11,7 +11,9 @@ Only PSG-scored epochs whose mean gap probability is < 0.5 are fitted.
 Inputs per epoch (standardised):
 - ``members``: log of each member's 4 stage probabilities (given not gap), 12 inputs;
 - ``members+movement``: the same, plus log(1 + mean absolute arm-angle change, degrees per 5 s)
-  and the mean log spectral power of the epoch's input frames.
+  and the mean log spectral power of the epoch's input frames;
+- ``members adults``: the ``members`` inputs, fitted on the eval share's adult recordings only
+  (SleepAccel and SleepAccel-Clinical training nights, 14 per draw).
 No input says where in the recording an epoch lies.
 
 Writes the combiner's output in the prediction-CSV format (stage columns replaced by its
@@ -39,7 +41,7 @@ import insight
 
 STAGES = insight.STAGES
 CACHE_NAME = insight.CACHE_NAME
-VARIANTS = ["members", "members+movement"]
+VARIANTS = ["members", "members+movement", "members adults"]
 
 
 def slug(label: str) -> str:
@@ -101,7 +103,7 @@ def main() -> None:
             train_cache = args.run / f"setup/cache/draw{d}" / CACHE_NAME
             test_cache = args.baseline_run / f"setup/cache/draw{d}" / CACHE_NAME
             keys = list(stores[0]["__eval__"])
-            Xs, ys, n_adult = {v: [] for v in VARIANTS}, [], 0
+            Xs, ys, adult, n_adult = {v: [] for v in VARIANTS}, [], [], 0
             for k in keys:
                 y = stores[0][f"__labels__/{k}"].astype(int)
                 p5 = [s[k] for s in stores]
@@ -112,9 +114,12 @@ def main() -> None:
                 for v in VARIANTS:
                     Xs[v].append(features([conditional(p) for p in p5], move if v.endswith("movement") else None)[keep])
                 ys.append(y[keep])
-            y_fit = np.concatenate(ys)
+                adult.append(np.full(int(keep.sum()), dataset != "weaverDraw"))
+            adult = np.concatenate(adult)
             for v in VARIANTS:
-                X_fit = np.concatenate(Xs[v])
+                X_fit, y_fit = np.concatenate(Xs[v]), np.concatenate(ys)
+                if v.endswith("adults"):
+                    X_fit, y_fit = X_fit[adult], y_fit[adult]
                 model = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, class_weight="balanced", max_iter=3000))
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
