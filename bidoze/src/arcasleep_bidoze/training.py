@@ -116,8 +116,9 @@ class TrainingConfig:
     # Joint fits: the weight β of each member's own loss beside the loss of the mean
     # (arcasleep_bidoze.joint.JointEnsemble); 0 trains the mean alone.
     member_loss_weight: float = 0.0
-    # Joint fits: each batch of joint_members * batch_size rows is split into joint_members
-    # groups of batch_size rows and member m trains on group m alone
+    # Joint fits: members trained in lockstep, each step on its own random part of the batch:
+    # each batch of joint_members * batch_size rows is split into joint_members groups of
+    # batch_size rows and member m trains on group m alone
     # (arcasleep_bidoze.joint.SplitBatchEnsemble); the eval output is the mean of all members.
     member_batch_split: bool = False
     # The roles architecture: the weight of the three branches' own binary losses.

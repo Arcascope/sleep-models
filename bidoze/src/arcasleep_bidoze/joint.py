@@ -107,11 +107,13 @@ class JointEnsemble(BiDozeNetModel):
 
 
 class SplitBatchEnsemble(JointEnsemble):
-    """Internal bagging: a batch of ``members * b`` rows is split into ``members`` consecutive
-    groups of ``b`` rows, and member m trains on group m alone with its own class-balanced loss.
-    The batch rows are a random draw, so the groups are a random split. The loss is the mean of
-    the members' losses; no loss is applied to the mean output. ``_apply`` (evaluation and
-    prediction) is the mean of all members on the full input."""
+    """K members trained in lockstep, each step on its own random part of the batch, with one
+    stopping rule on the mean output's eval κ; over training each member still sees every
+    recording. A batch of ``members * b`` rows is split into ``members`` consecutive groups of
+    ``b`` rows (the rows are a random draw), and member m trains on group m alone with its own
+    class-balanced loss. The loss is the mean of the members' losses; no loss is applied to the
+    mean output. ``_apply`` (evaluation and prediction) is the mean of all members on the full
+    input."""
 
     def __init__(self, config: BiDozeNetConfig, members: int):
         super().__init__(config, members, 0.0)
