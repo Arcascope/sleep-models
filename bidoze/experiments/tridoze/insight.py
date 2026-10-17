@@ -59,10 +59,14 @@ def ensembles(run: Path, baseline: Path) -> dict[str, callable]:
         return dirs
 
     def boosted(d):
-        # A draw whose boosted members stalled is rerun as bidoze_g_boost<k>r, with the patience
-        # counted from the first eval kappa above 0.3; the rerun replaces both boosted members.
-        rerun = all(pred(run / f"bidoze_g_boost{k}r", d, f"seed_{k}").is_dir() for k in (1, 2))
-        arms = ["bidoze_g", *(f"bidoze_g_boost{k}{'r' if rerun else ''}" for k in (1, 2))]
+        # The boosted members whose weights come from the fit recordings of training's split are
+        # bidoze_g_boost<k>c (patience counted from the first eval kappa above 0.3, every draw).
+        # Without them: bidoze_g_boost<k>r for a draw that was rerun after stalling, else
+        # bidoze_g_boost<k>.
+        for suffix in ("c", "r", ""):
+            if all(pred(run / f"bidoze_g_boost{k}{suffix}", d, f"seed_{k}").is_dir() for k in (1, 2)):
+                break
+        arms = ["bidoze_g", *(f"bidoze_g_boost{k}{suffix}" for k in (1, 2))]
         return [pred(run / a, d, f"seed_{s}") for s, a in enumerate(arms)]
 
     return {
