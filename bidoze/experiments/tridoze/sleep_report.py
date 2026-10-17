@@ -163,8 +163,9 @@ def figure(subjects: pd.DataFrame, models: list[str], path: Path) -> None:
             ax.set_title(cohort, fontsize=10)
             ax.spines[["top", "right"]].set_visible(False)
         axes[r, 0].set_ylabel(label)
-    axes[0, 0].legend(frameon=False, fontsize=8, loc="lower left")
-    fig.tight_layout()
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, fontsize=8, loc="upper right")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
