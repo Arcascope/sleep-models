@@ -116,14 +116,15 @@ class ModelFamily(ABC):
         divides the training subjects further.
         """
 
+    @abstractmethod
     def fit_eval_split(
         self, config: RunConfig, fold: Fold, split_seed: int
     ) -> tuple[list[SubjectRef], list[SubjectRef]] | None:
         """The ``(fit, eval)`` subjects :meth:`train_fold` early-stops with on ``fold``.
 
-        ``None`` when the recipe fits on every training subject and holds none out.
+        ``None`` when the configured recipe holds no training subjects out, such
+        as BiDoze's curriculum recipe.
         """
-        return None
 
     @abstractmethod
     def load_checkpoint(
