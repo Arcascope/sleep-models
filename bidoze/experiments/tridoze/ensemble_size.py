@@ -249,7 +249,7 @@ def main() -> None:
             ens = ensembles_table(subsets, args.run, args.tridoze_run, d, infer)
             ens.to_csv(out / f"ensembles_draw{d}.csv", index=False)
             if d == args.draws[0]:
-                figure(ens, curve, out / "ensemble-size.png")
+                figure(ens, curve, out / "ensemble-size.png", d)
     print(f"wrote {out}")
 
 
@@ -358,14 +358,15 @@ def ensembles_table(subsets: pd.DataFrame, run: Path, tri: Path, d: int, infer: 
     return pd.DataFrame(rows)
 
 
-def figure(table: pd.DataFrame, curve: pd.DataFrame, path: Path) -> None:
+def figure(table: pd.DataFrame, curve: pd.DataFrame, path: Path, draw: int = 0) -> None:
     """κ 4-stage, κ sleep/wake and WS95 against total parameters (log x) by cohort. Colors are the first
     three validated categorical slots; the split-batch arms share one hue and differ in marker shape."""
+    curve = curve[curve.draw == draw]
     metrics = [("kappa_4stage", "κ 4-stage"), ("kappa_sleep_wake", "κ sleep/wake"), (WS95, "Wake spec. at 95% sens. (%)")]
     cohorts = list(insight.COHORTS.values())
     ink, muted, grid, bg = "#1a1a19", "#6b6b66", "#e4e4e0", "#fcfcfb"
     style = {"independent": ("#2a78d6", "Independent seeds"), "bagged": ("#eb6834", "Bagged"), "subagged": ("#1baf7a", "Subagged (halves)")}
-    shapes = ["s", "^", "v", "D", "P", "X"]
+    shapes = ["s", "^", "v", "D", "P", "X", "*", "h"]
     fig, axes = plt.subplots(len(cohorts), len(metrics), figsize=(13, 7.2), squeeze=False, facecolor=bg)
     for r, cohort in enumerate(cohorts):
         for c, (metric, title) in enumerate(metrics):
