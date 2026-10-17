@@ -38,8 +38,9 @@ for spec in "$@"; do
   margin=$MARGIN; [[ $arm == tridoze_j* ]] && margin=200
   cap=$(( remaining - margin ))
   mkdir -p "$out/config-burst"
-  $PY -c "import json,sys;t=json.load(open(sys.argv[1]));t['max_train_seconds']=int(sys.argv[3]);t['fit_state_path']=sys.argv[4];json.dump(t,open(sys.argv[2],'w'),indent=2)" \
-    "$S/training-$arm.json" "$out/config-burst/training.json" "$cap" "$out/fit_state.pkl"
+  # A string value's "{draw_dir}" becomes the fit's output directory (per-draw boosting weights).
+  $PY -c "import json,sys;t=json.load(open(sys.argv[1]));t={k:(v.replace('{draw_dir}',sys.argv[5]) if isinstance(v,str) else v) for k,v in t.items()};t['max_train_seconds']=int(sys.argv[3]);t['fit_state_path']=sys.argv[4];json.dump(t,open(sys.argv[2],'w'),indent=2)" \
+    "$S/training-$arm.json" "$out/config-burst/training.json" "$cap" "$out/fit_state.pkl" "$out"
   cmd=(env FEATURE_CACHE_DIR=$S/cache/draw$d $ARCASLEEP bidoze train --cache-only -pc config/inputs.json
        -mc "$S/model-$arm.json" -tc "$out/config-burst/training.json" -mtc config/metrics.json --split-seed 0
        -cvc "$S/cv/draw$d.json" -extn "$out")

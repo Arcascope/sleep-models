@@ -10,6 +10,9 @@ Models per draw:
 - ``independent ×3`` and ``independent seed s`` from the baseline run (2026-10-15, not retrained);
 - each arm's own output (``predictions/draw<d>_seed_0``);
 - each arm's members by themselves, where ``predictions/draw<d>_seed_0_member<m>`` exist;
+- each ``--ensemble label=arm:seed,arm:seed,...``: the mean output of those arms' fits
+  (``<arm>/draw<d>/predictions/draw<d>_seed_<seed>``), and each of them by itself as a member;
+- ``--draw-dir arm:draw=directory`` takes one draw of an arm from another arm directory;
 - ``<arm> W branch`` for the arms named in ``--w-branch``: the sleep/wake model that is the
   combined output's p(wake) alone (wake when p(wake) ≥ 0.5; sleep score 1 − p(wake)).
 
@@ -76,10 +79,17 @@ def prediction_dir(arm_dir: Path, d: int, name: str) -> Path:
     return arm_dir / f"draw{d}" / "predictions" / f"draw{d}_{name}"
 
 
-def model_dirs(baseline: Path, arms: dict[str, Path], w_branch: list[str], d: int) -> dict[str, list[Path]]:
+def model_dirs(baseline: Path, arms: dict[str, Path], w_branch: list[str], d: int,
+               ensembles: dict[str, list[tuple[Path, int]]] | None = None,
+               draw_dirs: dict[tuple[str, int], Path] | None = None) -> dict[str, list[Path]]:
     out = {"independent ×3": [prediction_dir(baseline / "independent", d, f"seed_{s}") for s in range(3)]}
     out |= {f"independent seed {s}": [prediction_dir(baseline / "independent", d, f"seed_{s}")] for s in range(3)}
+    for label, parts in (ensembles or {}).items():
+        dirs = [prediction_dir(arm_dir, d, f"seed_{seed}") for arm_dir, seed in parts]
+        out[label] = dirs
+        out |= {f"{label} member {i}": [p] for i, p in enumerate(dirs)}
     for arm, arm_dir in arms.items():
+        arm_dir = (draw_dirs or {}).get((arm, d), arm_dir)
         out[arm] = [prediction_dir(arm_dir, d, "seed_0")]
         if arm in w_branch:
             out[f"{arm} W branch"] = out[arm]
@@ -113,7 +123,18 @@ def main() -> None:
     ap.add_argument("--arm", action="append", help="name or label=directory of an arm (default: the four pilot arms)")
     ap.add_argument("--w-branch", action="append", default=None, help="arms whose W branch is scored (default tridoze_r)")
     ap.add_argument("--out", type=Path, default=None, help="analysis directory (default <run>/analysis)")
+    ap.add_argument("--ensemble", action="append", default=[], help="label=arm:seed,arm:seed,... (arms under --run)")
+    ap.add_argument("--draw-dir", action="append", default=[], help="arm:draw=directory under --run")
     args = ap.parse_args()
+    ensembles = {}
+    for e in args.ensemble:
+        label, _, parts = e.partition("=")
+        ensembles[label] = [(args.run / a, int(s)) for a, s in (p.split(":") for p in parts.split(","))]
+    draw_dirs = {}
+    for e in args.draw_dir:
+        spec, _, directory = e.partition("=")
+        arm, d = spec.rsplit(":", 1)
+        draw_dirs[(arm, int(d))] = args.run / directory
 
     arms = {}
     for a in args.arm or DEFAULT_ARMS:
@@ -135,7 +156,7 @@ def main() -> None:
         cache = args.baseline_run / f"setup/cache/{name}" / CACHE_NAME
         train_paths = [p for t in cv["train_sets"] for p in sorted(cache.glob(f"{t}_subject_*"))]
         divisor = adult_stage_divisor(night_counts(train_paths), bidsleep, BETA)
-        for model, dirs in model_dirs(args.baseline_run, arms, w_branch, d).items():
+        for model, dirs in model_dirs(args.baseline_run, arms, w_branch, d, ensembles, draw_dirs).items():
             if not all(p.is_dir() and any(p.glob("*.csv")) for p in dirs):
                 print(f"skip draw {d} {model}: predictions missing")
                 continue
