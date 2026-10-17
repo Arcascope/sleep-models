@@ -22,7 +22,8 @@ import pandas as pd  # noqa: E402
 RUN = Path(__file__).resolve().parents[3] / "results/tridoze-2026-10-16"
 STAGES = ["wake", "light", "deep", "rem"]
 DISPLAY = {"bidoze_g": "BiDoze-G\nseed 0", "independent ×3 stacked": "Stacked\nmembers",
-           "independent ×3 stacked+movement": "Stacked\n+ movement", "independent ×3 stacked adults": "Stacked\nadults only"}
+           "independent ×3 stacked+movement": "Stacked\n+ movement", "independent ×3 stacked adults": "Stacked\nadults only",
+           **{f"Boosted G ×3 member {k}": f"Boosted\nmember {k}" for k in range(3)}}
 STAGE_NAMES = {"wake": "Wake", "light": "Light", "deep": "Deep", "rem": "REM"}
 COHORTS = ["SleepAccel", "SleepAccel-Clinical"]
 COLORS = {"independent ×3": "#555555", "BiDoze-G ×3": "#1f77b4", "T1 β 0.5": "#d62728", "T1 β 0.25": "#ff9896",
@@ -190,19 +191,25 @@ def second_member(run: Path, out: Path, suffix: str = "") -> None:
     """Second-member accuracy from boost_analysis.py: ``analysis/boost-<suffix>/`` with a suffix,
     ``analysis/iter2-boost/`` without."""
     df = pd.read_csv(run / ("analysis/" + (f"boost-{suffix}" if suffix else "iter2-boost")) / "second_member.csv")
-    df = df[~df.pair.str.startswith("BiDoze-G")]
+    if not suffix:
+        df = df[~df.pair.str.startswith("BiDoze-G")]
     df["pair"] = df.pair.str.replace("independent: seed . given seed 0", "independent seed 1 or 2", regex=True)
+    df["pair"] = df.pair.str.replace("BiDoze-G: seed . given seed 0", "BiDoze-G seed 1 or 2", regex=True)
     groups = ["second right | first wrong", "second right | first right", "both wrong"]
     labels = ["Right where\nmember 0 is wrong", "Right where\nmember 0 is right", "Both wrong\n(share of all epochs)"]
     g = 100 * df.groupby("pair")[groups].mean()
     fig, ax = plt.subplots(figsize=(7, 3.2))
-    colors = {"boosted: member 1 given member 0": "#9467bd", "independent seed 1 or 2": "#555555"}
-    names = {"boosted: member 1 given member 0": "Boosted member 1", "independent seed 1 or 2": "Independent seed 1 or 2"}
+    colors = {"boosted: member 1 given member 0": "#9467bd", "BiDoze-G seed 1 or 2": "#1f77b4",
+              "independent seed 1 or 2": "#555555"}
+    names = {"boosted: member 1 given member 0": "Boosted member 1", "BiDoze-G seed 1 or 2": "BiDoze-G seed 1 or 2",
+             "independent seed 1 or 2": "Independent seed 1 or 2"}
+    g = g.loc[[p for p in colors if p in g.index]]
+    width = 0.8 / len(g)
     for i, (pair, row) in enumerate(g.iterrows()):
-        x = np.arange(len(groups)) + (i - 0.5) * 0.38
-        ax.bar(x, row[groups], 0.38, color=colors[pair], label=names[pair])
+        x = np.arange(len(groups)) + (i - (len(g) - 1) / 2) * width
+        ax.bar(x, row[groups], width, color=colors[pair], label=names[pair])
         for xi, v in zip(x, row[groups]):
-            ax.text(xi, v + 1, f"{v:.1f}", ha="center", fontsize=8)
+            ax.text(xi, v + 1, f"{v:.1f}", ha="center", fontsize=7)
     ax.set_xticks(np.arange(len(groups)), labels)
     ax.set_ylabel("% of fit epochs")
     ax.legend(frameon=False, fontsize=8)
