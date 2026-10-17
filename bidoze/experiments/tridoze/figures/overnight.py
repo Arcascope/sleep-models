@@ -139,12 +139,17 @@ def kappa_diffs(run: Path, out: Path, models: list[str], name: str, draws_csv: P
     plt.close(fig)
 
 
-def boost_weights(run: Path, out: Path) -> None:
+def boost_weights(run: Path, out: Path, suffix: str = "") -> None:
+    """Weight shares and ESS of the boosted members ``bidoze_g_boost<k><suffix>``; with no suffix, the
+    r arms where they exist and the plain arms otherwise."""
     rows = []
     for k in (1, 2):
         for d in range(5):
-            p = run / f"bidoze_g_boost{k}r/draw{d}/epoch_weights.json"
-            p = p if p.exists() else run / f"bidoze_g_boost{k}/draw{d}/epoch_weights.json"
+            if suffix:
+                p = run / f"bidoze_g_boost{k}{suffix}/draw{d}/epoch_weights.json"
+            else:
+                p = run / f"bidoze_g_boost{k}r/draw{d}/epoch_weights.json"
+                p = p if p.exists() else run / f"bidoze_g_boost{k}/draw{d}/epoch_weights.json"
             if p.exists():
                 s = json.loads(p.read_text())
                 rows.append({"member": k, "draw": d, **{f"w_{x}": s["stage_weight_share"][x] for x in STAGES},
@@ -177,12 +182,14 @@ def boost_weights(run: Path, out: Path) -> None:
     for ax in axes:
         ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out / "tridoze-overnight-boost-weights.png", dpi=150)
+    fig.savefig(out / f"tridoze-overnight-boost-weights{'-' + suffix if suffix else ''}.png", dpi=150)
     plt.close(fig)
 
 
-def second_member(run: Path, out: Path) -> None:
-    df = pd.read_csv(run / "analysis/iter2-boost/second_member.csv")
+def second_member(run: Path, out: Path, suffix: str = "") -> None:
+    """Second-member accuracy from boost_analysis.py: ``analysis/boost-<suffix>/`` with a suffix,
+    ``analysis/iter2-boost/`` without."""
+    df = pd.read_csv(run / ("analysis/" + (f"boost-{suffix}" if suffix else "iter2-boost")) / "second_member.csv")
     df = df[~df.pair.str.startswith("BiDoze-G")]
     df["pair"] = df.pair.str.replace("independent: seed . given seed 0", "independent seed 1 or 2", regex=True)
     groups = ["second right | first wrong", "second right | first right", "both wrong"]
@@ -201,7 +208,7 @@ def second_member(run: Path, out: Path) -> None:
     ax.legend(frameon=False, fontsize=8)
     ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(out / "tridoze-overnight-second-member.png", dpi=150)
+    fig.savefig(out / f"tridoze-overnight-second-member{'-' + suffix if suffix else ''}.png", dpi=150)
     plt.close(fig)
 
 
@@ -254,13 +261,19 @@ def main() -> None:
     ap.add_argument("--only", nargs="+", default=None)
     ap.add_argument("--models", nargs="+", default=None, help="models of the κ difference figure")
     ap.add_argument("--name", default="kappa", help="κ difference figure name")
+    ap.add_argument("--boost-suffix", default="", help="boosted arms bidoze_g_boost<k><suffix>; figure names end -<suffix>")
     ap.add_argument("--draws-csv", type=Path, default=None, help="evaluate.py draws.csv (default analysis/full-test)")
     args = ap.parse_args()
     args.figures.mkdir(parents=True, exist_ok=True)
     jobs = {"recall": recall_spread, "disagreement": disagreement, "diversity": diversity, "boost": boost_weights, "second": second_member, "members": member_vs_ensemble}
     for name, job in jobs.items():
         if args.only is None or name in args.only:
-            job(args.run, args.figures, args.draws_csv) if name == "members" else job(args.run, args.figures)
+            if name == "members":
+                job(args.run, args.figures, args.draws_csv)
+            elif name in ("boost", "second"):
+                job(args.run, args.figures, args.boost_suffix)
+            else:
+                job(args.run, args.figures)
     if args.models:
         kappa_diffs(args.run, args.figures, args.models, args.name, args.draws_csv)
 
