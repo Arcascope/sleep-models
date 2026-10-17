@@ -9,7 +9,9 @@ out-of-bag κ scores each fit recording with the mean of the members for which i
 The unbagged BiDoze-G ×3 members are listed for comparison (they trained on every fit recording,
 so they have no out-of-bag share).
 
-Writes ``<run>/analysis/oob.csv`` and prints it.
+Writes ``<run>/analysis/oob.csv`` and prints it. ``oob_check.csv`` gives the κ of each BiDoze-G ×3
+member (trained on every fit recording) on each bagged member's in-bag and out-of-bag recordings, so
+the bagged member's in-bag − out-of-bag difference can be set against how hard the two sets are.
 
 Usage: python oob.py [--run RUN] [--draws 0 1 2 3 4]
 """
@@ -47,7 +49,7 @@ def main() -> None:
     ap.add_argument("--run", type=Path, default=RUN)
     ap.add_argument("--draws", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     args = ap.parse_args()
-    rows = []
+    rows, checks = [], []
     for d in args.draws:
         bags = {}
         for s in range(3):
@@ -97,6 +99,12 @@ def main() -> None:
                 if not path.exists():
                     continue
                 store = np.load(path)
+                for b in bags:
+                    for share, keys in [("in bag", [k for k in fit if k in in_bag[b]]),
+                                        ("out of bag", [k for k in fit if k not in in_bag[b]])]:
+                        kap, n = kappa([store], [k for k in keys if keep(k)])
+                        checks.append({"draw": d, "group": group, "bagged_member": b, "share": share,
+                                       "model": f"BiDoze-G member {s}", "kappa_4stage": kap})
                 for share, keys in [("fit (trained on)", fit), ("eval share", evals)]:
                     keys = [k for k in keys if keep(k)]
                     kap, n = kappa([store], keys)
@@ -105,6 +113,7 @@ def main() -> None:
     table = pd.DataFrame(rows)
     out = args.run / "analysis/oob.csv"
     table.to_csv(out, index=False)
+    pd.DataFrame(checks).to_csv(args.run / "analysis/oob_check.csv", index=False)
     if not table.empty:
         print(table.groupby(["group", "model", "share"])[["recordings", "kappa_4stage"]].mean().round(3).to_string())
 
