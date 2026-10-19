@@ -34,8 +34,8 @@ def main():
         ax.barh(list(counts),vals,left=left,label=key,color=color);left+=vals
     for i,total in enumerate(left):ax.text(total+.02,i,f'{total:.3f}M',va='center')
     ax.set(xlabel='Trainable parameters (millions)',xlim=(0,2.65),title='The same overall budget buys different transformer capacity')
-    ax.legend(loc='lower center',bbox_to_anchor=(.5,-.28),ncol=3)
-    fig.tight_layout(rect=[0,.08,1,1]);fig.savefig(out/'capacity.png',dpi=160);plt.close(fig)
+    fig.legend(loc='lower center',bbox_to_anchor=(.5,.015),ncol=3)
+    fig.tight_layout(rect=[0,.19,1,1]);fig.savefig(out/'capacity.png',dpi=160);plt.close(fig)
     print(json.dumps(counts,indent=2))
 
 
