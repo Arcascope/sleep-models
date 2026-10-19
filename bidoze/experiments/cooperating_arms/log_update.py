@@ -80,6 +80,15 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     body=body.replace('Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss.', 'Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss. Arrows show forward data flow; gradients follow the paths in reverse. Local CNN-to-fusion skips and per-arm input projections are omitted for clarity.')
     body=body.replace('- A7 is training; B7 and C7 follow serially on the local 5090. Publish figures and results after each completes, with a new publication timestamp.',
                       '- Local fits and reports run serially under the GPU lock; publish each completed result above with its own timestamp.')
+    import re
+    body=re.sub(r'\n\*\*Local batch status[^\n]*\n', '\n', body)
+    initial=['final7','exchange7','shared7','control1']
+    complete=[name for name in initial if (a.run/name/'draw0_seed0/analysis/report_complete.json').exists()]
+    remaining=[name for name in initial if name not in complete]
+    status=f'\n\n**Local batch status {stamp}.** Reported: {", ".join(complete)}. Remaining initial fits: {", ".join(remaining) if remaining else "none"}.\n'
+    body=body.replace('## 2. Open','## 2. Open'+status,1)
+    if 'control1' in complete:
+        body=body.replace('Run a current one-path control, then take a promising architecture', 'Take a promising architecture')
     log.write_text(body)
     print('Prepared publication',stamp,a.arm)
 
