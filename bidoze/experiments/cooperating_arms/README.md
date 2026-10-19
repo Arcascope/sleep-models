@@ -41,3 +41,25 @@ selected hypnograms are illustrations, not a separate evaluation sample.
 Initial widths for 3/5/7 arms target one full model's approximately 2.24M parameters.
 The first phase runs the three seven-arm architectures and a current one-path control,
 then expands only a promising architecture to 3/5 arms and another seed/split.
+
+
+The scripts run from the repository root with `PYTHONPATH=core/src:bidoze/src`.
+Use the existing arcasleep environment's Python. `run_local.py` accepts the same
+three cache/output paths plus `--baseline-run` and `--arms`; it serializes fits
+under the shared GPU lock and runs the CPU report after each fit. `report.py`
+can also be called separately with `--run`, `--source-run`, `--baseline-run`,
+`--arm`, `--draw`, and `--seed`. It verifies the complete test population and
+finite normalized probabilities before marking a report ready.
+
+`CooperatingModel.load_research(fit_directory)` reloads a selected checkpoint
+from its companion configuration and weight directory. Validation probes are
+milestone snapshots, not necessarily the checkpoint selected at the end.
+`progress.py` renders those snapshots without further inference. A blank stage
+panel is explicitly labelled when the validation night has no PSG epochs of it.
+
+`publish_completed.py` is for this session's explicitly authorized direct-to-main
+research-log workflow. It waits for specified completed reports, fast-forwards
+the clean tracked log tree, appends one timestamped section, verifies image
+references, stages only that log and the fit's images, and pushes without force.
+It stops on unrelated tracked edits or conflicts. Its publication receipt is
+saved beside the report. Never run this publisher without authorization to post.

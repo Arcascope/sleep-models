@@ -22,6 +22,7 @@ def main():
     tag=f'{a.arm}-d{a.draw}-s{a.seed}'
     assert (out/'analysis/report_complete.json').exists()
     config=json.loads((out/'config.json').read_text());done=json.loads((out/'complete.json').read_text())
+    report_commit=json.loads((analysis/'report_complete.json').read_text()).get('report_commit','unknown')
     history=json.loads((out/'history.json').read_text());summary=pd.read_csv(out/'analysis/summary.csv')
     selected=json.loads((out/'analysis/selected_ids.json').read_text())
     day=a.log_root/'2026/October/19';log=day/'log.md';body=log.read_text()
@@ -35,7 +36,7 @@ def main():
     capped=' **Session capped: provisional, not converged.**' if done['time_capped'] else ''
     section=f'''{heading}
 
-**Publication {stamp}.**{capped} Training code `{config['code_commit'][:7]}`; reporting `bidoze/experiments/cooperating_arms/report.py` writes this fit’s `analysis/subjects.csv`, `summary.csv`, `selected_ids.json`, and figures. Artifacts: `bidoze/results/{a.run.name}/{a.arm}/draw{a.draw}_seed{a.seed}/`. {done['parameters']:,} weights; training {done['train_seconds']:.1f} s, {len(history['eval_kappa']):,} epochs; best combined validation κ {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}.
+**Publication {stamp}.**{capped} Training code `{config['code_commit'][:7]}`; reporting `bidoze/experiments/cooperating_arms/report.py` (`{report_commit[:7]}`) writes this fit’s `analysis/subjects.csv`, `summary.csv`, `selected_ids.json`, and figures. Artifacts: `bidoze/results/{a.run.name}/{a.arm}/draw{a.draw}_seed{a.seed}/`. {done['parameters']:,} weights; training {done['train_seconds']:.1f} s, {len(history['eval_kappa']):,} epochs; best combined validation κ {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}.
 
 Mean over all test recordings within each cohort; ± is SD across recordings, not seed uncertainty. Four-stage and sleep/wake κ use the adult release decoder. Wake specificity at 95% sleep sensitivity is pooled over the cohort, a descriptive ROC point using test labels rather than a calibrated deployment threshold. Gap calls on PSG-scored stage epochs count as misses. No participant test is claimed from this one fit.
 
