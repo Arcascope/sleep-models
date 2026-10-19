@@ -38,7 +38,7 @@ def main():
     capped=' **Session capped: provisional, not converged.**' if done['time_capped'] else ''
     section=f'''{heading}
 
-**Publication {stamp}.**{capped} Training code `{config['code_commit'][:7]}`; reporting `bidoze/experiments/cooperating_arms/report.py` (`{report_commit[:7]}`) writes this fit’s `analysis/subjects.csv`, `summary.csv`, `selected_ids.json`, and figures. Artifacts: `bidoze/results/{a.run.name}/{a.arm}/draw{a.draw}_seed{a.seed}/`. {done['parameters']:,} weights; training {done['train_seconds']:.1f} s, {len(history['eval_kappa']):,} epochs; best combined validation κ {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}.
+**Publication {stamp}.**{capped} Fit and test predictions completed {done['finished']}; publication time is recorded separately. Training code `{config['code_commit'][:7]}`; reporting `bidoze/experiments/cooperating_arms/report.py` (`{report_commit[:7]}`) writes this fit’s `analysis/subjects.csv`, `summary.csv`, `selected_ids.json`, and figures. Artifacts: `bidoze/results/{a.run.name}/{a.arm}/draw{a.draw}_seed{a.seed}/`. {done['parameters']:,} weights; training {done['train_seconds']:.1f} s, {len(history['eval_kappa']):,} epochs; best combined validation κ {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}.
 
 Mean over all test recordings within each cohort; ± is SD across recordings, not seed uncertainty. Four-stage and sleep/wake κ use the adult release decoder. Wake specificity at 95% sleep sensitivity is pooled over the cohort, a descriptive ROC point using test labels rather than a calibrated deployment threshold. Gap calls on PSG-scored stage epochs count as misses. No participant test is claimed from this one fit.
 
@@ -91,7 +91,6 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     body=body.replace('Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss.', 'Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss. Arrows show forward data flow; gradients follow the paths in reverse. Local CNN-to-fusion skips and per-arm input projections are omitted for clarity.')
     body=body.replace('- A7 is training; B7 and C7 follow serially on the local 5090. Publish figures and results after each completes, with a new publication timestamp.',
                       '- Local fits and reports run serially under the GPU lock; publish each completed result above with its own timestamp.')
-    import re
     body=re.sub(r'\n\*\*Local batch status[^\n]*\n', '\n', body)
     initial=['final7','exchange7','shared7','control1']
     complete=[name for name in initial if (a.run/name/'draw0_seed0/analysis/report_complete.json').exists()]
