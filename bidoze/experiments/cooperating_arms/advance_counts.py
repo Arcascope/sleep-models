@@ -70,6 +70,7 @@ def main():
     if decision['action']!='run':return
     here=Path(__file__).resolve().parent
     for arm in decision['arms']:
+        if (a.run/arm/'draw0_seed0/analysis/publication.json').exists():continue
         subprocess.run([sys.executable,str(here/'run_local.py'),'--run',str(a.run),
             '--source-run',str(a.source_run),'--labels-root',str(a.labels_root),
             '--baseline-run',str(a.baseline_run),'--arms',arm],check=True)

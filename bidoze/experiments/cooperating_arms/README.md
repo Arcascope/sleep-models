@@ -63,3 +63,15 @@ the clean tracked log tree, appends one timestamped section, verifies image
 references, stages only that log and the fit's images, and pushes without force.
 It stops on unrelated tracked edits or conflicts. Its publication receipt is
 saved beside the report. Never run this publisher without authorization to post.
+
+
+`advance_counts.py` waits for publication of the initial control, then schedules
+one architecture at 3 and 5 arms if its mean four-stage κ across the two cohorts
+is within .02 of the one-path control and neither cohort is more than .03 below
+it. Among eligible architectures within .01 of the best cohort-equal mean, it
+prefers shared CNN, then intermediate exchange, then final-loss-only. This is an
+exploratory scheduling heuristic for development data, declared after A7 and
+before the remaining initial results; it is not a statistical acceptance test.
+It records `setup/count_followup.json` and publishes its decision and each fit.
+No continuation is chosen from a session-capped initial comparison. Higher counts
+and capacity increases await assessment of these comparisons and replication.

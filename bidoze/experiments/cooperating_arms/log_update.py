@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import shutil
+import re
 import pandas as pd
 
 
@@ -81,6 +82,7 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
         section+=f"![{a.arm}, {r.cohort} {sid}, {item['reason']}](figures/{tag}-{ds}-{sid}.png)\n\n*{r.cohort} {sid}: {item['reason']}; κ 4-stage {r.kappa_4stage:.3f} versus G ×3 {r.baseline_kappa_4stage:.3f} (Δ {r.delta_kappa_4stage:+.3f}).*\n\n"
     marker='## 2. Open'
     assert marker in body
+    section=re.sub(r'(?<![\w/])-(?=\d)', '−', section)
     body=body.replace(marker,section+marker,1)
     if 'cooperating-capacity.png' not in body:
         shutil.copy2(a.run/'setup/capacity.png',day/'figures/cooperating-capacity.png')
@@ -98,6 +100,17 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     body=body.replace('## 2. Open','## 2. Open'+status,1)
     if 'control1' in complete:
         body=body.replace('Run a current one-path control, then take a promising architecture', 'Take a promising architecture')
+    follow=a.run/'setup/count_followup.json'
+    if follow.exists():
+        decision=json.loads(follow.read_text())
+        if decision.get('action')=='run':
+            completed=[name for name in decision['arms'] if (a.run/name/'draw0_seed0/analysis/report_complete.json').exists()]
+            pending=[name for name in decision['arms'] if name not in completed]
+            body=re.sub(r'\n\*\*Count batch status[^\n]*\n', '\n', body)
+            line=f'\n\n**Count batch status {stamp}.** Reported: {", ".join(completed) if completed else "none"}; remaining: {", ".join(pending) if pending else "none"}.\n'
+            body=body.replace('## 2. Open','## 2. Open'+line,1)
+            if not pending:
+                body=body.replace('- Take a promising architecture to 3 and 5 arms and another seed/split. Try more arms or modest capacity growth only if that progression supports it.', '- The 3/5-arm comparison is complete. Assess another initialization and participant split before extending the count or growing capacity.')
     log.write_text(body)
     print('Prepared publication',stamp,a.arm)
 
