@@ -52,6 +52,8 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
     section+='\nHistorical split7 is rescored from the October 17 saved predictions on these same test IDs and decoder. Comparing it with the new fits changes the objective and adds feature dropout; it is a historical contrast rather than an isolated objective ablation.\n\n'
     for _,r in summary.iterrows():
         section+=f"- **{r.cohort}:** four-stage κ difference to G ×3 {r.delta_kappa_4stage:+.3f}; sleep/wake κ difference {r.kappa_sleep_wake-r.baseline_kappa_sleep_wake:+.3f}; wake specificity at matched sensitivity difference {r.wake_spec_at_95_sens-r.baseline_wake_spec_at_95_sens:+.1f} points.\n"
+    if (analysis/'assessment.md').exists():
+        section+='\n'+(analysis/'assessment.md').read_text()+'\n'
     section+=f'''\n![Completed fits through {a.arm}](figures/{tag}-comparison.png)
 
 *All test recordings are scored; the dashed reference is G ×3. Each bar is one fit, with parameter count and GPU training time below. This figure is a snapshot at this publication.*
