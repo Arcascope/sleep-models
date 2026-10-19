@@ -32,7 +32,8 @@ def comparison(run, path):
             ax.axhline(reference,color='#555555',ls='--',label='Historical G ×3 (6.71M weights)')
             if 'split7_'+metric in sub:
                 ax.axhline(sub['split7_'+metric].iloc[0],color='#5b9bd5',ls=':',label='Historical split7 own losses (2.23M)')
-            ax.set_title(f'{cohort}: {label}',fontsize=11)
+            short='Wake spec. at 95% sleep sensitivity (%)' if col==2 else label
+            ax.set_title(f'{cohort}\n{short}',fontsize=10)
             ax.tick_params(axis='x',rotation=25)
             ax.legend(fontsize=7)
     costs=df.drop_duplicates('label')
