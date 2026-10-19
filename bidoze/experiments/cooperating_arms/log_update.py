@@ -19,6 +19,7 @@ def main():
     p.add_argument('--draw',default=0,type=int)
     p.add_argument('--seed',default=0,type=int)
     a=p.parse_args();out=a.run/a.arm/f'draw{a.draw}_seed{a.seed}'
+    tag=f'{a.arm}-d{a.draw}-s{a.seed}'
     assert (out/'analysis/report_complete.json').exists()
     config=json.loads((out/'config.json').read_text());done=json.loads((out/'complete.json').read_text())
     history=json.loads((out/'history.json').read_text());summary=pd.read_csv(out/'analysis/summary.csv')
@@ -47,11 +48,11 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
     section+='\n'
     for _,r in summary.iterrows():
         section+=f"- **{r.cohort}:** four-stage κ difference to G ×3 {r.delta_kappa_4stage:+.3f}; sleep/wake κ difference {r.kappa_sleep_wake-r.baseline_kappa_sleep_wake:+.3f}; wake specificity at matched sensitivity difference {r.wake_spec_at_95_sens-r.baseline_wake_spec_at_95_sens:+.1f} points.\n"
-    section+=f'''\n![{a.arm} learning trajectory](figures/{a.arm}-learning.png)
+    section+=f'''\n![{a.arm} learning trajectory](figures/{tag}-learning.png)
 
 *Combined training loss and validation κ against optimizer updates. Selection uses the unsmoothed validation maximum; the plateau schedule uses the smoothed curve.*
 
-![{a.arm} stage contributions through training](figures/{a.arm}-contributions.png)
+![{a.arm} stage contributions through training](figures/{tag}-contributions.png)
 
 *Each line is one arm’s probability of the PSG stage on that stage’s epochs, for one fixed validation night per cohort. These two nights illustrate learning dynamics; they are not cohort performance estimates or requirements that every arm learn every stage.*
 
@@ -61,7 +62,7 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     subjects=pd.read_csv(out/'analysis/subjects.csv')
     for item in selected:
         ds,sid=item['dataset'],item['subject_id'];r=subjects[(subjects.dataset==ds)&(subjects.subject_id.astype(str)==str(sid))].iloc[0]
-        section+=f"![{a.arm}, {r.cohort} {sid}, {item['reason']}](figures/{a.arm}-{ds}-{sid}.png)\n\n*{r.cohort} {sid}: {item['reason']}; κ 4-stage {r.kappa_4stage:.3f} versus G ×3 {r.baseline_kappa_4stage:.3f} (Δ {r.delta_kappa_4stage:+.3f}).*\n\n"
+        section+=f"![{a.arm}, {r.cohort} {sid}, {item['reason']}](figures/{tag}-{ds}-{sid}.png)\n\n*{r.cohort} {sid}: {item['reason']}; κ 4-stage {r.kappa_4stage:.3f} versus G ×3 {r.baseline_kappa_4stage:.3f} (Δ {r.delta_kappa_4stage:+.3f}).*\n\n"
     marker='## 2. Open'
     assert marker in body
     body=body.replace(marker,section+marker,1)

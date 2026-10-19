@@ -76,6 +76,7 @@ def main():
     ap.add_argument('--draw',default=0,type=int)
     ap.add_argument('--seed',default=0,type=int)
     a=ap.parse_args();out=a.run/a.arm/f'draw{a.draw}_seed{a.seed}'
+    tag=f'{a.arm}-d{a.draw}-s{a.seed}'
     assert (out/'complete.json').exists(),'fit predictions are not complete'
     analysis=out/'analysis';analysis.mkdir(exist_ok=True)
     figs=analysis/'figures';figs.mkdir(exist_ok=True)
@@ -139,7 +140,7 @@ def main():
             y,p,calls,q,bp,bc=full[(ds,sid)]
             path=a.source_run/'setup/cache'/f'draw{a.draw}'/'12Hz_log_PSD_aligned'/f'{ds}_subject_{sid}_features.npz'
             b=CacheBundle.from_npz(path);inputs=recording_input(b.X[0],len(y),1)
-            render_subject_hypnogram(figs/f'{a.arm}-{ds}-{sid}.png',inputs,p,y,
+            render_subject_hypnogram(figs/f'{tag}-{ds}-{sid}.png',inputs,p,y,
                 f'{a.arm} | {cohort} {sid} | {reason} | adult decoder; raw mean probabilities',
                 channel_names=['Magnitude','Jerk'],epoch_seconds=30,predicted_stages=calls)
     (analysis/'selected_ids.json').write_text(json.dumps(selected,indent=2))
@@ -151,7 +152,7 @@ def main():
     axes[1].plot(steps,history['eval_kappa'],alpha=.4,label='Validation κ');axes[1].plot(steps,history['smoothed_eval_kappa'],label='Smoothed')
     axes[1].legend();axes[1].set(xlabel='Optimizer updates',ylabel='Combined validation κ')
     fig.suptitle(f'{a.arm}: training trajectory (selected epoch {history["best_epoch"]})')
-    fig.tight_layout();fig.savefig(figs/f'{a.arm}-learning.png',dpi=150);plt.close(fig)
+    fig.tight_layout();fig.savefig(figs/f'{tag}-learning.png',dpi=150);plt.close(fig)
     # Stage-conditioned arm probability over time, on the SAME validation probe per cohort.
     snapshots=sorted(out.glob('validation_probe_epoch*.npz'))
     fig,axes=plt.subplots(2,4,figsize=(16,7),sharex=True,sharey=True)
@@ -170,7 +171,7 @@ def main():
             if stage==0:ax.set_ylabel('Mean probability of PSG stage')
     axes[0,-1].legend(ncol=2,fontsize=8)
     fig.suptitle(f'{a.arm}: how contributions develop on two validation nights')
-    fig.tight_layout();fig.savefig(figs/f'{a.arm}-contributions.png',dpi=150);plt.close(fig)
+    fig.tight_layout();fig.savefig(figs/f'{tag}-contributions.png',dpi=150);plt.close(fig)
     architecture(figs/'cooperating-architecture.png')
     (analysis/'report_complete.json').write_text(json.dumps(dict(at=datetime.now().astimezone().isoformat(),selected=selected),indent=2))
     print(pd.DataFrame(summary).to_string(index=False));print('figures',figs)
