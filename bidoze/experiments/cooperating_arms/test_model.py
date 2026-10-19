@@ -69,3 +69,26 @@ def test_shared_cnn_gradient_is_sum_of_arm_paths():
     for a, *bs in zip(jax.tree.leaves(joint), *[jax.tree.leaves(g) for g in pieces]):
         np.testing.assert_allclose(a, sum(bs), atol=1e-6, rtol=1e-4)
     assert all(sum(float(jnp.linalg.norm(v)) for v in jax.tree.leaves(g)) > 0 for g in pieces)
+
+
+def test_exchange_adds_connections_without_changing_trunk_initialization():
+    m, p, x, mask = fixture()
+    b = CooperatingModule(m.cfg, replace(m.spec, exchange_after=(1,)))
+    q = b.init(jax.random.PRNGKey(4), x, mask)["params"]
+    for root in p:
+        for left, right in zip(jax.tree.leaves(p[root]), jax.tree.leaves(q[root])):
+            np.testing.assert_array_equal(left, right)
+
+
+def test_research_checkpoint_roundtrip(tmp_path):
+    import json
+    from dataclasses import asdict
+    from model import CooperatingModel
+    module, params, x, mask = fixture(shared=True)
+    model = CooperatingModel(module.cfg, module.spec)
+    model.params = params
+    model.input_shape = tuple(x.shape[1:])
+    model.save_weights_to_directory(tmp_path / "weights")
+    (tmp_path / "config.json").write_text(json.dumps(dict(config=module.cfg.to_dict(), spec=asdict(module.spec))))
+    loaded = CooperatingModel.load_research(tmp_path)
+    np.testing.assert_allclose(loaded.infer(np.asarray(x)), model.infer(np.asarray(x)), atol=1e-6)

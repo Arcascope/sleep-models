@@ -26,6 +26,7 @@ class ArmSpec:
     feature_dropout: float = 0.2
 
     def __post_init__(self):
+        object.__setattr__(self, "exchange_after", tuple(self.exchange_after))
         if self.members < 1 or self.width < 4 or self.width % 4:
             raise ValueError("positive arm count and width divisible by four required")
         if self.exchange_after and self.members < 2:
@@ -124,3 +125,26 @@ class CooperatingModel(BiDozeNetModel):
 
     # Inherited balanced loss scores only module output, the log of the probability mean.
     # Keep the architecture beside the weight directory; never masquerade as a plain .pisces.
+
+    def _build_model(self, input_shape):
+        # Parameter shapes do not depend on sequence length. Avoid allocating long
+        # attention matrices merely to load a saved checkpoint.
+        params = super()._build_model((min(8, input_shape[0]), *input_shape[1:]))
+        self.input_shape = tuple(input_shape)
+        return params
+
+    def save_weights_to_directory(self, directory):
+        from pathlib import Path
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        super().save_weights_to_directory(directory)
+
+    @classmethod
+    def load_research(cls, directory):
+        import json
+        from pathlib import Path
+        directory = Path(directory)
+        metadata = json.loads((directory / "config.json").read_text())
+        model = cls(BiDozeNetConfig.from_dict(metadata["config"]), ArmSpec(**metadata["spec"]))
+        model.load_weights_from_directory(directory / "weights")
+        return model

@@ -115,7 +115,9 @@ def main():
             r[c]=float(sub[c].mean());r[c+'_sd']=float(sub[c].std())
         r['wake_spec_at_95_sens']=100*scoring.wake_specificity_at(pooled[ds],.95)
         r['baseline_wake_spec_at_95_sens']=100*scoring.wake_specificity_at(basepool[ds],.95)
-        for c in METRICS:r['baseline_'+c]=float(sub['baseline_'+c].mean())
+        for c in METRICS:
+            r['baseline_'+c]=float(sub['baseline_'+c].mean())
+            r['baseline_'+c+'_sd']=float(sub['baseline_'+c].std())
         summary.append(r)
     pd.DataFrame(summary).to_csv(analysis/'summary.csv',index=False)
     fixed=a.run/f'reference_ids_draw{a.draw}.json'
