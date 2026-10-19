@@ -32,3 +32,15 @@ def test_matrix_preserves_every_architecture_and_draw():
     for arm in {j['arm'] for j in plan}:
         assert {j['draw'] for j in plan if j['arm']==arm}==set(range(5))
     assert {'final7','exchange7','shared7','control1_5m','final5_5m','exchange5_5m','shared5_5m'} <= {j['arm'] for j in plan}
+
+
+def test_publication_failure_does_not_stop_training_queue(tmp_path,monkeypatch):
+    import revision_matrix as matrix
+    analysis=tmp_path/'final5/draw0_seed0/analysis';analysis.mkdir(parents=True)
+    def fail(*args,**kwargs):raise RuntimeError('tracked log changes need review')
+    monkeypatch.setattr(matrix,'publish',fail)
+    assert not matrix.publish_or_defer(tmp_path,tmp_path,'final5',0)
+    assert 'tracked log changes' in json.loads((analysis/'publication_error.json').read_text())['error']
+    monkeypatch.setattr(matrix,'publish',lambda *args,**kwargs: None)
+    assert matrix.publish_or_defer(tmp_path,tmp_path,'final5',0)
+    assert not (analysis/'publication_error.json').exists()

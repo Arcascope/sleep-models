@@ -1,7 +1,8 @@
 """Run the declared five-draw comparisons without selecting from draw zero.
 
 Wait for the already running count worker, use the common GPU lock, and publish
-one completed report at a time. Fail rather than silently skipping capped fits.
+one completed report at a time. Publication failures are recorded and retried,
+but do not stop subsequent GPU fits. Capped fits still stop for review.
 """
 import argparse
 from datetime import datetime
@@ -18,6 +19,21 @@ LARGE=['control1_5m','final5_5m','exchange5_5m','shared5_5m']
 
 def jobs():
     return [dict(arm=arm,draw=draw,seed=0) for arms in [BASE,LARGE] for draw in range(5) for arm in arms]
+
+
+def publish_or_defer(run,root,arm,draw):
+    analysis=run/arm/f'draw{draw}_seed0/analysis'
+    failure=analysis/'publication_error.json'
+    try:
+        publish(run,root,arm,draw=draw)
+    except Exception as exc:
+        error=dict(at=datetime.now().astimezone().isoformat(),arm=arm,draw=draw,
+                   error=f'{type(exc).__name__}: {exc}')
+        failure.write_text(json.dumps(error,indent=2))
+        print('PUBLICATION DEFERRED; continuing fits',json.dumps(error),flush=True)
+        return False
+    failure.unlink(missing_ok=True)
+    return True
 
 
 def main():
@@ -62,8 +78,11 @@ def main():
         if json.loads((out/'complete.json').read_text()).get('time_capped'):
             raise RuntimeError(f'{job} reached its time cap; review/resume before continuing')
         (out/'analysis/assessment.md').write_text('**Five-draw comparison.** This fit belongs to the declared revision matrix. Retain every architecture across draws 0–4; assess paired differences to the capacity-matched control per cohort after complete coverage. Draws overlap in participants and are not independent samples. The 5M panel tests capacity and sharing at five arms, without changing the mean-only supervised objective.\n')
-        publish(a.run,a.log_root,arm,draw=draw)
-    print('Declared revision matrix complete',flush=True)
+        publish_or_defer(a.run,a.log_root,arm,draw)
+    pending=[j for j in manifest['jobs'] if not (a.run/j['arm']/f"draw{j['draw']}_seed0/analysis/publication.json").exists()]
+    for job in pending:publish_or_defer(a.run,a.log_root,job['arm'],job['draw'])
+    pending=[j for j in manifest['jobs'] if not (a.run/j['arm']/f"draw{j['draw']}_seed0/analysis/publication.json").exists()]
+    print('Declared fits complete; pending publications:',json.dumps(pending),flush=True)
 
 
 if __name__=='__main__':main()
