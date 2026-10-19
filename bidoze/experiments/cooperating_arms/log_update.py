@@ -20,6 +20,7 @@ def main():
     p.add_argument('--seed',default=0,type=int)
     a=p.parse_args();out=a.run/a.arm/f'draw{a.draw}_seed{a.seed}'
     tag=f'{a.arm}-d{a.draw}-s{a.seed}'
+    analysis=out/'analysis'
     assert (out/'analysis/report_complete.json').exists()
     config=json.loads((out/'config.json').read_text());done=json.loads((out/'complete.json').read_text())
     report_commit=json.loads((analysis/'report_complete.json').read_text()).get('report_commit','unknown')
