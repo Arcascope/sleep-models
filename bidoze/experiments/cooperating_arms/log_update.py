@@ -33,7 +33,7 @@ def main():
     stamp=datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')
     images=[]
     for file in sorted((out/'analysis/figures').glob('*.png')):
-        if file.name=='cooperating-architecture.png':continue
+        if file.name=='cooperating-architecture.png' or file.name.endswith('-comparison.png'):continue
         shutil.copy2(file,day/'figures'/file.name);images.append(file.name)
     capped=' **Session capped: provisional, not converged.**' if done['time_capped'] else ''
     section=f'''{heading}
@@ -56,11 +56,7 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
         section+=f"- **{r.cohort}:** four-stage κ difference to G ×3 {r.delta_kappa_4stage:+.3f}; sleep/wake κ difference {r.kappa_sleep_wake-r.baseline_kappa_sleep_wake:+.3f}; wake specificity at matched sensitivity difference {r.wake_spec_at_95_sens-r.baseline_wake_spec_at_95_sens:+.1f} points.\n"
     if (analysis/'assessment.md').exists():
         section+='\n'+(analysis/'assessment.md').read_text()+'\n'
-    section+=f'''\n![Completed fits through {a.arm}](figures/{tag}-comparison.png)
-
-*All test recordings are scored; the dashed reference is G ×3. Each bar is one fit, with parameter count and GPU training time below. This figure is a snapshot at this publication.*
-
-![{a.arm} learning trajectory](figures/{tag}-learning.png)
+    section+=f'''\n![{a.arm} learning trajectory](figures/{tag}-learning.png)
 
 *Combined training loss and validation κ against optimizer updates. Selection uses the unsmoothed validation maximum; the plateau schedule uses the smoothed curve.*
 
@@ -88,7 +84,6 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
         shutil.copy2(a.run/'setup/capacity.png',day/'figures/cooperating-capacity.png')
         budget='![Measured parameter allocation](figures/cooperating-capacity.png)\n\n*Counts from instantiated tensors (`capacity.py`, `setup/parameter_counts.json`): C7 assigns 1.005M weights to transformers versus A7/B7’s 0.605M while using 2.4% fewer total weights than the one-path control. C7 changes both encoder sharing and capacity allocation.*\n\n'
         body=body.replace('**Interpretation.**',budget+'**Interpretation.**',1)
-    body=body.replace('Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss.', 'Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss. Arrows show forward data flow; gradients follow the paths in reverse. Local CNN-to-fusion skips and per-arm input projections are omitted for clarity.')
     body=body.replace('- A7 is training; B7 and C7 follow serially on the local 5090. Publish figures and results after each completes, with a new publication timestamp.',
                       '- Local fits and reports run serially under the GPU lock; publish each completed result above with its own timestamp.')
     body=re.sub(r'\n\*\*Local batch status[^\n]*\n', '\n', body)
@@ -110,6 +105,25 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
             body=body.replace('## 2. Open','## 2. Open'+line,1)
             if not pending:
                 body=body.replace('- Take a promising architecture to 3 and 5 arms and another seed/split. Try more arms or modest capacity growth only if that progression supports it.', '- The 3/5-arm comparison is complete. Assess another initialization and participant split before extending the count or growing capacity.')
+    # One live overview replaces redundant per-fit snapshots, and uses matched draws.
+    from comparison import comparison
+    overview=a.run/'setup/cooperating-overview.png'
+    comparison(a.run,overview)
+    shutil.copy2(overview,day/'figures/cooperating-overview.png')
+    # Also expose it to publishers already loaded before this revision.
+    shutil.copy2(overview,analysis/'figures/cooperating-overview.png')
+    body=re.sub(r'!\[Completed fits through [^\]]*\]\(figures/[^)]+-comparison.png\)\n\n\*All test recordings are scored;[^\n]+\*\n\n','',body)
+    caption='*Each bar is one complete experiment, scored separately on the two cohorts. The four panels per cohort match the tables below. κ and rate axes span 0–1; TST bias is centred on zero. Comparisons use only draws completed by every displayed experiment; labels in the figure give all available draws. Whiskers show the draw range when available, not an independent-sample confidence interval.*'
+    overview_text='![Comparison across completed experiments](figures/cooperating-overview.png)\n\n'+caption+'\n\n'
+    if '![Comparison across completed experiments]' not in body:
+        title=next(line for line in body.splitlines() if line.startswith('## 1.'))
+        body=body.replace(title+'\n\n',title+'\n\n'+overview_text,1)
+    matrix=a.run/'setup/revision_matrix.json'
+    if matrix.exists():
+        jobs=json.loads(matrix.read_text())['jobs']
+        complete_jobs=[j for j in jobs if (a.run/j['arm']/f"draw{j['draw']}_seed0/analysis/report_complete.json").exists()]
+        body=re.sub(r'\n\*\*Revision matrix status[^\n]*\n','\n',body)
+        body=body.replace('## 2. Open',f'## 2. Open\n\n**Revision matrix status {stamp}.** Scored {len(complete_jobs)}/{len(jobs)} planned fits; all five draws precede architecture or capacity conclusions.\n',1)
     log.write_text(body)
     print('Prepared publication',stamp,a.arm)
 

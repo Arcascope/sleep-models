@@ -16,8 +16,8 @@ def git(root,*args):
     return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
 
 
-def publish(run,root,arm):
-    out=run/arm/'draw0_seed0';analysis=out/'analysis';record=analysis/'publication.json'
+def publish(run,root,arm,draw=0,seed=0):
+    out=run/arm/f'draw{draw}_seed{seed}';analysis=out/'analysis';record=analysis/'publication.json'
     if record.exists():return
     if git(root,'branch','--show-current')!='main':raise RuntimeError('log worktree is not main')
     if git(root,'diff','--name-only') or git(root,'diff','--cached','--name-only'):
@@ -26,10 +26,10 @@ def publish(run,root,arm):
     git(root,'merge','--ff-only','origin/main')
     here=Path(__file__).resolve().parent
     subprocess.run([sys.executable,str(here/'log_update.py'),'--run',str(run),
-                    '--log-root',str(root),'--arm',arm],check=True)
-    day=Path('2026/October/19');tag=f'{arm}-d0-s0'
-    files=[str(day/'log.md')]
-    files += [str(day/'figures'/f.name) for f in (analysis/'figures').glob('*.png') if f.name!='cooperating-architecture.png']
+                    '--log-root',str(root),'--arm',arm,'--draw',str(draw),'--seed',str(seed)],check=True)
+    day=Path('2026/October/19');tag=f'{arm}-d{draw}-s{seed}'
+    files=[str(day/'log.md'),str(day/'figures/cooperating-overview.png')]
+    files += [str(day/'figures'/f.name) for f in (analysis/'figures').glob('*.png') if f.name!='cooperating-architecture.png' and not f.name.endswith('-comparison.png')]
     # The first result may add the measured architecture-budget diagram.
     cap=day/'figures/cooperating-capacity.png'
     if (root/cap).exists():files.append(str(cap))
@@ -39,13 +39,13 @@ def publish(run,root,arm):
     for target in re.findall(r'!\[[^\]]*\]\((figures/[^)]+)\)',(root/day/'log.md').read_text()):
         if not (root/day/target).exists():raise RuntimeError(f'missing image {target}')
     git(root,'add','--',*files)
-    git(root,'commit','-m',f'Add {arm} results and selected hypnograms.')
+    git(root,'commit','-m',f'Add {arm} draw {draw} results and selected hypnograms.')
     try:git(root,'push','origin','main')
     except subprocess.CalledProcessError:
         # A concurrent publication may have advanced main; preserve both commits.
         git(root,'pull','--rebase','origin','main')
         git(root,'push','origin','main')
-    result=dict(published=datetime.now().astimezone().isoformat(),commit=git(root,'rev-parse','HEAD'),arm=arm)
+    result=dict(published=datetime.now().astimezone().isoformat(),commit=git(root,'rev-parse','HEAD'),arm=arm,draw=draw,seed=seed)
     record.write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
 
 

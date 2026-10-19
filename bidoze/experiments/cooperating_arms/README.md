@@ -75,3 +75,36 @@ before the remaining initial results; it is not a statistical acceptance test.
 It records `setup/count_followup.json` and publishes its decision and each fit.
 No continuation is chosen from a session-capped initial comparison. Higher counts
 and capacity increases await assessment of these comparisons and replication.
+
+## October 19 revision: all draws before selection, then about 5M parameters
+
+The draw-0 near-control gate in `advance_counts.py` was an exploratory scheduling
+choice. It is superseded by `revision_matrix.py`: retain control1, final3, final5,
+final7, exchange7 and shared7 on every existing draw 0–4 (30 fits including
+already completed fits). Then run control1_5m, final5_5m, exchange5_5m and
+shared5_5m on all five draws (20 fits). This is a compact capacity comparison at
+five arms, not an exhaustive cross of branch count and capacity. Widths are
+416/152/152/192 and instantiated counts are 5,065,428/4,940,400/4,967,160/4,956,724.
+The shared CNN remains width 256; transformer allocation grows. Every multiarm
+configuration retains one balanced loss on the probability mean.
+
+`revision_matrix.py` takes the same five paths as `advance_counts.py`, preflights
+participant separation and both adult cohorts in every split, verifies historical
+G ×3 prediction coverage, and writes `setup/revision_matrix.json`. `--prepare-only`
+performs preflight without fitting. The worker waits for the original count
+service to finish, then skips published fits and runs the remaining matrix under
+the shared GPU lock. Each fit publishes its report and refreshes the overview.
+A session-capped fit stops the matrix for review rather than entering comparisons.
+Use one initialization seed per draw here; these runs do not measure pure seed
+variance. The adult participants overlap across draws: compare paired changes
+to the same-draw, same-budget control separately per cohort; report every draw,
+mean and range, without treating five overlapping draws as five independent
+population samples. The fixed draw manifests cover 27/28 SleepAccel and 32/32
+Clinical participants in test sets.
+
+`comparison.py` writes a top-of-section 2×4 overview: four-stage κ, sleep/wake κ,
+wake specificity at 95% sleep sensitivity, and signed TST bias. All displayed
+experiments use their common completed draws; coverage is explicit in the figure
+and adjacent JSON, with source rows in CSV. Rate/κ axes span 0–1 and TST bias
+uses symmetric limits. Per-fit comparison embeds are removed; learning,
+contribution and selected hypnogram figures remain.

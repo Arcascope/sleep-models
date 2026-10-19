@@ -30,14 +30,20 @@ TEST = ['testSleepAccel', 'testClinical']
 def timestamp(): return datetime.now().astimezone().isoformat(timespec='seconds')
 
 
-def configuration(arm):
+LARGE_WIDTHS = {('control', 1): 416, ('final', 5): 152, ('exchange', 5): 152, ('shared', 5): 192}  # nearest discrete widths to five million instantiated weights
+
+
+def configuration(arm, width=None):
+    large=arm.endswith('_5m')
+    arm=arm.removesuffix('_5m')
     kind = arm.rstrip('0123456789')
     n = int(arm[len(kind):])
     widths = {1: 256, 3: 124, 5: 88, 7: 68}
     shared_widths = {3: 140, 5: 108, 7: 88}
     if kind not in ('final', 'exchange', 'shared', 'control'):
         raise ValueError(arm)
-    s = ArmSpec(members=n, width=shared_widths[n] if kind == 'shared' else widths[n],
+    chosen=width if width is not None else (LARGE_WIDTHS[(kind,n)] if large else shared_widths[n] if kind == 'shared' else widths[n])
+    s = ArmSpec(members=n, width=chosen,
                 shared_cnn=kind == 'shared', exchange_after=(2,) if kind == 'exchange' else ())
     cfg = BiDozeNetConfig(num_classes=4, score_gap=True, d_model=s.width,
         n_heads=8 if n == 1 else 4, d_ff=2*s.width, n_transformer_layers=4,
