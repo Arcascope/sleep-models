@@ -3375,6 +3375,7 @@ class BiDozeNetModel(CVModel):
         fit_state_path: str | os.PathLike | None = None,
         train_weights: np.ndarray | None = None,
         member_rows: Sequence[Sequence[int]] | None = None,
+        epoch_callback=None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3622,6 +3623,8 @@ class BiDozeNetModel(CVModel):
             history["eval_kappa"].append(kappa)
             history["smoothed_eval_kappa"].append(decision.smoothed_kappa)
             history["lr"].append(lr)
+            if epoch_callback is not None:
+                epoch_callback(epoch, params, history)
 
             if np.isfinite(kappa) and kappa > best_kappa:
                 best_kappa = kappa
