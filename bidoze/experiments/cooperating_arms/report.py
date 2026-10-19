@@ -139,6 +139,16 @@ def main():
             r['split7_wake_spec_at_95_sens']=100*scoring.wake_specificity_at(splitpool[ds],.95)
         summary.append(r)
     pd.DataFrame(summary).to_csv(analysis/'summary.csv',index=False)
+    if len(q)>1:
+        member_rows=[];diversity=[]
+        for ds,cohort in COHORTS.items():
+            pieces=[value for (dataset,sid),value in full.items() if dataset==ds]
+            truth=np.concatenate([y[(y>=0)&(y<4)] for y,*rest in pieces])
+            arms=[np.concatenate([value[3][i,(value[0]>=0)&(value[0]<4)] for value in pieces]) for i in range(len(q))]
+            mr,dr=scoring.joint.members_of(a.draw,a.arm,cohort,arms,truth,divisor)
+            member_rows.extend(mr);diversity.append(dr)
+        pd.DataFrame(member_rows).to_csv(analysis/'members.csv',index=False)
+        pd.DataFrame(diversity).to_csv(analysis/'diversity.csv',index=False)
     fixed=a.run/f'reference_ids_draw{a.draw}.json'
     if fixed.exists():references=json.loads(fixed.read_text())
     else:
