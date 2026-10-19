@@ -59,7 +59,7 @@ def main():
     a = ap.parse_args()
     out = a.run / a.arm / f'draw{a.draw}_seed{a.seed}'
     out.mkdir(parents=True, exist_ok=True)
-    if (out/'complete.json').exists():
+    if (out/'complete.json').exists() and not json.loads((out/'complete.json').read_text()).get('time_capped',False):
         raise RuntimeError(f'already complete: {out}')
     cfg, spec = configuration(a.arm)
     # Tiny initialization counts real tensors without allocating long attention surfaces.
