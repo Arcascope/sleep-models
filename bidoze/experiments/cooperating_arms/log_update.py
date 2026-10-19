@@ -46,7 +46,10 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
     for _,r in summary.iterrows():
         section+=f"| {r.cohort} | {int(r.recordings)} | {a.arm} | {r.kappa_4stage:.3f} ± {r.kappa_4stage_sd:.3f} | {r.kappa_sleep_wake:.3f} ± {r.kappa_sleep_wake_sd:.3f} | {r.wake_spec_at_95_sens:.1f} | {r.tst_bias_minutes:+.1f} |\n"
         section+=f"| {r.cohort} | {int(r.recordings)} | Historical G ×3 | {r.baseline_kappa_4stage:.3f} ± {r.baseline_kappa_4stage_sd:.3f} | {r.baseline_kappa_sleep_wake:.3f} ± {r.baseline_kappa_sleep_wake_sd:.3f} | {r.baseline_wake_spec_at_95_sens:.1f} | — |\n"
-    section+='\n'
+    for _,r in summary.iterrows():
+        if 'split7_kappa_4stage' in r.index:
+            section+=f'| {r.cohort} | {int(r.recordings)} | Historical split7 (own losses) | {r.split7_kappa_4stage:.3f} ± {r.split7_kappa_4stage_sd:.3f} | {r.split7_kappa_sleep_wake:.3f} ± {r.split7_kappa_sleep_wake_sd:.3f} | {r.split7_wake_spec_at_95_sens:.1f} | — |\n'
+    section+='\nHistorical split7 is rescored from the October 17 saved predictions on these same test IDs and decoder. Comparing it with the new fits changes the objective and adds feature dropout; it is a historical contrast rather than an isolated objective ablation.\n\n'
     for _,r in summary.iterrows():
         section+=f"- **{r.cohort}:** four-stage κ difference to G ×3 {r.delta_kappa_4stage:+.3f}; sleep/wake κ difference {r.kappa_sleep_wake-r.baseline_kappa_sleep_wake:+.3f}; wake specificity at matched sensitivity difference {r.wake_spec_at_95_sens-r.baseline_wake_spec_at_95_sens:+.1f} points.\n"
     section+=f'''\n![Completed fits through {a.arm}](figures/{tag}-comparison.png)

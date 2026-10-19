@@ -84,6 +84,7 @@ def main():
     logger=scoring.MetricsLogger(scoring.load_metrics_config(HERE.parents[1]/'config/metrics.json')[0])
     divisor=np.load(out/'stage_divisor.npy');baseline=baseline_predictions(a.baseline_run,a.draw)
     rows=[];full={};pooled={ds:{} for ds in COHORTS};basepool={ds:{} for ds in COHORTS}
+    splitpool={ds:{} for ds in COHORTS}
     for f in sorted((out/'predictions').glob('*.npz')):
         ds=next(d for d in COHORTS if f.stem.startswith(d+'_'));sid=f.stem[len(ds)+1:]
         z=np.load(f);q=z['probabilities'];y=z['labels'];p=q.mean(0)
@@ -93,11 +94,18 @@ def main():
         by,bp=baseline[(ds,sid)];np.testing.assert_array_equal(np.where(y<0,-1,y),by)
         calls=scoring.hybrid_calls(p,p,divisor);bc=scoring.hybrid_calls(bp,bp,divisor)
         m=scoring.subject_metrics(logger,y,p,calls);bm=scoring.subject_metrics(logger,y,bp,bc)
+        splitfile=a.source_run/'split7_1x'/f'draw{a.draw}'/'predictions'/f'draw{a.draw}_seed_0'/f'{ds}_{sid}.csv'
+        if splitfile.exists():
+            sy,sp=scoring.load_subject(splitfile);np.testing.assert_array_equal(sy,by)
+            sm=scoring.subject_metrics(logger,sy,sp,scoring.hybrid_calls(sp,sp,divisor))
+            splitpool[ds][sid]=(sy,sp)
+        else:sm=None
         valid=(y>=0)&(y<4)
         r=dict(arm=a.arm,cohort=COHORTS[ds],dataset=ds,subject_id=sid,n_scored=int(valid.sum()),
                **{k:float(m[k]) for k in METRICS},
                **{f'baseline_{k}':float(bm[k]) for k in METRICS},
                delta_kappa_4stage=float(m['kappa_4stage']-bm['kappa_4stage']))
+        if sm is not None:r.update({f'split7_{k}':float(sm[k]) for k in METRICS})
         for stage,label in enumerate(['wake','light','deep','rem']):
             on=valid&(y==stage);r[f'recall_{label}']=float(np.mean(calls[on]==stage)) if on.any() else np.nan
         mins=scoring.sleep_minutes(y[valid],calls[valid]);r['tst_bias_minutes']=mins['pred_tst_minutes']-mins['psg_tst_minutes']
@@ -124,6 +132,11 @@ def main():
         for c in METRICS:
             r['baseline_'+c]=float(sub['baseline_'+c].mean())
             r['baseline_'+c+'_sd']=float(sub['baseline_'+c].std())
+        if len(splitpool[ds])==len(sub):
+            for c in METRICS:
+                r['split7_'+c]=float(sub['split7_'+c].mean())
+                r['split7_'+c+'_sd']=float(sub['split7_'+c].std())
+            r['split7_wake_spec_at_95_sens']=100*scoring.wake_specificity_at(splitpool[ds],.95)
         summary.append(r)
     pd.DataFrame(summary).to_csv(analysis/'summary.csv',index=False)
     fixed=a.run/f'reference_ids_draw{a.draw}.json'
