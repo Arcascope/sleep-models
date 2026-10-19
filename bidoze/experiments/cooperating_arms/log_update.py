@@ -70,6 +70,11 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     marker='## 2. Open'
     assert marker in body
     body=body.replace(marker,section+marker,1)
+    if 'cooperating-capacity.png' not in body:
+        shutil.copy2(a.run/'setup/capacity.png',day/'figures/cooperating-capacity.png')
+        budget='![Measured parameter allocation](figures/cooperating-capacity.png)\n\n*Counts from instantiated tensors (`capacity.py`, `setup/parameter_counts.json`): C7 assigns 1.005M weights to transformers versus A7/B7’s 0.605M while using 2.4% fewer total weights than the one-path control. C7 changes both encoder sharing and capacity allocation.*\n\n'
+        body=body.replace('**Interpretation.**',budget+'**Interpretation.**',1)
+    body=body.replace('Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss.', 'Three representative arms are drawn; the initial fits use seven. Every path ends in the same single loss. Arrows show forward data flow; gradients follow the paths in reverse. Local CNN-to-fusion skips and per-arm input projections are omitted for clarity.')
     body=body.replace('- A7 is training; B7 and C7 follow serially on the local 5090. Publish figures and results after each completes, with a new publication timestamp.',
                       '- Local fits and reports run serially under the GPU lock; publish each completed result above with its own timestamp.')
     log.write_text(body)

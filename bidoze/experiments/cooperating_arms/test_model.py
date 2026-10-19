@@ -92,3 +92,13 @@ def test_research_checkpoint_roundtrip(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps(dict(config=module.cfg.to_dict(), spec=asdict(module.spec))))
     loaded = CooperatingModel.load_research(tmp_path)
     np.testing.assert_allclose(loaded.infer(np.asarray(x)), model.infer(np.asarray(x)), atol=1e-6)
+
+
+@pytest.mark.parametrize('shared,exchange', [(False,()),(False,(1,)),(True,())])
+def test_prepended_absence_does_not_change_present_calls(shared, exchange):
+    m,p,x,mask=fixture(shared,exchange)
+    expected=m.apply({'params':p},x,mask)
+    absent=jnp.zeros((1,4,5,2)).at[:,:,-1,:].set(1)
+    extended=jnp.concatenate([absent,x],axis=1)
+    actual=m.apply({'params':p},extended,jnp.ones(extended.shape[:2]))[:,4:]
+    np.testing.assert_allclose(actual,expected,atol=1e-5,rtol=1e-5)
