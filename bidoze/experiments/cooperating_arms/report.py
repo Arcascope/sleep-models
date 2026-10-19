@@ -173,6 +173,8 @@ def main():
     fig.suptitle(f'{a.arm}: how contributions develop on two validation nights')
     fig.tight_layout();fig.savefig(figs/f'{tag}-contributions.png',dpi=150);plt.close(fig)
     architecture(figs/'cooperating-architecture.png')
+    from comparison import comparison
+    comparison(a.run,figs/f'{tag}-comparison.png')
     (analysis/'report_complete.json').write_text(json.dumps(dict(at=datetime.now().astimezone().isoformat(),selected=selected),indent=2))
     print(pd.DataFrame(summary).to_string(index=False));print('figures',figs)
 

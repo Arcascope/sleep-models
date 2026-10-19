@@ -48,7 +48,11 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
     section+='\n'
     for _,r in summary.iterrows():
         section+=f"- **{r.cohort}:** four-stage κ difference to G ×3 {r.delta_kappa_4stage:+.3f}; sleep/wake κ difference {r.kappa_sleep_wake-r.baseline_kappa_sleep_wake:+.3f}; wake specificity at matched sensitivity difference {r.wake_spec_at_95_sens-r.baseline_wake_spec_at_95_sens:+.1f} points.\n"
-    section+=f'''\n![{a.arm} learning trajectory](figures/{tag}-learning.png)
+    section+=f'''\n![Completed fits through {a.arm}](figures/{tag}-comparison.png)
+
+*All test recordings are scored; the dashed reference is G ×3. Each bar is one fit, with parameter count and GPU training time below. This figure is a snapshot at this publication.*
+
+![{a.arm} learning trajectory](figures/{tag}-learning.png)
 
 *Combined training loss and validation κ against optimizer updates. Selection uses the unsmoothed validation maximum; the plateau schedule uses the smoothed curve.*
 
