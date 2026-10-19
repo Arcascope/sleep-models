@@ -86,6 +86,9 @@ def main():
     for f in sorted((out/'predictions').glob('*.npz')):
         ds=next(d for d in COHORTS if f.stem.startswith(d+'_'));sid=f.stem[len(ds)+1:]
         z=np.load(f);q=z['probabilities'];y=z['labels'];p=q.mean(0)
+        if not np.isfinite(q).all():raise ValueError(f'nonfinite probabilities in {f.name}')
+        np.testing.assert_allclose(q.sum(-1),1,atol=1e-5)
+        assert q.shape[1:]==(len(y),5)
         by,bp=baseline[(ds,sid)];np.testing.assert_array_equal(np.where(y<0,-1,y),by)
         calls=scoring.hybrid_calls(p,p,divisor);bc=scoring.hybrid_calls(bp,bp,divisor)
         m=scoring.subject_metrics(logger,y,p,calls);bm=scoring.subject_metrics(logger,y,bp,bc)
@@ -108,6 +111,7 @@ def main():
                 r[f'omit_readout_{i}_delta_accuracy']=float(np.mean(calls[valid]==y[valid])-np.mean(lc[valid]==y[valid]))
         rows.append(r);full[(ds,sid)]=(y,p,calls,q,bp,bc)
         pooled[ds][sid]=(y,p);basepool[ds][sid]=(y,bp)
+    assert set(full)==set(baseline),'incomplete or unexpected test population'
     df=pd.DataFrame(rows);df.to_csv(analysis/'subjects.csv',index=False)
     summary=[]
     for ds,cohort in COHORTS.items():
