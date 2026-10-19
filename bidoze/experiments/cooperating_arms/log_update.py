@@ -69,6 +69,9 @@ Selected hypnograms below show actual adult-decoder calls; their probability pan
     subjects=pd.read_csv(out/'analysis/subjects.csv')
     for item in selected:
         ds,sid=item['dataset'],item['subject_id'];r=subjects[(subjects.dataset==ds)&(subjects.subject_id.astype(str)==str(sid))].iloc[0]
+        refname=f'reference-G3-d{a.draw}-{ds}-{sid}.png'
+        if item['reason']=='fixed reference' and refname not in body:
+            section+=f'![Historical G ×3 reference for {sid}](figures/{refname})\n\n*G ×3 reference on the same recording, for comparison with the new model below.*\n\n'
         section+=f"![{a.arm}, {r.cohort} {sid}, {item['reason']}](figures/{tag}-{ds}-{sid}.png)\n\n*{r.cohort} {sid}: {item['reason']}; κ 4-stage {r.kappa_4stage:.3f} versus G ×3 {r.baseline_kappa_4stage:.3f} (Δ {r.delta_kappa_4stage:+.3f}).*\n\n"
     marker='## 2. Open'
     assert marker in body

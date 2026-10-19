@@ -29,7 +29,7 @@ def publish(run,root,arm):
                     '--log-root',str(root),'--arm',arm],check=True)
     day=Path('2026/October/19');tag=f'{arm}-d0-s0'
     files=[str(day/'log.md')]
-    files += [str(day/'figures'/f.name) for f in (analysis/'figures').glob(f'{tag}-*.png')]
+    files += [str(day/'figures'/f.name) for f in (analysis/'figures').glob('*.png') if f.name!='cooperating-architecture.png']
     # The first result may add the measured architecture-budget diagram.
     cap=day/'figures/cooperating-capacity.png'
     if (root/cap).exists():files.append(str(cap))

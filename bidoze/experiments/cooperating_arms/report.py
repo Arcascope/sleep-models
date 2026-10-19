@@ -145,6 +145,14 @@ def main():
             y,p,calls,q,bp,bc=full[(ds,sid)]
             path=a.source_run/'setup/cache'/f'draw{a.draw}'/'12Hz_log_PSD_aligned'/f'{ds}_subject_{sid}_features.npz'
             b=CacheBundle.from_npz(path);inputs=recording_input(b.X[0],len(y),1)
+            if reason=='fixed reference':
+                reference=a.run/'setup'/f'reference-G3-d{a.draw}-{ds}-{sid}.png'
+                if not reference.exists():
+                    render_subject_hypnogram(reference,inputs,bp,y,
+                        f'Historical G x3 | {cohort} {sid} | adult decoder; raw mean probabilities',
+                        channel_names=['Magnitude','Jerk'],epoch_seconds=30,predicted_stages=bc)
+                import shutil
+                shutil.copy2(reference,figs/reference.name)
             render_subject_hypnogram(figs/f'{tag}-{ds}-{sid}.png',inputs,p,y,
                 f'{a.arm} | {cohort} {sid} | {reason} | adult decoder; raw mean probabilities',
                 channel_names=['Magnitude','Jerk'],epoch_seconds=30,predicted_stages=calls)
