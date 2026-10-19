@@ -172,6 +172,17 @@ def main():
     axes[0,-1].legend(ncol=2,fontsize=8)
     fig.suptitle(f'{a.arm}: how contributions develop on two validation nights')
     fig.tight_layout();fig.savefig(figs/f'{tag}-contributions.png',dpi=150);plt.close(fig)
+    contribution_cols=[c for c in df if c.startswith('omit_readout_')]
+    if contribution_cols:
+        fig,axes=plt.subplots(1,2,figsize=(12,4),sharey=True)
+        for ax,cohort in zip(axes,COHORTS.values()):
+            values=100*df[df.cohort==cohort][contribution_cols].mean().to_numpy()
+            ax.bar(range(len(values)),values,color=['#70ad47' if x>=0 else '#d47771' for x in values])
+            ax.axhline(0,color='black',lw=.7)
+            ax.set(title=cohort,xlabel='Readout arm',xticks=range(len(values)))
+        axes[0].set_ylabel('Accuracy gained by retaining readout (points)')
+        fig.suptitle(f'{a.arm}: does each readout help the combined prediction?')
+        fig.tight_layout();fig.savefig(figs/f'{tag}-readouts.png',dpi=150);plt.close(fig)
     architecture(figs/'cooperating-architecture.png')
     from comparison import comparison
     comparison(a.run,figs/f'{tag}-comparison.png')

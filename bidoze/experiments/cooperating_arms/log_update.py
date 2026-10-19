@@ -63,6 +63,8 @@ Mean over all test recordings within each cohort; ± is SD across recordings, no
 Selected hypnograms below show actual adult-decoder calls; their probability panels retain the raw mean probabilities. PSG gaps/unscored epochs are excluded from the numerical scoring. The fixed reference is retained across arms; largest improvement/regression is selected retrospectively against G ×3 and is illustrative.
 
 '''
+    if (day/'figures'/f'{tag}-readouts.png').exists():
+        section+=f'![Final readout contributions](figures/{tag}-readouts.png)\n\n*Mean per-recording accuracy difference between the full mean and a mean omitting one readout. Positive values mean retaining that readout helps. All internal paths remain active: this is a readout diagnostic, not removal of the branch or an individual-training requirement.*\n\n'
     subjects=pd.read_csv(out/'analysis/subjects.csv')
     for item in selected:
         ds,sid=item['dataset'],item['subject_id'];r=subjects[(subjects.dataset==ds)&(subjects.subject_id.astype(str)==str(sid))].iloc[0]
