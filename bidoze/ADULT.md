@@ -38,6 +38,62 @@ log(divisor) from the logits, moves sleep/wake to 97–99% sleep sensitivity and
 specificity on SleepAccel. The divisor's wake entry depends on the adult reference's share of
 wake, which differs between cohorts.
 
+## The gap rule
+
+The gap rule is an option for retraining the adult model. The release recipe above learns gap as
+a fifth class from the gap row of the input (the share of an epoch's frames with no accelerometer
+data); with the gap rule, gap is not learned:
+
+- An epoch with accelerometer data is never called gap: its gap probability is 0.
+- An epoch with no accelerometer data (gap row = 1) is called gap: its gap probability is 1.
+- An epoch with no accelerometer data is zeroed in the input and hidden from the transformer's
+  attention, so the missing epochs do not affect the scores of the epochs around them.
+- The loss ignores epochs with no accelerometer data.
+
+`arcasleep bidoze predict` already marks `is_gap == 1` from the gap row, so the CSV flags are the
+same with or without the rule. The rule changes the model's stage probabilities, which no longer
+depend on how many missing epochs a recording has or where they fall.
+
+**Selecting it.** Set `"gap_from_row": true` in `model.json`; the default is `false`.
+`config/model-gap-rule.json` is `config/model.json` with this key set. The training config is
+unchanged. A bundle records the key in its `config.json`, so `load_predictor` and
+`arcasleep bidoze predict` apply the rule to bundles trained this way, and bundles trained without
+it score as before. The rule needs `score_gap: true`.
+
+**Retraining the adult release with the gap rule** uses the same data, folds and seeds as the
+release recipe (3 seeds); the model config is the only change:
+
+```bash
+ADULT_DEVICES_MODEL=config/model-gap-rule.json \
+    bash experiments/adult_devices/task.sh matched/final <out dir>
+```
+
+For a cloud run, set `ADULT_DEVICES_MODEL` and `BIDOZE_EXPERIMENT=experiments/adult_devices`
+for `scripts/harness.sh`, with the phase `matched/final`.
+
+**Evidence** (research log, October 16, 2026, §8): 5 draws, each training on 101 of 201 Weaver
+children and 30 of 60 adults and testing on the other 30 adults. The 3-seed gap-rule model is
+compared with the release recipe's 3 independent seeds; ± is the 95% interval over the 5 draws.
+
+| Check | Release recipe, 3 seeds | Gap rule, 3 seeds |
+|:---|:---|:---|
+| PSG sleep with data called gap (%), maximum over draws | 0.35 | 0.00 |
+| Change in PSG sleep called sleep after adding 1,700 missing epochs before the night (points), range over draws | −13.3 to +0.8 | 0.0 |
+| Free-living Apple Watch sleep called gap (%), range over draws | 0.0 to 64.9 | 0.0 |
+
+| Difference, gap rule − release recipe | κ 4-stage | κ sleep/wake |
+|:---|--:|--:|
+| SleepAccel | +0.007 ± 0.010 | −0.014 ± 0.050 |
+| SleepAccel-Clinical | +0.014 ± 0.010 | +0.011 ± 0.020 |
+
+- The research log's three gap checks are the two rows above and a third: the same free-living
+  windows scored cut and uncut should give the same sleep (release recipe: −0.2 to +64.0 points
+  difference; gap rule: −0.5 to +0.2). The release recipe fails the first check on 2 of 5 draws,
+  the second on 3 and the third on 2; the gap rule passes all three on all 5 draws.
+- Sleep/wake κ at matched sleep sensitivity: −0.006 ± 0.024; the difference is not significant.
+- Total sleep time on SleepAccel is underestimated by 14.0 minutes with the gap rule (7.5 minutes
+  for the release recipe); on SleepAccel-Clinical it is overestimated by 12.7 and 12.1 minutes.
+
 ## Scoring recordings
 
 An *adult bundle* is a directory with one release bundle per seed (`seed<k>/`),

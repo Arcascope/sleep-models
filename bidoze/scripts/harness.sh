@@ -33,6 +33,9 @@ WORK_DIR="${BIDOZE_WORK_DIR:-${TMPDIR:-/tmp}/bidoze-folds}"
 # SWA). For a quick wiring check, override BIDOZE_TRAINING_CONFIG with a
 # smaller custom config.
 TRAINING_CONFIG="${BIDOZE_TRAINING_CONFIG:-config/training-balanced.json}"
+# config/model.json is the release architecture; BIDOZE_MODEL_CONFIG=config/model-gap-rule.json
+# adds the gap rule (gap called only from the gap row, absent epochs masked).
+MODEL_CONFIG="${BIDOZE_MODEL_CONFIG:-config/model.json}"
 # The cv config follows the recipe unless BIDOZE_CV_CONFIG names one: the
 # balanced recipe has no deblip phase, so it reads config/cv-balanced.json,
 # which lists no deblip sets.
@@ -68,7 +71,7 @@ done
 BASE_ARGS=(
     --cache-only
     -pc config/inputs.json
-    -mc config/model.json
+    -mc "$MODEL_CONFIG"
     -tc "$TRAINING_CONFIG"
     -mtc config/metrics.json
     --split-seed 0

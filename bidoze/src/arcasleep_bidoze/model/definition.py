@@ -106,6 +106,11 @@ class BiDozeNetConfig(ModelConfig):
         (0.3, 0.8, 2.0, 2.0, 1.0),
     )
     stage_focal_gammas: Tuple[float, float, float] = (2.0, 2.0, 2.0)
+    # With this `True` the gap output is not learned: an epoch whose gap row is
+    # 1 (no accelerometer frames) is absent -- its input is zeroed, it is hidden
+    # from attention as a key, and its output is gap -- and every other epoch
+    # gets gap probability 0. Needs `score_gap` for the 5-way output layout.
+    gap_from_row: bool = False
 
     @property
     def output_classes(self) -> int:
@@ -166,6 +171,9 @@ class BiDozeNetConfig(ModelConfig):
 
         if len(config.stage_epoch_fractions) != 3 or len(config.stage_focal_alphas) != 3:
             raise ValueError("BiDoze uses exactly three curriculum stages")
+
+        if config.gap_from_row and not config.score_gap:
+            raise ValueError("gap_from_row sets the gap output, so it needs score_gap")
 
         return config
 
@@ -964,6 +972,7 @@ class ALiBiAttentionModule(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, causal_mask: jnp.ndarray | None = None, train: bool = False) -> jnp.ndarray:
+        """``causal_mask`` is ``(T, T)`` or per row ``(B, T, T)``; ``True`` hides a key."""
         batch_size, time_steps, _ = x.shape
         qkv = nn.Dense(3 * self.d_model, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="qkv")(x)
         qkv = qkv.reshape((batch_size, time_steps, 3, self.n_heads, self.d_head))
@@ -977,7 +986,8 @@ class ALiBiAttentionModule(nn.Module):
         bias = -self.slopes[:, None, None] * dist[None, :, :]
         attn = attn + bias[None, :, :, :]
         if causal_mask is not None:
-            attn = jnp.where(causal_mask[None, None, :, :], -1e9, attn)
+            hidden = causal_mask[:, None, :, :] if causal_mask.ndim == 3 else causal_mask[None, None, :, :]
+            attn = jnp.where(hidden, -1e9, attn)
 
         attn = jax.nn.softmax(attn, axis=-1)
         attn = nn.Dropout(rate=self.attn_dropout, name="attn_drop")(attn, deterministic=not train)
@@ -1020,7 +1030,8 @@ class BidirectionalCausalTransformerModule(nn.Module):
     use_bicausal: bool = True
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, train: bool = False) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray, train: bool = False, present: jnp.ndarray | None = None) -> jnp.ndarray:
+        """``present`` ``(B, T)`` bool, when given, hides every other epoch as an attention key."""
         heads_per_direction = self.n_heads // 2
         d_stream = self.d_model // 2
         time_steps = x.shape[1]
@@ -1030,6 +1041,10 @@ class BidirectionalCausalTransformerModule(nn.Module):
         else:
             fwd_mask = None
             rev_mask = None
+        if present is not None:
+            absent_keys = ~present[:, None, :]
+            fwd_mask = absent_keys if fwd_mask is None else fwd_mask[None] | absent_keys
+            rev_mask = absent_keys if rev_mask is None else rev_mask[None] | absent_keys
 
         h_fwd = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_fwd")(x)
         h_rev = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="in_proj_rev")(x)
@@ -1056,6 +1071,30 @@ class GatedFusionModule(nn.Module):
         return nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm")(fused)
 
 
+# A logit far enough below the others that its softmax probability is 0 in float32.
+FIXED_LOGIT_OFF = -1e4
+
+
+def present_from_gap_row(x: jnp.ndarray) -> jnp.ndarray:
+    """``(B, T)`` bool: the epochs of ``(B, T, F + 1, C)`` whose gap row is below 1.
+
+    The gap row (the last row of the frequency axis, ``arcasleep.data.batching.GAP_ROW``) is the
+    share of an epoch's frames with no accelerometer data; at 1 the epoch is absent, as
+    ``arcasleep.predict`` decides ``is_gap``.
+    """
+    if x.ndim != 4:
+        raise ValueError(f"gap_from_row reads the gap row of (B, T, F + 1, C) input, got {x.shape}")
+    return x[:, :, -1, 0] < 1.0
+
+
+def with_fixed_gap(stage_logits: jnp.ndarray, present: jnp.ndarray) -> jnp.ndarray:
+    """``(B, T, S + 1)``: the stage logits on present epochs, the gap logit on absent ones."""
+    off = jnp.asarray(FIXED_LOGIT_OFF, dtype=stage_logits.dtype)
+    stages = jnp.where(present[..., None], stage_logits, off)
+    gap = jnp.where(present, off, 0.0).astype(stage_logits.dtype)[..., None]
+    return jnp.concatenate([stages, gap], axis=-1)
+
+
 class BiDozeNetModule(nn.Module):
     cfg: BiDozeNetConfig
 
@@ -1071,6 +1110,11 @@ class BiDozeNetModule(nn.Module):
             x = _pool_frames_to_epochs(x, self.cfg.frames_per_epoch)
             if valid_mask is not None:
                 valid_mask = _pool_frames_to_epochs(valid_mask, self.cfg.frames_per_epoch)
+        present = None
+        if self.cfg.gap_from_row:
+            present = present_from_gap_row(x)
+            presence = present.astype(x.dtype)
+            valid_mask = presence if valid_mask is None else _normalize_valid_mask(x, valid_mask) * presence
         x = _flatten_timestep_features(x)
         # Zeroes invalid rows and passes the spectrogram through otherwise;
         # normalization is learned downstream by LayerNorm.
@@ -1096,7 +1140,7 @@ class BiDozeNetModule(nn.Module):
             self.cfg.attn_dropout,
             use_bicausal=self.cfg.use_bicausal,
             name="bi_causal_transformer",
-        )(h_local, train=train)
+        )(h_local, train=train, present=present)
         h_fused = GatedFusionModule(self.cfg.d_model, name="gated_fusion")(h_local, h_global)
 
         # One MLP readout head.
@@ -1109,11 +1153,13 @@ class BiDozeNetModule(nn.Module):
         h = _gelu(h)
         h = nn.Dropout(rate=self.cfg.dropout, name="head_drop")(h, deterministic=not train)
         logits = nn.Dense(
-            self.cfg.output_classes,
+            self.cfg.num_classes if self.cfg.gap_from_row else self.cfg.output_classes,
             kernel_init=GLOROT_UNIFORM,
             bias_init=ZEROS,
             name="head_logits",
         )(h)
+        if present is not None:
+            logits = with_fixed_gap(logits, present)
         if return_outputs:
             assert isinstance(learned_norm_outputs, dict)
             return {
@@ -3215,8 +3261,9 @@ class BiDozeNetModel(CVModel):
         num_classes = cfg.num_classes
         output_classes = cfg.output_classes
         # With score_gap, gap and padding epochs train the extra logit; without
-        # it they are masked like unscored epochs.
-        gap_class = num_classes if cfg.score_gap else -1
+        # it, or with gap_from_row (the gap output is set from the input), they are
+        # masked like unscored epochs.
+        gap_class = num_classes if cfg.score_gap and not cfg.gap_from_row else -1
         module = self.module
 
         tx = optax.inject_hyperparams(optax.adamw)(
