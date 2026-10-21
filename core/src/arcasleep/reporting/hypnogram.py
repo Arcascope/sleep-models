@@ -269,19 +269,24 @@ def render_subject_hypnogram(
     channel_names: list[str] | None = None,
     epoch_seconds: float | None = None,
     feature_kind: str = "spectrogram",
+    predicted_stages: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Draw one subject's hypnogram PNG and return its stage summary.
 
     ``inputs`` is the pooled, padded feature surface ``(T, F[, C])``; ``probs``
     is ``(T, num_classes + score_gap)`` softmax; ``labels`` is the rendered
-    truth with the gap class at index 4 (pad at ``-2``).
+    truth with the gap class at index 4 (pad at ``-2``). ``predicted_stages``
+    can supply the actual decoder calls while probability panels retain the raw
+    probabilities (for example, the adult stage-divisor decoder).
     """
     if feature_kind not in _VALID_FEATURE_KINDS:
         raise ValueError(
             f"feature_kind must be one of {sorted(_VALID_FEATURE_KINDS)}, got {feature_kind!r}"
         )
     time_indices = np.arange(probs.shape[0])
-    pred_stage = np.argmax(probs, axis=-1)
+    pred_stage = np.argmax(probs, axis=-1) if predicted_stages is None else np.asarray(predicted_stages)
+    if pred_stage.shape != (probs.shape[0],):
+        raise ValueError("predicted_stages must have one call per epoch")
     pred_conf = np.max(probs, axis=-1)
     summary = subject_stage_summary(labels, pred_stage)
 

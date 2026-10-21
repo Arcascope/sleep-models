@@ -1,7 +1,7 @@
 """The BiDoze training recipe: its ``training.json`` and one fold's fit."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -38,15 +38,29 @@ CURRICULUM_ONLY_KEYS = (
     "anchor_l2_weight",
     "disable_swa",
 )
+MEMBER_RECORDINGS = ("bootstrap", "half")
 BALANCED_ONLY_KEYS = (
     "balance_beta",
     "patience_unit",
     "lr_drop_patience",
     "early_stop_patience",
     "eval_smoothing_steps",
+    "patience_start_kappa",
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "joint_members",
+    "member_loss_weight",
+    "member_batch_split",
+    "role_loss_weight",
+    "max_train_seconds",
+    "fit_state_path",
+    "bootstrap_seed",
+    "subsample_fraction",
+    "subsample_seed",
+    "member_recordings",
+    "member_seed",
+    "epoch_weights",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -90,6 +104,9 @@ class TrainingConfig:
     lr_drop_patience: int = 10
     early_stop_patience: int = 25
     eval_smoothing_steps: int = 0
+    # The patience counts only from the first epoch whose eval kappa exceeds this; None counts
+    # from the first epoch.
+    patience_start_kappa: float | None = None
     # Share of the training subjects held out to early-stop on.
     eval_fraction: float = 0.3
     # A release bundle or a checkpoint (.pisces) whose weights the fit starts from; None starts
@@ -98,6 +115,40 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # With 2 or more, one fit trains this many networks whose mean output takes the loss and
+    # decides early stopping (arcasleep_bidoze.joint); each run seed is one such ensemble.
+    joint_members: int = 1
+    # Joint fits: the weight β of each member's own loss beside the loss of the mean
+    # (arcasleep_bidoze.joint.JointEnsemble); 0 trains the mean alone.
+    member_loss_weight: float = 0.0
+    # Joint fits: members trained in lockstep, each step on its own random part of the batch:
+    # each batch of joint_members * batch_size rows is split into joint_members groups of
+    # batch_size rows and member m trains on group m alone
+    # (arcasleep_bidoze.joint.SplitBatchEnsemble); the eval output is the mean of all members.
+    member_batch_split: bool = False
+    # The roles architecture: the weight of the three branches' own binary losses.
+    role_loss_weight: float = 0.0
+    # A wall-clock cap on each fit, in seconds; at the cap the fit keeps its best eval κ.
+    max_train_seconds: float | None = None
+    # Where a fit stopped by max_train_seconds saves its state, and resumes from it when the
+    # file exists; the fit seed is appended to the file name.
+    fit_state_path: str | None = None
+    # Bagging: the fit trains on a bootstrap resample of its fit recordings (drawn with
+    # replacement, as many as there are), seeded by this; the early-stopping share is unchanged.
+    bootstrap_seed: int | None = None
+    # Subagging: the fit trains on this fraction of its fit recordings, drawn without
+    # replacement with subsample_seed; the early-stopping share is unchanged.
+    subsample_fraction: float | None = None
+    subsample_seed: int | None = None
+    # Split-batch ensembles: "bootstrap" gives member k a bootstrap resample of the fit
+    # recordings (with replacement, as many as there are) and "half" gives it half of them
+    # (without replacement); the member draws its rows only from its own recordings.
+    # Member k's draw is seeded by member_seed + k. None lets every member draw from all.
+    member_recordings: str | None = None
+    member_seed: int = 0
+    # Boosting: an .npz of per-epoch loss weights keyed "<dataset>/<subject_id>", one array of
+    # y_length per fit recording (arcasleep_bidoze.boosting); a recording it lacks weighs 1.
+    epoch_weights: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -133,6 +184,7 @@ class TrainingConfig:
             "x_length": self.x_length,
             "y_length": self.y_length,
             "sliding_copies": self.sliding_copies,
+            "joint_members": self.joint_members,
         }
         for name, value in at_least_one.items():
             if int(value) < 1:
@@ -178,6 +230,20 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+        if self.joint_members > 1 and (self.init_weights or self.distill_from):
+            raise ValueError("training.json: joint_members > 1 starts from random weights and trains on labels")
+
+        if self.member_batch_split and (self.joint_members < 2 or self.member_loss_weight != 0.0):
+            raise ValueError("training.json: member_batch_split needs joint_members > 1 and member_loss_weight 0")
+
+        if self.member_recordings is not None:
+            require_one_of(self.member_recordings, MEMBER_RECORDINGS, "training.json member_recordings")
+            if not self.member_batch_split:
+                raise ValueError("training.json: member_recordings needs member_batch_split")
+        if (self.subsample_fraction is None) != (self.subsample_seed is None):
+            raise ValueError("training.json: subsample_fraction and subsample_seed go together")
+        if self.subsample_fraction is not None and not 0.0 < self.subsample_fraction < 1.0:
+            raise ValueError("training.json: subsample_fraction must be in (0, 1)")
 
     @property
     def patience(self) -> Patience:
@@ -187,6 +253,7 @@ class TrainingConfig:
             early_stop=self.early_stop_patience,
             unit=self.patience_unit,
             smoothing_steps=self.eval_smoothing_steps,
+            start_kappa=self.patience_start_kappa,
         )
 
     @property
@@ -352,6 +419,20 @@ def _train_fold_balanced(
             f"  train/eval split: {len(fit_refs)} fit, {len(eval_refs)} eval "
             f"(fraction {training.eval_fraction}, seed {split_seed})"
         )
+    if training.bootstrap_seed is not None:
+        fit_refs = bootstrap_recordings(fit_refs, training.bootstrap_seed)
+        print(f"  bootstrap (seed {training.bootstrap_seed}): {len(fit_refs)} draws, "
+              f"{len(set(fit_refs))} distinct recordings")
+    if training.subsample_fraction is not None:
+        fit_refs = subsample_recordings(fit_refs, training.subsample_fraction, training.subsample_seed)
+        print(f"  subsample (seed {training.subsample_seed}): {len(fit_refs)} of the fit recordings")
+    member_rows = None
+    if training.member_recordings is not None:
+        member_rows = member_recording_rows(
+            fit_refs, training.member_recordings, training.member_seed, training.joint_members
+        )
+        for k, rows in enumerate(member_rows):
+            print(f"  member {k}: {len(rows)} draws, {len(set(rows))} distinct recordings")
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
     X_fit, y_fit = assemble_batch(
@@ -369,16 +450,37 @@ def _train_fold_balanced(
         soft_targets = teacher_probabilities(Path(training.distill_from), X_fit)
         print(f"  distilling the mean output of the teachers in {training.distill_from}")
 
-    model = BiDozeNetModel(config.model)
+    fit_batch_size = training.batch_size
+    if training.member_batch_split:
+        from arcasleep_bidoze.joint import SplitBatchEnsemble
+
+        model = SplitBatchEnsemble(config.model, training.joint_members)
+        fit_batch_size = training.batch_size * training.joint_members
+        print(f"  training {training.joint_members} networks, each on its own {training.batch_size} rows"
+              f" of every batch of {fit_batch_size}")
+    elif training.joint_members > 1:
+        from arcasleep_bidoze.joint import JointEnsemble
+
+        model = JointEnsemble(config.model, training.joint_members, training.member_loss_weight)
+        print(f"  training {training.joint_members} networks jointly on their mean output"
+              f" (member loss weight {training.member_loss_weight})")
+    else:
+        model = BiDozeNetModel(config.model)
+        model.role_loss_weight = training.role_loss_weight
     if training.init_weights is not None:
         _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")
+    train_weights = None
+    if training.epoch_weights is not None:
+        train_weights = load_epoch_weights(Path(training.epoch_weights), fit_refs, y_fit.shape[1])
+        print(f"  epoch weights from {training.epoch_weights}")
     history = model.fit_balanced(
         X_fit,
         y_fit,
         X_eval,
         y_eval,
-        batch_size=training.batch_size,
+        batch_size=fit_batch_size,
+        member_rows=member_rows,
         initial_lr=training.lr,
         weight_decay=training.weight_decay,
         balance_beta=training.balance_beta,
@@ -387,9 +489,62 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+        max_train_seconds=training.max_train_seconds,
+        fit_state_path=_seeded_state_path(training.fit_state_path, fit_seed),
+        train_weights=train_weights,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
+
+
+def bootstrap_recordings(refs: Sequence[SubjectRef], seed: int) -> list[SubjectRef]:
+    """A bootstrap resample of ``refs`` by recording: ``len(refs)`` draws with replacement."""
+    refs = sorted(refs)
+    drawn = np.random.default_rng(seed).integers(len(refs), size=len(refs))
+    return [refs[i] for i in drawn]
+
+
+def subsample_recordings(refs: Sequence[SubjectRef], fraction: float, seed: int) -> list[SubjectRef]:
+    """``round(fraction * len(refs))`` of ``refs``, drawn without replacement."""
+    refs = sorted(refs)
+    keep = np.random.default_rng(seed).choice(len(refs), size=max(1, round(fraction * len(refs))), replace=False)
+    return [refs[i] for i in sorted(keep)]
+
+
+def member_recording_rows(
+    refs: Sequence[SubjectRef], mode: str, seed: int, members: int
+) -> list[list[int]]:
+    """Each member's rows of ``refs``: member k draws with seed ``seed + k``, a bootstrap resample
+    (``mode`` "bootstrap", repeated rows possible) or half of the rows without replacement
+    ("half")."""
+    index = {ref: i for i, ref in enumerate(refs)}
+    out = []
+    for k in range(members):
+        if mode == "bootstrap":
+            drawn = bootstrap_recordings(refs, seed + k)
+        else:
+            drawn = subsample_recordings(refs, 0.5, seed + k)
+        out.append([index[ref] for ref in drawn])
+    return out
+
+
+def load_epoch_weights(path: Path, refs: Sequence[SubjectRef], y_length: int) -> np.ndarray:
+    """``(len(refs), y_length)`` loss weights from an .npz keyed ``<dataset>/<subject_id>``."""
+    out = np.ones((len(refs), y_length), dtype=np.float32)
+    with np.load(path) as stored:
+        for i, ref in enumerate(refs):
+            key = f"{ref.dataset_name}/{ref.subject_id}"
+            if key in stored:
+                w = stored[key][:y_length]
+                out[i, : w.shape[0]] = w
+    return out
+
+
+def _seeded_state_path(path: str | None, fit_seed: int) -> Path | None:
+    if path is None:
+        return None
+    p = Path(path)
+    return p.with_name(f"{p.stem}_seed{fit_seed}{p.suffix}")
 
 
 def _run_final_deblip(
