@@ -40,6 +40,50 @@ G3 = TRI / "tridoze-2026-10-16"
 COHORTS = scoring.COHORTS
 KEEP = ["kappa_4stage", "kappa_sleep_wake", "sleep_sensitivity", "wake_specificity"]
 EPS = 1e-9
+ADULT = ("trainSleepAccel", "trainClinical")
+GRID = np.arange(-2.0, 2.01, 0.2)
+METHODS = ["mean", "logit mean", "median", "vote", "gate"]
+
+
+def fast_kappa(y, calls):
+    ok = (y >= 0) & (y < 4) & (calls < 4)
+    c = np.zeros((4, 4))
+    np.add.at(c, (y[ok], calls[ok]), 1)
+    n = c.sum()
+    po = np.trace(c) / n
+    pe = (c.sum(0) * c.sum(1)).sum() / n**2
+    return (po - pe) / (1 - pe)
+
+
+def refit_divisors(adult_p, adult_y, divisor, pi_adult):
+    """Two refits of the stage divisor on one method's own outputs over the adult eval recordings.
+
+    ``prior``: light/deep/REM called shares among called-sleep epochs match the adult reference shares
+    (the target the draw's divisor is built for). ``kappa``: pooled 4-stage κ on those recordings is highest.
+    Both search deep and REM offsets (log scale, light fixed) around the draw's divisor on a grid."""
+    p = np.concatenate(adult_p)
+    y = np.concatenate(adult_y)
+    sleep = (p.argmax(1) >= 1) & (p.argmax(1) <= 3)
+    stages = p[sleep, 1:4]
+    ys = y[sleep]
+    target = pi_adult[1:4] / pi_adult[1:4].sum()
+    base = np.log(divisor[1:4])
+    best = {"prior": (np.inf, None), "kappa": (-np.inf, None)}
+    for a in GRID:
+        for b in GRID:
+            d = base + np.array([0.0, a, b])
+            call = (stages / np.exp(d)).argmax(1) + 1
+            share = np.bincount(call, minlength=4)[1:4] / max(len(call), 1)
+            err = float(np.abs(share - target).sum())
+            if err < best["prior"][0]:
+                best["prior"] = (err, d)
+            full = np.full(len(p), 4)
+            full[sleep] = call
+            full[~sleep] = p.argmax(1)[~sleep]
+            k = fast_kappa(y, full) if (y >= 0).any() else -1
+            if k > best["kappa"][0]:
+                best["kappa"] = (k, d)
+    return {name: np.concatenate([[1.0], np.exp(v[1])]) for name, v in best.items()}
 
 
 def normalize(p):
@@ -120,17 +164,37 @@ def main():
         params, _ = G.train(eval_data, steps, lr)
         weights = G.gate_weights(params, test_data)  # (B, T, S)
         n_params = G.parameter_count(params)
+        weights_ev = G.gate_weights(params, eval_data)
+        bids = scoring.night_counts([x.path for x in discover_cached_subjects(["bidsleep"], scoring.LABELS / scoring.CACHE_NAME)["bidsleep"]])
+        pi_adult = np.asarray(bids, float).sum(0)
+        pi_adult = pi_adult / pi_adult.sum()
+        pi_adult = np.concatenate([[0.0], pi_adult[1:4]]) if len(pi_adult) >= 4 else pi_adult
+
+        def method_p(P, w, how):
+            if how == "gate":
+                return np.einsum("ns,nsc->nc", w, np.moveaxis(P, 0, 1))
+            return output_level(P, how)
+
+        adult_idx = [i for i, (ds, _) in enumerate(ev_refs) if ds in ADULT]
+        divisors = {}
+        for how in METHODS:
+            ap = [method_p(ev[i][1], weights_ev[i, : len(ev[i][0])], how) for i in adult_idx]
+            ay = [np.asarray(ev[i][0]) for i in adult_idx]
+            divisors[how] = {"orig": divisor, **refit_divisors(ap, ay, divisor, pi_adult)}
         rows, by_stage = [], {}
         for i, ((ds, sid), (y, P, _)) in enumerate(zip(te_refs, te)):
             n = len(y)
-            gated = np.einsum("ns,nsc->nc", weights[i, :n], np.moveaxis(P, 0, 1))
-            for method, p in [("mean", output_level(P, "mean")), ("logit mean", output_level(P, "logit mean")),
-                              ("median", output_level(P, "median")), ("vote", output_level(P, "vote")),
-                              ("gate", gated)]:
-                calls = scoring.hybrid_calls(p, p, divisor)
-                m = scoring.subject_metrics(logger, y, p, calls)
-                rows.append(dict(design=a.design, draw=d, method=method, dataset=ds, subject_id=sid,
-                                 **{k: float(m[k]) for k in KEEP}))
+            for how in METHODS:
+                p = method_p(P, weights[i, :n], how)
+                for dec, div in divisors[how].items():
+                    calls = scoring.hybrid_calls(p, p, div)
+                    m = scoring.subject_metrics(logger, y, p, calls)
+                    rec = {}
+                    for st in range(4):
+                        on = y == st
+                        rec[f"hits{st}"], rec[f"total{st}"] = int((calls[on] == st).sum()), int(on.sum())
+                    rows.append(dict(design=a.design, draw=d, method=how, decoding=dec, dataset=ds, subject_id=sid,
+                                     **{k: float(m[k]) for k in KEEP}, **rec))
             for st in range(4):
                 on = y == st
                 if on.any():
@@ -143,7 +207,8 @@ def main():
                     chosen_steps=steps, chosen_lr=lr, step_grid=list(G.STEP_GRID), lr_grid=list(G.LRS), cv_loss=cv_loss.tolist(),
                     eval_recordings=len(ev_refs), test_recordings=len(te_refs),
                     weights_by_stage=stage_weights, epochs_by_stage=stage_counts,
-                    seconds=time.time() - t0)
+                    seconds=time.time() - t0,
+                    divisors={h: {k: np.asarray(v).tolist() for k, v in dd.items()} for h, dd in divisors.items()})
         out.with_suffix(".json").write_text(json.dumps(info, indent=1))
         print(a.family, a.design, d, "lr", lr, "steps", steps, "params", n_params, f"{time.time() - t0:.0f}s", flush=True)
 
