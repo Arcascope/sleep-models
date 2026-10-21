@@ -147,3 +147,42 @@ def test_a_final_phase_builds_the_pediatric_bundle(tmp_path: Path) -> None:
 
     assert (bundle / "model.safetensors").is_file()
     assert json.loads((bundle / "config.json").read_text())["gap_from_row"] is True
+
+
+def test_the_local_entry_point_trains_a_tiny_final_phase_and_writes_the_bundle(tmp_path: Path) -> None:
+    import os
+    import shutil
+    import sys
+
+    from arcasleep_bidoze.release import run_release
+
+    bidoze = Path(__file__).resolve().parents[1]
+    local = tmp_path / "bidoze"
+    (local / "scripts").mkdir(parents=True)
+    shutil.copy(bidoze / "scripts/harness.sh", local / "scripts/harness.sh")
+    config = _config_dir(tmp_path)
+    shutil.copytree(config, local / "config")
+    (local / "config/inputs.json").write_text(json.dumps(
+        {"type": "nufft", "cache_prefix": CACHE_NAME, "window_seconds": 10, "window_step_seconds": 10}))
+    (local / "config/metrics.json").write_text(json.dumps(
+        {"num_classes": 4, "class_names": ["wake", "light", "deep", "rem", "gap"],
+         "psg_dt_minutes": 0.5, "min_stage_minutes": 5.0, "metrics": ["sleep_sensitivity"]}))
+    (local / "config/model-gap-rule.json").write_text(json.dumps(
+        {"num_classes": 4, "score_gap": True, "gap_from_row": True, "d_model": 16, "n_heads": 2,
+         "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0}))
+    (local / "config/cv-balanced.json").write_text("{}")
+    path = os.environ["PATH"]
+    os.environ["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{path}"
+    os.environ["BIDOZE_WORK_DIR"] = str(tmp_path / "work")
+    try:
+        status = run_release(
+            "adult", run_id="tiny", cache_root=_feature_root(tmp_path), weaver_set="all",
+            phases=["final"], results_dir=tmp_path / "results", bidoze_dir=local,
+        )
+    finally:
+        os.environ["PATH"] = path
+        del os.environ["BIDOZE_WORK_DIR"]
+
+    assert status == 0
+    bundle = tmp_path / "results/tiny/training/final/bundle"
+    assert json.loads((bundle / "composite.json").read_text())["seeds"] == ["seed0", "seed1"]

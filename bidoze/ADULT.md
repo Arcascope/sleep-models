@@ -87,16 +87,21 @@ compared with the release recipe's 3 independent seeds; ± is the 95% interval o
 
 ## Retraining a release
 
-`BIDOZE_RELEASE=adult` makes `scripts/harness.sh` retrain the adult release with the gap rule
-(`config/model-gap-rule.json`); `BIDOZE_RELEASE=pediatric` retrains the pediatric release. Run
-from `bidoze/` with `FEATURE_CACHE_DIR` set to the feature-cache root:
+`python -m arcasleep_bidoze.release run <adult|pediatric>` retrains a release locally with the
+gap rule (`config/model-gap-rule.json`). Run from `bidoze/`:
 
 ```bash
-BIDOZE_RELEASE=adult BIDOZE_RUN_ID=adult-gap-matched-2026-10-21 bash scripts/harness.sh
-BIDOZE_RELEASE=pediatric BIDOZE_RUN_ID=pediatric-gap-2026-10-21 bash scripts/harness.sh
+python -m arcasleep_bidoze.release run adult --run-id adult-gap-matched-2026-10-21 \
+    --cache-root <feature-cache root> --weaver-set matched
+python -m arcasleep_bidoze.release run pediatric --run-id pediatric-gap-2026-10-21 \
+    --cache-root <feature-cache root> --phases final
 ```
 
-With no phase named, the script runs `fold0` to `fold4` and `final`; name phases to run some.
+The command runs `scripts/harness.sh` with `BIDOZE_RELEASE` set, which is also how the cloud
+tasks run. Its options: `--weaver-set`, `--phases`, `--version`, `--training-config` and
+`--results-dir`.
+
+With no `--phases`, the command runs `fold0` to `fold4` and `final`; name phases to run some.
 Results go under `results/<run id>/training/<phase>/`.
 
 | | adult | pediatric |

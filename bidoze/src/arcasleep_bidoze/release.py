@@ -14,7 +14,9 @@ Each release has a model config (``config/model-gap-rule.json``), a training con
 ``prepare_adult`` writes the adult phases' feature-cache links and cv configs;
 ``build_release`` writes the release bundle from a finished ``final`` phase.
 
-Usage: python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set matched|all]
+Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --cache-root <cache root>
+                [--weaver-set matched|all] [--phases fold0 ... final] [--version v0.2.0]
+       python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set matched|all]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
                 [--train-cache <setup dir>/cache --cache-root <cache root>]
 """
@@ -22,7 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -218,9 +222,55 @@ def build_release(
     )
 
 
+def run_release(
+    release: str,
+    *,
+    run_id: str,
+    cache_root: Path,
+    weaver_set: str = "matched",
+    phases: list[str] | None = None,
+    version: str = "v0.2.0",
+    training_config: str | None = None,
+    results_dir: Path | None = None,
+    bidoze_dir: Path = Path("."),
+) -> int:
+    """Retrain ``release`` by running ``scripts/harness.sh`` of ``bidoze_dir`` (the ``bidoze/``
+    directory); its exit status is returned. With no ``phases``, every phase runs."""
+    if release not in RELEASES:
+        raise ValueError(f"release must be one of {RELEASES}, got {release!r}")
+    if weaver_set not in WEAVER_SETS:
+        raise ValueError(f"weaver set must be one of {WEAVER_SETS}, got {weaver_set!r}")
+    env = {
+        **os.environ,
+        "BIDOZE_RELEASE": release,
+        "BIDOZE_ADULT_WEAVER_SET": weaver_set,
+        "BIDOZE_RELEASE_VERSION": version,
+        "BIDOZE_RUN_ID": run_id,
+        "FEATURE_CACHE_DIR": str(Path(cache_root).resolve()),
+    }
+    if training_config:
+        env["BIDOZE_RELEASE_TRAINING"] = training_config
+    if results_dir:
+        env["BIDOZE_RESULTS_DIR"] = str(Path(results_dir).resolve())
+    bidoze_dir = Path(bidoze_dir)
+    return subprocess.run(
+        ["bash", str(bidoze_dir / "scripts/harness.sh"), *(phases or [])], cwd=bidoze_dir, env=env
+    ).returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser("run", help="retrain a release locally: its phases, then its bundle")
+    run.add_argument("release", choices=RELEASES)
+    run.add_argument("--run-id", required=True)
+    run.add_argument("--cache-root", type=Path, required=True)
+    run.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
+    run.add_argument("--phases", nargs="*", default=None, help="default: fold0 to fold4 and final")
+    run.add_argument("--version", default="v0.2.0")
+    run.add_argument("--training-config", help="a training config in place of the release's own")
+    run.add_argument("--results-dir", type=Path)
+    run.add_argument("--bidoze-dir", type=Path, default=Path("."), help="the bidoze/ directory")
     prepare = commands.add_parser("prepare-adult", help="write the adult phases' cache links and cv configs")
     prepare.add_argument("setup", type=Path)
     prepare.add_argument("cache_root", type=Path)
@@ -234,6 +284,12 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("--train-cache", type=Path)
     bundle.add_argument("--cache-root", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "run":
+        return run_release(
+            args.release, run_id=args.run_id, cache_root=args.cache_root, weaver_set=args.weaver_set,
+            phases=args.phases, version=args.version, training_config=args.training_config,
+            results_dir=args.results_dir, bidoze_dir=args.bidoze_dir,
+        )
     if args.command == "prepare-adult":
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:

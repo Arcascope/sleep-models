@@ -49,7 +49,11 @@ MODEL_CONFIG="${BIDOZE_MODEL_CONFIG:-config/model.json}"
 # The cv config follows the recipe unless BIDOZE_CV_CONFIG names one: the
 # balanced recipe has no deblip phase, so it reads config/cv-balanced.json,
 # which lists no deblip sets.
-RECIPE=$(python -c "import json,sys;print(json.load(open(sys.argv[1])).get('recipe','curriculum'))" "$TRAINING_CONFIG")
+if [[ -n "${BIDOZE_RELEASE:-}" ]]; then
+    RECIPE=balanced
+else
+    RECIPE=$(python -c "import json,sys;print(json.load(open(sys.argv[1])).get('recipe','curriculum'))" "$TRAINING_CONFIG")
+fi
 if [[ "$RECIPE" == "balanced" ]]; then
     CV_CONFIG="${BIDOZE_CV_CONFIG:-config/cv-balanced.json}"
 else
