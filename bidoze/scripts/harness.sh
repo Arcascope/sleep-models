@@ -6,6 +6,16 @@
 # Phases are fold0..fold{k-1} and final, all of them by default, in the order
 # given.
 #
+# With BIDOZE_RELEASE=adult or pediatric, the phases retrain that release with the gap rule
+# (src/arcasleep_bidoze/release.py): fold0..fold4 and final by default, and the final phase
+# also writes the release bundle to <final phase dir>/bundle.
+#   BIDOZE_RELEASE_VERSION     the bundle's version (default v0.2.0)
+#   BIDOZE_ADULT_WEAVER_SET    adult only: matched (default) or all revised-Weaver recordings
+#   BIDOZE_RELEASE_TRAINING    a training config in place of the release's own, e.g.
+#                              config/training-smoke.json for a wiring check
+# BIDOZE_TRAINING_CONFIG, BIDOZE_CV_CONFIG, BIDOZE_SPLIT_PLAN and BIDOZE_MODEL_CONFIG are
+# ignored for a release.
+#
 # With BIDOZE_EXPERIMENT=experiments/<name>, each phase is instead one run of
 # that experiment's task.sh, which receives the phase name and the phase's
 # results directory and does its own data selection and training. Phases are
@@ -49,8 +59,31 @@ fi
 # default on a workstation; ECS sets it.
 RESULTS_S3_PREFIX="${BIDOZE_RESULTS_S3_PREFIX:-}"
 EXPERIMENT="${BIDOZE_EXPERIMENT:-}"
+RELEASE="${BIDOZE_RELEASE:-}"
+RELEASE_VERSION="${BIDOZE_RELEASE_VERSION:-v0.2.0}"
+if [[ -n "$RELEASE" ]]; then
+    [[ -z "$EXPERIMENT" ]] || { echo "BIDOZE_RELEASE and BIDOZE_EXPERIMENT are exclusive" >&2; exit 2; }
+    case "$RELEASE" in
+        adult)     TRAINING_CONFIG=config/training-adult.json ;;
+        pediatric) TRAINING_CONFIG=config/training-pediatric.json ;;
+        *) echo "BIDOZE_RELEASE must be adult or pediatric, got $RELEASE" >&2; exit 2 ;;
+    esac
+    TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$TRAINING_CONFIG}"
+    MODEL_CONFIG=config/model-gap-rule.json
+    CV_CONFIG=config/cv-balanced.json
+    SPLIT_PLAN=config/splits/weaver_5fold.json
+    RECIPE=balanced
+fi
 LINK_ROOT="$WORK_DIR/cache"
 CV_DIR="$WORK_DIR/cv"
+# The adult release's phases are materialised by arcasleep_bidoze.release, not from a split plan.
+RELEASE_SETUP="$WORK_DIR/release-$RELEASE"
+REAL_CACHE_DIR="${FEATURE_CACHE_DIR:-}"
+if [[ "$RELEASE" == adult ]]; then
+    CV_DIR="$RELEASE_SETUP/cv"
+    TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$RELEASE_SETUP/training.json}"
+    LINK_ROOT="$RELEASE_SETUP/cache"
+fi
 
 usage() {
     echo "Usage: $0 [--dry-run] [phase ...]" >&2
@@ -84,7 +117,7 @@ fi
 
 # One model per generated config: fold0..fold{k-1}, then final.
 if [[ ${#PHASES[@]} -eq 0 ]]; then
-    N_SPLITS=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
+    N_SPLITS=$([[ "$RELEASE" == adult ]] && echo 5 || python -c "import json,sys;print(json.load(open(sys.argv[1]))['n_splits'])" "$CV_CONFIG")
     for ((i = 0; i < N_SPLITS; i++)); do PHASES+=("fold$i"); done
     PHASES+=("final")
 fi
@@ -111,7 +144,12 @@ if [[ $DRY_RUN -eq 1 ]]; then
     exit 0
 fi
 
-if [[ -z "$EXPERIMENT" ]]; then
+if [[ "$RELEASE" == adult ]]; then
+    echo "==> materialising the adult release phases"
+    python -m arcasleep_bidoze.release prepare-adult "$RELEASE_SETUP" "$REAL_CACHE_DIR" \
+        --weaver-set "${BIDOZE_ADULT_WEAVER_SET:-matched}"
+    export FEATURE_CACHE_DIR="$LINK_ROOT"
+elif [[ -z "$EXPERIMENT" ]]; then
     echo "==> materialising $SPLIT_PLAN"
     arcasleep splits-apply \
         -pc config/inputs.json \
@@ -159,5 +197,11 @@ for phase in "${PHASES[@]}"; do
         PYTHONUNBUFFERED=1 arcasleep bidoze train "${BASE_ARGS[@]}" \
             -cvc "$CV_DIR/cv_$phase.json" \
             -extn "$RUN_ID/training/$phase" 2>&1 | tee "$BASE_DIR/training.log"
+    fi
+    if [[ -n "$RELEASE" && "$phase" == final ]]; then
+        echo "==> release bundle $RELEASE $RELEASE_VERSION"
+        python -m arcasleep_bidoze.release bundle "$RELEASE" "$BASE_DIR" "$BASE_DIR/bundle" "$RELEASE_VERSION" \
+            ${REAL_CACHE_DIR:+--cache-root "$REAL_CACHE_DIR"} \
+            $([[ "$RELEASE" == adult ]] && echo "--train-cache $RELEASE_SETUP/cache")
     fi
 done
