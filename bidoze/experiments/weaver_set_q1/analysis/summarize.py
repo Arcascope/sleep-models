@@ -145,6 +145,8 @@ def report(draws: pd.DataFrame, comparison: pd.DataFrame) -> str:
         out += [table(part.assign(**{m: part[m].map(fmt) for m in METRICS})), ""]
     out += ["## Paired differences over draws", "",
             "Mean ± SD of the per-draw difference; the interval is the paired 95% t-interval of the mean.", ""]
+    if comparison.empty:
+        return "\n".join(out + ["Fewer than 2 draws have both arms scored.", ""]) + "\n"
     shown = comparison.assign(
         value=[f"{fmt(r['mean'])} ± {fmt(r['sd'])}" for _, r in comparison.iterrows()],
         interval=[f"[{fmt(r['ci_low'])}, {fmt(r['ci_high'])}]" for _, r in comparison.iterrows()])
