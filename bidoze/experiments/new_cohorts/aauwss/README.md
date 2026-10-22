@@ -44,3 +44,5 @@ dataset name.
   span; `arcasleep process` crops that night to the accelerometer's end
   (573 epochs).
 - **Participants 2 and 6** are 67 and 71 years old; the other 11 are 22 to 28.
+
+— Juniper-2
