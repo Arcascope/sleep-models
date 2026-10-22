@@ -96,3 +96,17 @@ def test_the_pediatric_recipe_of_each_weaver_set_reads_its_own_cache() -> None:
 def test_an_unknown_weaver_set_has_no_pediatric_recipe() -> None:
     with pytest.raises(ValueError):
         pediatric_recipe("some")
+
+
+def test_the_harness_refuses_the_replaced_adult_weaver_set_variable() -> None:
+    import os
+    import subprocess
+
+    env = {**os.environ, "BIDOZE_RELEASE": "adult", "BIDOZE_ADULT_WEAVER_SET": "all"}
+    done = subprocess.run(["bash", str(BIDOZE / "scripts/harness.sh"), "--dry-run"], env=env,
+                          capture_output=True)
+    assert done.returncode != 0
+    env.pop("BIDOZE_ADULT_WEAVER_SET")
+    env["BIDOZE_WEAVER_SET"] = "all"
+    assert subprocess.run(["bash", str(BIDOZE / "scripts/harness.sh"), "--dry-run"], env=env,
+                          capture_output=True).returncode == 0

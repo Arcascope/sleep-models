@@ -32,6 +32,11 @@ set -euo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$REPO_ROOT"
 
+if [[ -n "${BIDOZE_ADULT_WEAVER_SET:-}" ]]; then
+    echo "BIDOZE_ADULT_WEAVER_SET is replaced by BIDOZE_WEAVER_SET" >&2
+    exit 2
+fi
+
 RUN_ID="${BIDOZE_RUN_ID:-bidoze-training}"
 # BIDOZE_RESULTS_DIR is what `arcasleep bidoze train` itself reads; harness.sh reads
 # the same variable so the two cannot disagree. Its fallback matches the CLI's
