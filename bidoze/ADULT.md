@@ -107,13 +107,18 @@ Results go under `results/<run id>/training/<phase>/`.
 | | adult | pediatric |
 |:---|:---|:---|
 | Training config | `config/training-adult.json`: balanced recipe, patience in steps, 3 seeds | `config/training-pediatric.json`: balanced recipe, patience in epochs, 1 seed, as `v0.1.0` |
-| Training data | revised Weaver (`BIDOZE_ADULT_WEAVER_SET`) and 4 of the 5 SleepAccel folds | Weaver, 4 of the 5 folds |
+| Training data | revised Weaver (`BIDOZE_WEAVER_SET`) and 4 of the 5 SleepAccel folds | Weaver (`BIDOZE_WEAVER_SET`), 4 of the 5 folds |
 | `fold<k>` | scored on SleepAccel fold k and SleepAccel-Clinical | scored on Weaver fold k |
 | `final` | all of SleepAccel; scored on SleepAccel-Clinical | all of Weaver; scored on SleepAccel and SleepAccel-Clinical |
 
-- **`BIDOZE_ADULT_WEAVER_SET=matched`** (default) trains on the 202 revised-Weaver recordings
-  of the nights of the earlier Weaver cache; the v0.1.0 release uses these.
-- **`BIDOZE_ADULT_WEAVER_SET=all`** trains on all 634 revised-Weaver recordings (237 children).
+- **`BIDOZE_WEAVER_SET=matched`** (default):
+  - adult: trains on the 202 revised-Weaver recordings of the nights of the earlier Weaver
+    cache; the v0.1.0 release uses these;
+  - pediatric: trains on the earlier Weaver cache (202 recordings, `config/splits/weaver_5fold.json`).
+- **`BIDOZE_WEAVER_SET=all`** trains on all 634 revised-Weaver recordings (237 children).
+  The pediatric folds are `config/splits/weaver_revised_pediatric_5fold.json`: a child's
+  recordings are in one fold, and each child of `weaver_5fold.json` keeps its fold (the one child
+  with nights in two of its folds keeps the first).
 - **Release bundle:** the `final` phase also writes `<final phase dir>/bundle`, version
   `BIDOZE_RELEASE_VERSION` (default `v0.2.0`). The adult bundle is one release bundle per seed
   and `composite.json`; the divisor comes from the final phase's training nights and BIDSleep.
@@ -125,7 +130,7 @@ On AWS, one task per phase:
 
 ```bash
 deploy/scripts/run_task.sh --run-id adult-gap-matched-2026-10-21 \
-    --env BIDOZE_RELEASE=adult --env BIDOZE_ADULT_WEAVER_SET=matched \
+    --env BIDOZE_RELEASE=adult --env BIDOZE_WEAVER_SET=matched \
     bidoze <train image> final fold0 fold1 fold2 fold3 fold4
 ```
 
