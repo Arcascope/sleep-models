@@ -149,7 +149,8 @@ class StackedModel:
 
         def mean_log_proba(stacked, x, mask):
             logits = jax.vmap(lambda p: module.apply({"params": p}, x, mask, train=False))(stacked)
-            return jnp.log(jax.nn.softmax(logits, axis=-1).mean(axis=0))
+            # The floor keeps a probability of exactly 0 (the gap rule's present epochs) finite in the log.
+            return jnp.log(jnp.maximum(jax.nn.softmax(logits, axis=-1).mean(axis=0), jnp.finfo(jnp.float32).tiny))
 
         self._params = params
         self._apply = jax.jit(mean_log_proba)

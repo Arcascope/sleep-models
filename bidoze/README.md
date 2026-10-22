@@ -16,6 +16,9 @@ cards (`cards/`), and the training image and harness (`docker/`, `scripts/`).
 Training on AWS GPUs is described in [`deploy/`](../deploy/README.md).
 Commands below run from here.
 
+Retraining the pediatric and adult releases with the gap rule (`scripts/harness.sh` with
+`BIDOZE_RELEASE`) is described in [ADULT.md](ADULT.md#retraining-a-release).
+
 Scoring adult nights (the release's sleep/wake calls with light/deep/REM from a model
 trained on adult nights) is described in [ADULT.md](ADULT.md).
 

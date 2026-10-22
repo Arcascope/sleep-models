@@ -105,11 +105,12 @@ def _configs(
     )
 
 
-@pytest.mark.parametrize("model_frames_per_epoch", [1, FRAMES_PER_EPOCH])
-def test_balanced_recipe_trains_and_scores_end_to_end(
-    tmp_path: Path, model_frames_per_epoch: int
-) -> None:
-    config = _configs(tmp_path / "config", {"frames_per_epoch": model_frames_per_epoch})
+@pytest.mark.parametrize(
+    "model_overrides",
+    [{"frames_per_epoch": 1}, {"frames_per_epoch": FRAMES_PER_EPOCH}, {"gap_from_row": True}],
+)
+def test_balanced_recipe_trains_and_scores_end_to_end(tmp_path: Path, model_overrides: dict) -> None:
+    config = _configs(tmp_path / "config", model_overrides)
     cache_root = tmp_path / "feature_cache"
     _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
     _write_cache(cache_root / "test", "CohortB", ["b0", "b1"], epochs=9)
