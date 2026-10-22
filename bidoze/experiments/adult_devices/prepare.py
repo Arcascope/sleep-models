@@ -60,6 +60,7 @@ import numpy as np
 
 from arcasleep.data.cache import discover_cached_subjects, participant_id
 from arcasleep.data.splits import read_plan
+from arcasleep_bidoze.release import link, match_weaver
 
 HERE = Path(__file__).resolve().parent
 BIDOZE = HERE.parents[1]
@@ -94,49 +95,6 @@ def arms(weaver_ids: list[str]) -> dict[str, list[str]]:
     return out
 
 
-def epoch_spectra(path: Path) -> np.ndarray:
-    """Per-epoch mean of the frame spectra, (epochs, frequencies, channels)."""
-    z = np.load(path)
-    X, epochs = z["X"][0], z["y"].shape[1]
-    frames = X.shape[0] // epochs
-    return X[: epochs * frames].reshape(epochs, frames, *X.shape[1:]).mean(axis=1)
-
-
-def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, list[str]]:
-    """The revised recordings that hold the earlier ``weaver`` nights.
-
-    A revised recording holds an earlier night when their PSG labels agree epoch for epoch
-    from the first epoch over the shorter of the two, and that covers ≥ 90% of the longer.
-    Other devices of the same night can match too (one PSG per night), so the recording is the
-    candidate whose epoch spectra are closest. Returns ``matched`` (that recording per night)
-    and ``matched-actigraph`` (the ActiGraph recording of the same child and night, where there
-    is one).
-    """
-    labels = {sid: np.load(path)["y"].ravel() for sid, path in revised.items()}
-    matched, actigraph = [], []
-    for path in earlier:
-        y = np.load(path)["y"].ravel()
-        candidates = [sid for sid, other in labels.items()
-                      if min(len(y), len(other)) >= 0.9 * max(len(y), len(other))
-                      and np.array_equal(y[: len(other)], other[: len(y)])]
-        nights = {sid.split("_", 1)[0] + "_" + sid.rsplit("_", 1)[1] for sid in candidates}
-        if len(nights) != 1:
-            raise ValueError(f"{path.name}: {len(nights)} revised nights match its labels")
-        spectra = epoch_spectra(path)
-
-        def distance(sid: str) -> float:
-            other = epoch_spectra(revised[sid])
-            n = min(len(spectra), len(other))
-            return float(np.mean(np.abs(spectra[:n] - other[:n])))
-
-        best = min(candidates, key=distance)
-        matched.append(best)
-        child, _, night = best.split("_")
-        if f"{child}_actigraph_{night}" in revised:
-            actigraph.append(f"{child}_actigraph_{night}")
-    return {"matched": sorted(matched), "matched-actigraph": sorted(actigraph)}
-
-
 def one_night_each(subject_ids: list[str]) -> list[str]:
     """One night per participant, drawn with seed 0."""
     nights: dict[str, list[str]] = defaultdict(list)
@@ -152,13 +110,6 @@ def dataset_name(arm: str) -> str:
     if arm in FINETUNE_ARMS:
         return FINETUNE_ARMS[arm]
     return "weaver" + "".join(part.capitalize() for part in arm.split("-"))
-
-
-def link(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_symlink():
-        destination.unlink()
-    destination.symlink_to(source.resolve())
 
 
 def main(run_dir: Path, weaver_root: Path, adult_root: Path, pediatric: Path | None = None) -> None:

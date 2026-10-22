@@ -7,7 +7,9 @@
 # FEATURE_CACHE_DIR is the image's cache root, which holds every cohort.
 # ADULT_DEVICES_TRAINING overrides the recipe, e.g. config/training-smoke.json
 # for a wiring check. ADULT_DEVICES_PEDIATRIC is the pediatric release bundle,
-# which the finetune arm starts from. ADULT_DEVICES_TEACHERS is the run directory
+# which the finetune arm starts from. ADULT_DEVICES_MODEL overrides the model config
+# (default config/model.json), e.g. config/model-gap-rule.json for the gap rule.
+# ADULT_DEVICES_TEACHERS is the run directory
 # (local or s3://) whose <phase>/model_outputs/ the distill arms' students learn from;
 # the distill-warm arms also start from the phase's seed-0 teacher.
 # Usage: task.sh PHASE OUT_DIR
@@ -69,5 +71,5 @@ cp "$S/arms.json" "$CV" "$OUT/setup/"
 [[ "$TRAINING" == "$OUT/setup/"* ]] || cp "$TRAINING" "$OUT/setup/"
 
 FEATURE_CACHE_DIR=$S/cache/$ARM arcasleep bidoze train --cache-only -pc config/inputs.json \
-  -mc config/model.json -tc "$TRAINING" -mtc config/metrics.json --split-seed "$SPLIT" \
+  -mc "${ADULT_DEVICES_MODEL:-config/model.json}" -tc "$TRAINING" -mtc config/metrics.json --split-seed "$SPLIT" \
   -cvc "$CV" -extn "$OUT"

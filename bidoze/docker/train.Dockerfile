@@ -27,9 +27,10 @@ COPY core/src ./core/src
 COPY bidoze/src ./bidoze/src
 COPY unet/src ./unet/src
 # [aws] as well as [train]: the harness uploads the finished run to S3, and
-# boto3 is pure Python -- ~15MB, no compiler, no CUDA.
+# boto3 is pure Python -- ~15MB, no compiler, no CUDA. [publish] is for the release
+# bundle the harness writes after a release's final phase (safetensors, pandas).
 RUN SETUPTOOLS_SCM_PRETEND_VERSION=${PACKAGE_VERSION} \
-    pip install --no-cache-dir ".[bidoze,train,aws]"
+    pip install --no-cache-dir ".[bidoze,train,aws,publish]"
 
 WORKDIR /opt/bidoze
 COPY bidoze/config ./config

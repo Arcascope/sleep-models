@@ -38,6 +38,102 @@ log(divisor) from the logits, moves sleep/wake to 97–99% sleep sensitivity and
 specificity on SleepAccel. The divisor's wake entry depends on the adult reference's share of
 wake, which differs between cohorts.
 
+## The gap rule
+
+The gap rule is an option for retraining the adult model. The release recipe above learns gap as
+a fifth class from the gap row of the input (the share of an epoch's frames with no accelerometer
+data); with the gap rule, gap is not learned:
+
+- An epoch with accelerometer data is never called gap: its gap probability is 0.
+- An epoch with no accelerometer data (gap row = 1) is called gap: its gap probability is 1.
+- An epoch with no accelerometer data is zeroed in the input and hidden from the transformer's
+  attention, so the missing epochs do not affect the scores of the epochs around them.
+- The loss ignores epochs with no accelerometer data.
+
+`arcasleep bidoze predict` already marks `is_gap == 1` from the gap row, so the CSV flags are the
+same with or without the rule. The rule changes the model's stage probabilities, which no longer
+depend on how many missing epochs a recording has or where they fall.
+
+**Selecting it.** Set `"gap_from_row": true` in `model.json`; the default is `false`.
+`config/model-gap-rule.json` is `config/model.json` with this key set. The training config is
+unchanged. A bundle records the key in its `config.json`, so `load_predictor` and
+`arcasleep bidoze predict` apply the rule to bundles trained this way, and bundles trained without
+it score as before. The rule needs `score_gap: true`.
+
+**Retraining the adult release with the gap rule:** see "Retraining a release" below.
+
+**Evidence** (research log, October 16, 2026, §8): 5 draws, each training on 101 of 201 Weaver
+children and 30 of 60 adults and testing on the other 30 adults. The 3-seed gap-rule model is
+compared with the release recipe's 3 independent seeds; ± is the 95% interval over the 5 draws.
+
+| Check | Release recipe, 3 seeds | Gap rule, 3 seeds |
+|:---|:---|:---|
+| PSG sleep with data called gap (%), maximum over draws | 0.35 | 0.00 |
+| Change in PSG sleep called sleep after adding 1,700 missing epochs before the night (points), range over draws | −13.3 to +0.8 | 0.0 |
+| Free-living Apple Watch sleep called gap (%), range over draws | 0.0 to 64.9 | 0.0 |
+
+| Difference, gap rule − release recipe | κ 4-stage | κ sleep/wake |
+|:---|--:|--:|
+| SleepAccel | +0.007 ± 0.010 | −0.014 ± 0.050 |
+| SleepAccel-Clinical | +0.014 ± 0.010 | +0.011 ± 0.020 |
+
+- The research log's three gap checks are the two rows above and a third: the same free-living
+  windows scored cut and uncut should give the same sleep (release recipe: −0.2 to +64.0 points
+  difference; gap rule: −0.5 to +0.2). The release recipe fails the first check on 2 of 5 draws,
+  the second on 3 and the third on 2; the gap rule passes all three on all 5 draws.
+- Sleep/wake κ at matched sleep sensitivity: −0.006 ± 0.024; the difference is not significant.
+- Total sleep time on SleepAccel is underestimated by 14.0 minutes with the gap rule (7.5 minutes
+  for the release recipe); on SleepAccel-Clinical it is overestimated by 12.7 and 12.1 minutes.
+
+## Retraining a release
+
+`python -m arcasleep_bidoze.release run <adult|pediatric>` retrains a release locally with the
+gap rule (`config/model-gap-rule.json`). Run from `bidoze/`:
+
+```bash
+python -m arcasleep_bidoze.release run adult --run-id adult-gap-matched-2026-10-21 \
+    --cache-root <feature-cache root> --weaver-set matched
+python -m arcasleep_bidoze.release run pediatric --run-id pediatric-gap-2026-10-21 \
+    --cache-root <feature-cache root> --phases final
+```
+
+The command runs `scripts/harness.sh` with `BIDOZE_RELEASE` set, which is also how the cloud
+tasks run. Its options: `--weaver-set`, `--phases`, `--version`, `--training-config` and
+`--results-dir`.
+
+With no `--phases`, the command runs `fold0` to `fold4` and `final`; name phases to run some.
+Results go under `results/<run id>/training/<phase>/`.
+
+| | adult | pediatric |
+|:---|:---|:---|
+| Training config | `config/training-adult.json`: balanced recipe, patience in steps, 3 seeds | `config/training-pediatric.json`: balanced recipe, patience in epochs, 1 seed, as `v0.1.0` |
+| Training data | revised Weaver (`BIDOZE_ADULT_WEAVER_SET`) and 4 of the 5 SleepAccel folds | Weaver, 4 of the 5 folds |
+| `fold<k>` | scored on SleepAccel fold k and SleepAccel-Clinical | scored on Weaver fold k |
+| `final` | all of SleepAccel; scored on SleepAccel-Clinical | all of Weaver; scored on SleepAccel and SleepAccel-Clinical |
+
+- **`BIDOZE_ADULT_WEAVER_SET=matched`** (default) trains on the 202 revised-Weaver recordings
+  of the nights of the earlier Weaver cache; the v0.1.0 release uses these.
+- **`BIDOZE_ADULT_WEAVER_SET=all`** trains on all 634 revised-Weaver recordings (237 children).
+- **Release bundle:** the `final` phase also writes `<final phase dir>/bundle`, version
+  `BIDOZE_RELEASE_VERSION` (default `v0.2.0`). The adult bundle is one release bundle per seed
+  and `composite.json`; the divisor comes from the final phase's training nights and BIDSleep.
+  Its card is generated and marked pending review.
+- **`BIDOZE_RELEASE_TRAINING`** names another training config, such as
+  `config/training-smoke.json` for a wiring check.
+
+On AWS, one task per phase:
+
+```bash
+deploy/scripts/run_task.sh --run-id adult-gap-matched-2026-10-21 \
+    --env BIDOZE_RELEASE=adult --env BIDOZE_ADULT_WEAVER_SET=matched \
+    bidoze <train image> final fold0 fold1 fold2 fold3 fold4
+```
+
+`deploy/scripts/run_task_gcp.py` takes the same `--env` and phase arguments.
+
+`experiments/adult_devices` runs the device ablation and uses the same preparation code
+(`arcasleep_bidoze.release`).
+
 ## Scoring recordings
 
 An *adult bundle* is a directory with one release bundle per seed (`seed<k>/`),
