@@ -99,13 +99,19 @@ def test_an_unknown_weaver_set_is_refused(tmp_path: Path) -> None:
         prepare_adult(tmp_path / "setup", _feature_root(tmp_path), "some", _config_dir(tmp_path))
 
 
-def _final_phase(tmp_path: Path, setup: Path, training: dict) -> Path:
+F2_MODEL = {"num_classes": 4, "score_gap": True, "gap_from_row": True, "n_heads": 2, "n_transformer_layers": 1,
+            "conv_kernels": [3], "dropout": 0.0, "strands": 2, "strand_width": 8, "strand_ffn": 8,
+            "fusion_proj": 4, "fusion_width": 8, "fusion_layers": 1, "fusion_heads": 2, "fusion_ffn": 8}
+
+
+def _final_phase(tmp_path: Path, setup: Path, training: dict, model: dict | None = None) -> Path:
     config = tmp_path / "run-config"
     config.mkdir()
     files = {
         "inputs.json": {"type": "nufft", "cache_prefix": CACHE_NAME, "window_seconds": 10, "window_step_seconds": 10},
-        "model.json": {"num_classes": 4, "score_gap": True, "gap_from_row": True, "d_model": 16, "n_heads": 2,
-                       "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0},
+        "model.json": model or {"num_classes": 4, "score_gap": True, "gap_from_row": True, "d_model": 16,
+                                "n_heads": 2, "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3],
+                                "dropout": 0.0},
         "training.json": training,
         "metrics.json": {"num_classes": 4, "class_names": ["wake", "light", "deep", "rem", "gap"],
                          "psg_dt_minutes": 0.5, "min_stage_minutes": 5.0, "metrics": ["sleep_sensitivity"]},
@@ -136,6 +142,37 @@ def test_a_final_phase_builds_the_adult_bundle_with_one_bundle_per_seed(tmp_path
     from arcasleep.predict import load_predictor
 
     assert load_predictor(bundle) is not None
+
+
+@pytest.mark.parametrize("seeds, expected", [(None, ["seed0", "seed1"]), ([1], ["seed0"])])
+def test_an_f2_final_phase_builds_the_adult_bundle_of_all_or_chosen_seeds(
+    tmp_path: Path, seeds: list[int] | None, expected: list[str]
+) -> None:
+    root = _feature_root(tmp_path)
+    setup = tmp_path / "setup"
+    prepare_adult(setup, root, "all", _config_dir(tmp_path))
+    final = _final_phase(tmp_path, setup, TINY_TRAINING, model=F2_MODEL)
+
+    bundle = build_release("adult", final, tmp_path / "bundle", "v0.0.0",
+                           train_cache=setup / "cache", cache_root=root, seeds=seeds)
+
+    composite = json.loads((bundle / "composite.json").read_text())
+    assert composite["seeds"] == expected
+    assert json.loads((bundle / "seed0/config.json").read_text())["strands"] == 2
+    from arcasleep.predict import load_predictor
+
+    assert load_predictor(bundle) is not None
+
+
+def test_a_seed_the_phase_did_not_train_is_refused(tmp_path: Path) -> None:
+    root = _feature_root(tmp_path)
+    setup = tmp_path / "setup"
+    prepare_adult(setup, root, "all", _config_dir(tmp_path))
+    final = _final_phase(tmp_path, setup, TINY_TRAINING, model=F2_MODEL)
+
+    with pytest.raises(ValueError):
+        build_release("adult", final, tmp_path / "bundle", "v0.0.0",
+                      train_cache=setup / "cache", cache_root=root, seeds=[7])
 
 
 def test_a_final_phase_builds_the_pediatric_bundle(tmp_path: Path) -> None:

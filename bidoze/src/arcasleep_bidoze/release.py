@@ -17,19 +17,21 @@ Each release has a model config (``config/model-gap-rule.json``), a training con
 ``build_release`` writes the release bundle from a finished ``final`` phase.
 
 Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --cache-root <cache root>
-                [--weaver-set matched|all] [--phases fold0 ... final] [--version v0.2.0]
+                [--weaver-set matched|all] [--phases fold0 ... final] [--version v0.2.0] [--model g|f2]
        python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set matched|all]
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set matched|all]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
-                [--train-cache <setup dir>/cache --cache-root <cache root>]
+                [--train-cache <setup dir>/cache --cache-root <cache root>] [--seeds 0 1 2]
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -50,7 +52,9 @@ PEDIATRIC_RECIPES = {
 }
 ADULT_SEEDS = 3
 FOLDS = 5
-MODEL_CONFIG = "config/model-gap-rule.json"
+#: The release architectures: ``g`` is BiDoze-G, ``f2`` the strand-fusion network.
+MODEL_CONFIGS = {"g": "config/model-gap-rule.json", "f2": "config/model-f2.json"}
+MODEL_CONFIG = MODEL_CONFIGS["g"]
 TRAINING_CONFIGS = {"adult": "config/training-adult.json", "pediatric": "config/training-pediatric.json"}
 SLEEPACCEL_PLAN = "config/splits/sleepaccel_5fold.json"
 
@@ -117,6 +121,14 @@ def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, lis
         if f"{child}_actigraph_{night}" in revised:
             actigraph.append(f"{child}_actigraph_{night}")
     return {"matched": sorted(matched), "matched-actigraph": sorted(actigraph)}
+
+
+def checkpoint_seed(checkpoint: Path) -> int:
+    """The fit seed in a checkpoint's name, ``model_<fold>_seed_<seed>.pisces``."""
+    match = re.search(r"_seed_(\d+)$", checkpoint.stem)
+    if match is None:
+        raise ValueError(f"{checkpoint.name} does not name a seed")
+    return int(match.group(1))
 
 
 def link(source: Path, destination: Path) -> None:
@@ -195,6 +207,7 @@ def build_release(
     *,
     train_cache: Path | None = None,
     cache_root: Path | None = None,
+    seeds: Sequence[int] | None = None,
 ) -> Path:
     """The release bundle of a finished ``final`` phase directory.
 
@@ -202,7 +215,9 @@ def build_release(
     - adult: a release bundle per seed checkpoint in ``model_outputs/`` and ``composite.json``;
       the divisor comes from the phase's training nights (``train_cache`` holds
       ``12Hz_log_PSD_aligned/`` with their links) and
-      the nights of BIDSleep under ``cache_root``, the adult reference.
+      the nights of BIDSleep under ``cache_root``, the adult reference. With ``seeds`` (fit
+      seeds), only those seeds' checkpoints are bundled; the divisor is computed from the
+      training labels alone, so it is the same for any subset of the phase's seeds.
 
     The bundle's card is the generated one, marked pending review.
     """
@@ -231,19 +246,25 @@ def build_release(
         training["balance_beta"], training["batch_size"],
     )
     staging = output.parent / f"{output.name}-seeds"
-    seeds = [
+    checkpoints = [
+        p for p in sorted((final / "model_outputs").glob("*.pisces"))
+        if seeds is None or checkpoint_seed(p) in seeds
+    ]
+    if not checkpoints:
+        raise ValueError(f"no checkpoint in {final / 'model_outputs'} has a seed in {list(seeds)}")
+    seed_bundles = [
         build_release_bundle(final, staging / checkpoint.stem, version=version, checkpoint=checkpoint,
                              family="bidoze", overwrite=True).directory
-        for checkpoint in sorted((final / "model_outputs").glob("*.pisces"))
+        for checkpoint in checkpoints
     ]
     return build_adult_bundle(
-        output, seeds, divisor, version=version, overwrite=True,
+        output, seed_bundles, divisor, version=version, overwrite=True,
         provenance={
             "train_sets": cv["train_sets"],
             "training_nights": len(train_paths),
             "adult_reference": "bidsleep",
             "adult_reference_nights": len(bidsleep),
-            "seed_checkpoints": [p.name for p in seeds],
+            "seed_checkpoints": [p.name for p in seed_bundles],
         },
     )
 
@@ -259,6 +280,7 @@ def run_release(
     training_config: str | None = None,
     results_dir: Path | None = None,
     bidoze_dir: Path = Path("."),
+    model: str = "g",
 ) -> int:
     """Retrain ``release`` by running ``scripts/harness.sh`` of ``bidoze_dir`` (the ``bidoze/``
     directory); its exit status is returned. With no ``phases``, every phase runs."""
@@ -266,9 +288,12 @@ def run_release(
         raise ValueError(f"release must be one of {RELEASES}, got {release!r}")
     if weaver_set not in WEAVER_SETS:
         raise ValueError(f"weaver set must be one of {WEAVER_SETS}, got {weaver_set!r}")
+    if model not in MODEL_CONFIGS:
+        raise ValueError(f"model must be one of {tuple(MODEL_CONFIGS)}, got {model!r}")
     env = {
         **os.environ,
         "BIDOZE_RELEASE": release,
+        "BIDOZE_RELEASE_MODEL": model,
         "BIDOZE_WEAVER_SET": weaver_set,
         "BIDOZE_RELEASE_VERSION": version,
         "BIDOZE_RUN_ID": run_id,
@@ -296,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--version", default="v0.2.0")
     run.add_argument("--training-config", help="a training config in place of the release's own")
     run.add_argument("--results-dir", type=Path)
+    run.add_argument("--model", choices=tuple(MODEL_CONFIGS), default="g",
+                     help="g: BiDoze-G (default); f2: strand-fusion network")
     run.add_argument("--bidoze-dir", type=Path, default=Path("."), help="the bidoze/ directory")
     recipe = commands.add_parser("pediatric-recipe", help="print the pediatric split plan and cv template")
     recipe.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
@@ -311,12 +338,14 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("version")
     bundle.add_argument("--train-cache", type=Path)
     bundle.add_argument("--cache-root", type=Path)
+    bundle.add_argument("--seeds", type=int, nargs="+", help="adult only: bundle only these fit seeds "
+                        "(one seed gives a single-model bundle)")
     args = parser.parse_args(argv)
     if args.command == "run":
         return run_release(
             args.release, run_id=args.run_id, cache_root=args.cache_root, weaver_set=args.weaver_set,
             phases=args.phases, version=args.version, training_config=args.training_config,
-            results_dir=args.results_dir, bidoze_dir=args.bidoze_dir,
+            results_dir=args.results_dir, bidoze_dir=args.bidoze_dir, model=args.model,
         )
     if args.command == "pediatric-recipe":
         print(*pediatric_recipe(args.weaver_set))
@@ -324,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
         print(build_release(args.release, args.final, args.output, args.version,
-                            train_cache=args.train_cache, cache_root=args.cache_root))
+                            train_cache=args.train_cache, cache_root=args.cache_root, seeds=args.seeds))
     return 0
 
 

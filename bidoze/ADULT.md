@@ -123,6 +123,15 @@ Results go under `results/<run id>/training/<phase>/`.
   `BIDOZE_RELEASE_VERSION` (default `v0.2.0`). The adult bundle is one release bundle per seed
   and `composite.json`; the divisor comes from the final phase's training nights and BIDSleep.
   Its card is generated and marked pending review.
+- **`BIDOZE_RELEASE_MODEL`** (`--model` for the local command) selects the architecture:
+  `g` (default) is BiDoze-G, `config/model-gap-rule.json`; `f2` is the strand-fusion network,
+  `config/model-f2.json` (3 strands, 2.20 M weights, trained with the output head's loss plus
+  0.3 × each strand head's loss). The training config is the same; `seed_count` seeds give 3
+  F2 models, bundled as for BiDoze-G.
+- **A single-seed bundle** comes from one seed of the same run:
+  `python -m arcasleep_bidoze.release bundle adult <final phase dir> <output> <version>
+  --train-cache <setup dir>/cache --cache-root <cache root> --seeds 0`. The stage divisor is
+  computed from the training labels, so it is the same for any seed of the run.
 - **`BIDOZE_RELEASE_TRAINING`** names another training config, such as
   `config/training-smoke.json` for a wiring check.
 
