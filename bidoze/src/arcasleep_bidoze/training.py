@@ -10,7 +10,7 @@ from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.batching import assemble_batch
-from arcasleep.training.balanced import Patience, split_train_eval
+from arcasleep.training.balanced import Patience, row_probabilities, split_train_eval
 from arcasleep.training.config import RunConfig, read_json, reject_unknown, require_one_of
 from arcasleep.training.folds import DatasetIndex, deblip_subjects_for_fold
 
@@ -47,6 +47,7 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "dataset_sampling_weights",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +99,9 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # Per-dataset share of the fit's draws, by dataset name, relative to the other weights;
+    # rows of one dataset are drawn uniformly. None draws every row with equal probability.
+    dataset_sampling_weights: dict[str, float] | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -178,6 +182,10 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+        if self.dataset_sampling_weights is not None and not all(
+            w > 0.0 for w in self.dataset_sampling_weights.values()
+        ):
+            raise ValueError("training.json: dataset_sampling_weights must all be positive")
 
     @property
     def patience(self) -> Patience:
@@ -354,10 +362,20 @@ def _train_fold_balanced(
         )
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
-    X_fit, y_fit = assemble_batch(
-        features, fit_refs, training.x_length, training.y_length, num_classes,
-        frames_per_epoch=frames_per_epoch,
-    )
+    probabilities = None
+    if training.dataset_sampling_weights is None:
+        X_fit, y_fit = assemble_batch(
+            features, fit_refs, training.x_length, training.y_length, num_classes,
+            frames_per_epoch=frames_per_epoch,
+        )
+    else:
+        X_fit, y_fit, fit_datasets = assemble_batch(
+            features, fit_refs, training.x_length, training.y_length, num_classes,
+            frames_per_epoch=frames_per_epoch, with_dataset_labels=True,
+        )
+        probabilities = row_probabilities(fit_datasets, training.dataset_sampling_weights)
+        shares = {name: float(probabilities[fit_datasets == name].sum()) for name in sorted(set(fit_datasets))}
+        print(f"  draw share by dataset: { {k: round(v, 4) for k, v in shares.items()} }")
     X_eval, y_eval = assemble_batch(
         features, eval_refs, training.x_length, training.y_length, num_classes,
         frames_per_epoch=frames_per_epoch,
@@ -387,6 +405,7 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+        row_probabilities=probabilities,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model

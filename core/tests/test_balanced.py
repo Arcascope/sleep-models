@@ -12,6 +12,8 @@ from arcasleep.training.balanced import (
     Patience,
     Plateau,
     PlateauDecision,
+    row_probabilities,
+    sample_balanced_segments,
     selection_confusion,
     split_train_eval,
 )
@@ -137,3 +139,42 @@ def test_the_eval_holdout_does_not_depend_on_the_order_of_the_recordings() -> No
         for _ in range(5):
             permuted = [refs[i] for i in rng.permutation(len(refs))]
             assert split_train_eval(permuted, 0.3, seed) == split
+
+
+def test_a_datasets_weight_is_its_share_of_the_draws_whatever_its_row_count() -> None:
+    p = row_probabilities(["a"] * 6 + ["b"] * 2, {"a": 1.0, "b": 3.0})
+
+    assert p.sum() == pytest.approx(1.0)
+    assert p[:6].sum() == pytest.approx(0.25)
+    assert p[6:].sum() == pytest.approx(0.75)
+    assert np.allclose(p[:6], p[0]) and np.allclose(p[6:], p[6])
+
+
+def test_a_dataset_without_a_weight_is_refused() -> None:
+    with pytest.raises(ValueError, match="b"):
+        row_probabilities(["a", "b"], {"a": 1.0})
+
+
+def _nights(n: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    # Night i has frames of value i and every stage, so the first draw is always accepted.
+    return [(np.full((8, 2, 1), float(i), dtype=np.float32), np.arange(8) % 4) for i in range(n)]
+
+
+def test_sampling_follows_the_row_probabilities() -> None:
+    nights = _nights(4)
+    p = row_probabilities(["a", "a", "a", "b"], {"a": 1.0, "b": 1.0})
+    xs, _ = sample_balanced_segments(
+        nights, np.random.default_rng(0), n_segments=4000, segment_epochs=8, num_classes=4,
+        frames_per_epoch=1, probabilities=p,
+    )
+
+    assert np.mean(xs[:, 0, 0, 0] == 3.0) == pytest.approx(0.5, abs=0.03)
+
+
+def test_sampling_without_probabilities_draws_rows_uniformly() -> None:
+    xs, _ = sample_balanced_segments(
+        _nights(4), np.random.default_rng(0), n_segments=4000, segment_epochs=8, num_classes=4,
+        frames_per_epoch=1,
+    )
+
+    assert np.mean(xs[:, 0, 0, 0] == 3.0) == pytest.approx(0.25, abs=0.03)

@@ -57,7 +57,10 @@ def _recorded_split(results: Path) -> tuple[list[SubjectRef], list[SubjectRef]]:
 
 
 def _configs(
-    directory: Path, model_overrides: dict | None = None, cv_overrides: dict | None = None
+    directory: Path,
+    model_overrides: dict | None = None,
+    cv_overrides: dict | None = None,
+    training_overrides: dict | None = None,
 ) -> RunConfig:
     directory.mkdir(parents=True, exist_ok=True)
     files = {
@@ -84,7 +87,7 @@ def _configs(
             "test_sets": ["CohortB"],
             **(cv_overrides or {}),
         },
-        "training.json": BALANCED_TRAINING,
+        "training.json": {**BALANCED_TRAINING, **(training_overrides or {})},
         "metrics.json": {
             "num_classes": 4,
             "class_names": ["wake", "light", "deep", "rem", "gap"],
@@ -189,6 +192,32 @@ def test_a_fit_with_no_finite_eval_kappa_refuses_to_pick_an_epoch(tmp_path: Path
             batch_size=2, initial_lr=1e-3, weight_decay=0.0, balance_beta=0.999,
             patience=Patience(lr_drop=1, early_stop=2), max_epochs=3, fit_seed=0,
         )
+
+
+def test_dataset_sampling_weights_train_to_a_checkpoint(tmp_path: Path) -> None:
+    config = _configs(
+        tmp_path / "config",
+        cv_overrides={"train_sets": ["CohortA", "CohortC"]},
+        training_overrides={"dataset_sampling_weights": {"CohortA": 3.0, "CohortC": 1.0}},
+    )
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(5)], epochs=12)
+    _write_cache(cache_root / "test", "CohortC", ["c0", "c1", "c2"], epochs=10)
+    _write_cache(cache_root / "test", "CohortB", ["b0"], epochs=9)
+    results = tmp_path / "results" / "training"
+
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="test")
+
+    (checkpoint,) = (results / "model_outputs").glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
+
+
+def test_dataset_sampling_weights_must_be_positive_and_belong_to_the_balanced_recipe() -> None:
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "dataset_sampling_weights": {"A": 0.0}})
+    curriculum = {k: v for k, v in BALANCED_TRAINING.items() if k != "recipe"}
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**curriculum, "dataset_sampling_weights": {"A": 1.0}})
 
 
 def test_balanced_recipe_early_stops_on_validation_sets(tmp_path: Path) -> None:

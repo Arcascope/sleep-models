@@ -3226,6 +3226,7 @@ class BiDozeNetModel(CVModel):
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
+        row_probabilities: np.ndarray | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3247,6 +3248,9 @@ class BiDozeNetModel(CVModel):
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
+
+        With ``row_probabilities`` (one per training row), rows are drawn with those
+        probabilities instead of uniformly.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3363,6 +3367,7 @@ class BiDozeNetModel(CVModel):
                     num_classes=num_classes,
                     frames_per_epoch=fpe,
                     max_attempts=class_sample_max_attempts,
+                    probabilities=row_probabilities,
                 )
                 # The model pools the mask with its frames, so it runs per frame.
                 ms = np.repeat(valid_mask(ys), fpe, axis=1)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import jax
@@ -161,6 +161,21 @@ def balanced_cross_entropy(
     return jnp.sum(weighted) / float(labels.size)
 
 
+def row_probabilities(row_datasets: Sequence[str], weights: Mapping[str, float]) -> np.ndarray:
+    """Per-row draw probabilities from per-dataset sampling weights.
+
+    A dataset's weight is its share of the draws, relative to the other datasets' weights; the
+    rows of one dataset are drawn uniformly. Every dataset of the rows needs a weight.
+    """
+    datasets = np.asarray(row_datasets)
+    missing = sorted(set(datasets) - set(weights))
+    if missing:
+        raise ValueError(f"dataset_sampling_weights has no weight for {missing}")
+    counts = {name: int(np.sum(datasets == name)) for name in set(datasets)}
+    probabilities = np.array([weights[name] / counts[name] for name in datasets], dtype=np.float64)
+    return probabilities / probabilities.sum()
+
+
 def sample_balanced_segments(
     nights: Sequence[tuple[np.ndarray, np.ndarray]],
     rng: np.random.Generator,
@@ -169,6 +184,7 @@ def sample_balanced_segments(
     num_classes: int,
     frames_per_epoch: int,
     max_attempts: int = CLASS_SAMPLE_MAX_ATTEMPTS,
+    probabilities: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Pseudo-class-balanced online sampling (Olsen et al., Section II-E).
 
@@ -177,7 +193,7 @@ def sample_balanced_segments(
     bounds the search for a stage a short night may lack. Nights are
     ``(frames, labels)`` with ``frames_per_epoch`` frames per label. Segments
     shorter than ``segment_epochs`` are padded with absent frames and the gap
-    label.
+    label. Nights are drawn uniformly, or with ``probabilities`` (one per night).
     """
     fpe = frames_per_epoch
     f_bins, channels = nights[0][0].shape[1:]
@@ -190,7 +206,9 @@ def sample_balanced_segments(
     for i in range(n_segments):
         target_class = int(rng.integers(num_classes))
         for _ in range(max_attempts):
-            night_x, night_y = nights[int(rng.integers(len(nights)))]
+            index = int(rng.integers(len(nights))) if probabilities is None else int(
+                rng.choice(len(nights), p=probabilities))
+            night_x, night_y = nights[index]
             start = int(rng.integers(max(night_y.shape[0] - segment_epochs, 0) + 1))
             seg_x = night_x[start * fpe : (start + segment_epochs) * fpe]
             seg_y = night_y[start : start + segment_epochs]
