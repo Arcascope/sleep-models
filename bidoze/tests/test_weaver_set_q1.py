@@ -57,3 +57,29 @@ def test_each_arm_trains_on_its_weaver_set_and_the_draws_adults(
 def test_an_unknown_arm_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         prepare.prepare(tmp_path / "fit", _feature_root(tmp_path), "some", DRAW, 0)
+
+
+def test_the_all_adult_share_fit_draws_with_its_sampling_weights(tmp_path: Path) -> None:
+    from arcasleep.training.driver import RunPaths, run_training
+    from test_balanced_recipe import FRAMES_PER_EPOCH, _configs
+
+    root = _feature_root(tmp_path)
+    fit = tmp_path / "fit"
+    training = tmp_path / "training.json"
+    training.write_text(json.dumps(TINY_TRAINING))
+    prepare.prepare(fit, root, "all-adult-share", DRAW, 0, training)
+    # The linked recordings keep their own dataset names (SleepAccel, weaver_revised); the cv sets
+    # are named by the links (weaverAll, trainSleepAccel, ...).
+    (fit / "cache" / "test").symlink_to(fit / "cache" / CACHE_NAME)
+    cv = json.loads((fit / "cv.json").read_text())
+    saved = json.loads((fit / "training.json").read_text())
+    config = _configs(
+        tmp_path / "config", {"frames_per_epoch": FRAMES_PER_EPOCH},
+        {"train_sets": cv["train_sets"], "test_sets": cv["test_sets"]},
+        {"dataset_sampling_weights": saved["dataset_sampling_weights"]},
+    )
+    results = tmp_path / "results" / "training"
+
+    run_training(config, RunPaths(results=results, feature_cache=fit / "cache"), run_id="test")
+
+    assert len(list((results / "model_outputs").glob("*.pisces"))) == 1

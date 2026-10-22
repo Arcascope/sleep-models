@@ -362,19 +362,16 @@ def _train_fold_balanced(
         )
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
+    X_fit, y_fit = assemble_batch(
+        features, fit_refs, training.x_length, training.y_length, num_classes,
+        frames_per_epoch=frames_per_epoch,
+    )
     probabilities = None
-    if training.dataset_sampling_weights is None:
-        X_fit, y_fit = assemble_batch(
-            features, fit_refs, training.x_length, training.y_length, num_classes,
-            frames_per_epoch=frames_per_epoch,
-        )
-    else:
-        X_fit, y_fit, fit_datasets = assemble_batch(
-            features, fit_refs, training.x_length, training.y_length, num_classes,
-            frames_per_epoch=frames_per_epoch, with_dataset_labels=True,
-        )
+    if training.dataset_sampling_weights is not None:
+        # Rows follow fit_refs; a ref's dataset is the cv set it was listed under.
+        fit_datasets = np.array([ref.dataset_name for ref in fit_refs])
         probabilities = row_probabilities(fit_datasets, training.dataset_sampling_weights)
-        shares = {name: float(probabilities[fit_datasets == name].sum()) for name in sorted(set(fit_datasets))}
+        shares = {str(name): float(probabilities[fit_datasets == name].sum()) for name in sorted(set(fit_datasets))}
         print(f"  draw share by dataset: { {k: round(v, 4) for k, v in shares.items()} }")
     X_eval, y_eval = assemble_batch(
         features, eval_refs, training.x_length, training.y_length, num_classes,
