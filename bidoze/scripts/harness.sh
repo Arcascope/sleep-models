@@ -10,7 +10,12 @@
 # (src/arcasleep_bidoze/release.py): fold0..fold4 and final by default, and the final phase
 # also writes the release bundle to <final phase dir>/bundle.
 #   BIDOZE_RELEASE_VERSION     the bundle's version (default v0.2.0)
-#   BIDOZE_ADULT_WEAVER_SET    adult only: matched (default) or all revised-Weaver recordings
+#   BIDOZE_WEAVER_SET          the Weaver recordings trained on: matched (default) or all.
+#                              adult: matched is the 202 revised recordings of the earlier Weaver
+#                              nights; pediatric: matched is the earlier weaver cache itself
+#                              (config/splits/weaver_5fold.json). all is every revised-Weaver
+#                              recording (the pediatric plan is
+#                              config/splits/weaver_revised_pediatric_5fold.json).
 #   BIDOZE_RELEASE_TRAINING    a training config in place of the release's own, e.g.
 #                              config/training-smoke.json for a wiring check
 # BIDOZE_TRAINING_CONFIG, BIDOZE_CV_CONFIG, BIDOZE_SPLIT_PLAN and BIDOZE_MODEL_CONFIG are
@@ -26,6 +31,11 @@ set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$REPO_ROOT"
+
+if [[ -n "${BIDOZE_ADULT_WEAVER_SET:-}" ]]; then
+    echo "BIDOZE_ADULT_WEAVER_SET is replaced by BIDOZE_WEAVER_SET" >&2
+    exit 2
+fi
 
 RUN_ID="${BIDOZE_RUN_ID:-bidoze-training}"
 # BIDOZE_RESULTS_DIR is what `arcasleep bidoze train` itself reads; harness.sh reads
@@ -74,9 +84,11 @@ if [[ -n "$RELEASE" ]]; then
     esac
     TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$TRAINING_CONFIG}"
     MODEL_CONFIG=config/model-gap-rule.json
-    CV_CONFIG=config/cv-balanced.json
-    SPLIT_PLAN=config/splits/weaver_5fold.json
     RECIPE=balanced
+    WEAVER_SET="${BIDOZE_WEAVER_SET:-matched}"
+    if [[ "$RELEASE" == pediatric ]]; then
+        read -r SPLIT_PLAN CV_CONFIG < <(python -m arcasleep_bidoze.release pediatric-recipe --weaver-set "$WEAVER_SET")
+    fi
 fi
 LINK_ROOT="$WORK_DIR/cache"
 CV_DIR="$WORK_DIR/cv"
@@ -151,7 +163,7 @@ fi
 if [[ "$RELEASE" == adult ]]; then
     echo "==> materialising the adult release phases"
     python -m arcasleep_bidoze.release prepare-adult "$RELEASE_SETUP" "$REAL_CACHE_DIR" \
-        --weaver-set "${BIDOZE_ADULT_WEAVER_SET:-matched}"
+        --weaver-set "$WEAVER_SET"
     export FEATURE_CACHE_DIR="$LINK_ROOT"
 elif [[ -z "$EXPERIMENT" ]]; then
     echo "==> materialising $SPLIT_PLAN"

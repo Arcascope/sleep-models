@@ -3,11 +3,13 @@
 Each release has a model config (``config/model-gap-rule.json``), a training config and phases
 ``fold0`` to ``fold4`` and ``final``; ``scripts/harness.sh`` with ``BIDOZE_RELEASE`` runs them.
 
-- **pediatric:** ``config/training-pediatric.json`` on the Weaver cache, with the folds of
-  ``config/splits/weaver_5fold.json``; the released model trains on all of Weaver and is scored
-  on the adult cohorts.
+- **pediatric:** ``config/training-pediatric.json`` with the folds of a split plan over
+  Weaver (``--weaver-set``); the released model trains on all of Weaver and is scored on the
+  adult cohorts. ``matched`` trains on the earlier ``weaver`` cache with
+  ``config/splits/weaver_5fold.json`` (202 recordings); ``all`` trains on every revised-Weaver
+  recording with ``config/splits/weaver_revised_pediatric_5fold.json``.
 - **adult:** ``config/training-adult.json`` (3 seeds). Each phase trains on revised-Weaver
-  recordings (``--weaver-set``) and 4 of the 5 SleepAccel folds of
+  recordings (``--weaver-set``; ``matched`` is the 202 recordings of the earlier nights) and 4 of the 5 SleepAccel folds of
   ``config/splits/sleepaccel_5fold.json``; ``final`` trains on all of SleepAccel. The bundle is
   3 seed bundles and ``composite.json`` (the adult stage divisor).
 
@@ -16,6 +18,7 @@ Each release has a model config (``config/model-gap-rule.json``), a training con
 
 Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --cache-root <cache root>
                 [--weaver-set matched|all] [--phases fold0 ... final] [--version v0.2.0]
+       python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set matched|all]
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set matched|all]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
                 [--train-cache <setup dir>/cache --cache-root <cache root>]
@@ -36,14 +39,27 @@ from arcasleep.data.splits import read_plan
 
 CACHE_NAME = "12Hz_log_PSD_aligned"
 RELEASES = ("adult", "pediatric")
-#: The revised-Weaver recordings of the adult training set: ``matched`` is the 202 recordings
-#: of the earlier ``weaver`` cache's nights, ``all`` every recording.
+#: The Weaver recordings a release trains on. Adult: ``matched`` is the 202 revised-Weaver
+#: recordings of the earlier ``weaver`` cache's nights, ``all`` every revised recording.
+#: Pediatric: ``matched`` is the earlier ``weaver`` cache itself, ``all`` every revised recording.
 WEAVER_SETS = ("matched", "all")
+#: Per Weaver set, the pediatric release's split plan and cv template (under ``config/``).
+PEDIATRIC_RECIPES = {
+    "matched": ("config/splits/weaver_5fold.json", "config/cv-balanced.json"),
+    "all": ("config/splits/weaver_revised_pediatric_5fold.json", "config/cv-weaver-revised.json"),
+}
 ADULT_SEEDS = 3
 FOLDS = 5
 MODEL_CONFIG = "config/model-gap-rule.json"
 TRAINING_CONFIGS = {"adult": "config/training-adult.json", "pediatric": "config/training-pediatric.json"}
 SLEEPACCEL_PLAN = "config/splits/sleepaccel_5fold.json"
+
+
+def pediatric_recipe(weaver_set: str) -> tuple[str, str]:
+    """The split plan and cv template of the pediatric release on ``weaver_set``."""
+    if weaver_set not in WEAVER_SETS:
+        raise ValueError(f"weaver set must be one of {WEAVER_SETS}, got {weaver_set!r}")
+    return PEDIATRIC_RECIPES[weaver_set]
 
 
 def weaver_dataset_name(weaver_set: str) -> str:
@@ -58,26 +74,36 @@ def epoch_spectra(path: Path) -> np.ndarray:
     return X[: epochs * frames].reshape(epochs, frames, *X.shape[1:]).mean(axis=1)
 
 
+def holding_recordings(y: np.ndarray, labels: dict[str, np.ndarray]) -> list[str]:
+    """The revised recordings whose PSG labels hold the earlier night with labels ``y``.
+
+    A revised recording holds an earlier night when their labels agree epoch for epoch from the
+    first epoch over the shorter of the two, and that covers ≥ 90% of the longer. Other devices
+    of the same night hold it too (one PSG per night). Raises if the candidates are not one night.
+    """
+    candidates = [sid for sid, other in labels.items()
+                  if min(len(y), len(other)) >= 0.9 * max(len(y), len(other))
+                  and np.array_equal(y[: len(other)], other[: len(y)])]
+    nights = {sid.split("_", 1)[0] + "_" + sid.rsplit("_", 1)[1] for sid in candidates}
+    if len(nights) != 1:
+        raise ValueError(f"{len(nights)} revised nights match the labels")
+    return candidates
+
+
 def match_weaver(earlier: list[Path], revised: dict[str, Path]) -> dict[str, list[str]]:
     """The revised recordings that hold the earlier ``weaver`` nights.
 
-    A revised recording holds an earlier night when their PSG labels agree epoch for epoch
-    from the first epoch over the shorter of the two, and that covers ≥ 90% of the longer.
-    Other devices of the same night can match too (one PSG per night), so the recording is the
-    candidate whose epoch spectra are closest. Returns ``matched`` (that recording per night)
-    and ``matched-actigraph`` (the ActiGraph recording of the same child and night, where there
-    is one).
+    Of the recordings holding a night (``holding_recordings``), the match is the one whose epoch
+    spectra are closest. Returns ``matched`` (that recording per night) and ``matched-actigraph``
+    (the ActiGraph recording of the same child and night, where there is one).
     """
     labels = {sid: np.load(path)["y"].ravel() for sid, path in revised.items()}
     matched, actigraph = [], []
     for path in earlier:
-        y = np.load(path)["y"].ravel()
-        candidates = [sid for sid, other in labels.items()
-                      if min(len(y), len(other)) >= 0.9 * max(len(y), len(other))
-                      and np.array_equal(y[: len(other)], other[: len(y)])]
-        nights = {sid.split("_", 1)[0] + "_" + sid.rsplit("_", 1)[1] for sid in candidates}
-        if len(nights) != 1:
-            raise ValueError(f"{path.name}: {len(nights)} revised nights match its labels")
+        try:
+            candidates = holding_recordings(np.load(path)["y"].ravel(), labels)
+        except ValueError as error:
+            raise ValueError(f"{path.name}: {error}") from error
         spectra = epoch_spectra(path)
 
         def distance(sid: str) -> float:
@@ -243,7 +269,7 @@ def run_release(
     env = {
         **os.environ,
         "BIDOZE_RELEASE": release,
-        "BIDOZE_ADULT_WEAVER_SET": weaver_set,
+        "BIDOZE_WEAVER_SET": weaver_set,
         "BIDOZE_RELEASE_VERSION": version,
         "BIDOZE_RUN_ID": run_id,
         "FEATURE_CACHE_DIR": str(Path(cache_root).resolve()),
@@ -271,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--training-config", help="a training config in place of the release's own")
     run.add_argument("--results-dir", type=Path)
     run.add_argument("--bidoze-dir", type=Path, default=Path("."), help="the bidoze/ directory")
+    recipe = commands.add_parser("pediatric-recipe", help="print the pediatric split plan and cv template")
+    recipe.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
     prepare = commands.add_parser("prepare-adult", help="write the adult phases' cache links and cv configs")
     prepare.add_argument("setup", type=Path)
     prepare.add_argument("cache_root", type=Path)
@@ -290,7 +318,9 @@ def main(argv: list[str] | None = None) -> int:
             phases=args.phases, version=args.version, training_config=args.training_config,
             results_dir=args.results_dir, bidoze_dir=args.bidoze_dir,
         )
-    if args.command == "prepare-adult":
+    if args.command == "pediatric-recipe":
+        print(*pediatric_recipe(args.weaver_set))
+    elif args.command == "prepare-adult":
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
         print(build_release(args.release, args.final, args.output, args.version,
