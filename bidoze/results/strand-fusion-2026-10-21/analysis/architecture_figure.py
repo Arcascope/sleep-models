@@ -113,13 +113,13 @@ def panel_a(ax, cfg, c, cg):
     arrow(ax, (50, 58), (50, 54))
     arrow(ax, (50, 46), (50, 43), (27, 43), (27, 41.5))
     arrow(ax, (50, 43), (73, 43), (73, 41.5))
-    arrow(ax, (27, 30.5), (27, 27), (42, 27), (42, 27.25))
-    arrow(ax, (73, 30.5), (73, 27), (58, 27), (58, 27.25))
+    arrow(ax, (27, 30.5), (27, 29), (42, 29), (42, 27.25))
+    arrow(ax, (73, 30.5), (73, 29), (58, 29), (58, 27.25))
     arrow(ax, (50, 20.75), (50, 18))
-    arrow(ax, (15, 46), (15, 14.5), (25, 14.5), dashed=True)  # conv features (local) bypass the streams
+    arrow(ax, (15, 46), (15, 14.5), (21, 14.5), dashed=True)  # conv features (local) bypass the streams
     ax.text(14, 22, "conv features\n(local)", fontsize=6, ha="right", va="center")
     arrow(ax, (52, 11), (52, 9))
-    arrow(ax, (87, 5.5), (83, 5.5))
+    arrow(ax, (79, 5.5), (83, 5.5))
     ax.text(0, -0.8, "Only difference: in v0.1.0 gap is a learned 5th class (the head's 5th output is trained).\n"
             "In BiDoze-G (gap_from_row = true) an epoch is gap when its gap row = 1, and every other epoch has gap probability 0;\n"
             "absent epochs are zeroed at the input and hidden as attention keys in both streams. All other weights have the same shapes.",
