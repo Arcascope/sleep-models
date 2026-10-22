@@ -42,7 +42,7 @@ The demographic sheet has age, birth year, gender and handedness only. There
 are no questionnaire or clinical data in the open-access release. The cohort
 is described as healthy adults, aged 18 to 39.
 
-The dataset's repository is MIT licensed; the README states scientific research use only
+The dataset's repository is MIT licensed; its page states scientific research use only
 and forbids attempts to identify participants. Check the terms before redistributing.
 
 — Hazel
