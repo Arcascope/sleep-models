@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+jax.config.update("jax_default_matmul_precision", "highest")
+
 from fusion_model import (ARMS, G3_PARAMETERS, StrandFusionModel, StrandFusionModule, arm_spec,
                           count_parameters, model_config)
 
@@ -58,7 +60,7 @@ def test_full_attention_strand_has_the_weights_of_a_bicausal_one():
     b = StrandFusionModule(model_config(spec), spec).apply({"params": params}, x, mask, return_outputs=True)[
         "strand_probabilities"]
     assert not np.allclose(a[0], b[0], atol=1e-5)  # strand 0 attends differently
-    np.testing.assert_allclose(a[1:], b[1:], atol=1e-3)  # the bicausal strands are unchanged
+    np.testing.assert_allclose(a[1:], b[1:], atol=1e-5)  # the bicausal strands are unchanged
 
 
 def test_fusion_loss_trains_every_strand_and_the_fusion_head():

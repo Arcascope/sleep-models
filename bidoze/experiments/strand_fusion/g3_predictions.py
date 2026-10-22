@@ -1,6 +1,7 @@
-"""Save the three BiDoze-G seeds' probabilities of one draw (October 16 §8) in the format of run.py.
+"""Save three BiDoze-G seeds' probabilities of one draw (October 16 §8 recipe) in the format of run.py.
 
-Writes ``<run>/g3/draw<d>/predictions/<role>_<dataset>_<subject>.npz`` for the draw's test recordings
+``--name g3`` is seeds 0-2 (October 16 §8), ``--name g3b`` seeds 3-5. Writes
+``<run>/<name>/draw<d>/predictions/<role>_<dataset>_<subject>.npz`` for the draw's test recordings
 and adult eval-share recordings, and the draw's ``stage_divisor.npy``.
 """
 import argparse
@@ -12,22 +13,33 @@ import numpy as np
 import data as D
 from arcasleep_bidoze.model import BiDozeNetModel
 
-ARMS = ["bidoze_g", "bidoze_g_s1", "bidoze_g_s2"]
+SEEDS = {"g3": (0, 1, 2), "g3b": (3, 4, 5)}
+ENSEMBLE_SIZE_RUN = D.G3_RUN.parent / "ensemble-size-2026-10-17"
+
+
+def model_path(run: Path, seed: int, draw: int) -> Path:
+    """The seed's checkpoint: October 16 §8 (seeds 0-2), the ensemble-size run, or this run's ``g_seeds``."""
+    arm = "bidoze_g" if seed == 0 else f"bidoze_g_s{seed}"
+    name = f"{arm}/draw{draw}/model_outputs/model_draw{draw}_seed_{seed}.pisces"
+    for root in (D.G3_RUN, ENSEMBLE_SIZE_RUN, run / "g_seeds"):
+        if (root / name).exists():
+            return root / name
+    raise FileNotFoundError(f"no checkpoint for seed {seed} draw {draw}")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run", type=Path, required=True)
+    ap.add_argument("--name", choices=list(SEEDS), default="g3")
     ap.add_argument("--draw", type=int, required=True)
     a = ap.parse_args()
-    out = a.run / "g3" / f"draw{a.draw}"
+    out = a.run / a.name / f"draw{a.draw}"
     if (out / "complete.json").exists():
         print("already complete", out)
         return
     import jax
     import jax.numpy as jnp
-    paths = [D.G3_RUN / arm / f"draw{a.draw}/model_outputs/model_draw{a.draw}_seed_{i}.pisces" for i, arm in enumerate(ARMS)]
-    assert all(p.exists() for p in paths), [str(p) for p in paths if not p.exists()]
+    paths = [model_path(a.run, k, a.draw) for k in SEEDS[a.name]]
     models = [BiDozeNetModel.loadz(p) for p in paths]
     parameters = int(sum(x.size for m in models for x in jax.tree.leaves(m.params)))
     runs = [jax.jit(lambda x, m=m: jax.nn.softmax(m.module.apply({"params": m.params}, x, jnp.ones(x.shape[:2]),

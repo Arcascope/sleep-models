@@ -3,6 +3,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+
+# GPU matmuls default to reduced precision (errors near 1e-4), which the tight comparisons below cannot absorb.
+jax.config.update("jax_default_matmul_precision", "highest")
 from arcasleep.training.balanced import balanced_cross_entropy
 from arcasleep_bidoze.model import BiDozeNetConfig
 from model import ArmSpec, CooperatingModule
