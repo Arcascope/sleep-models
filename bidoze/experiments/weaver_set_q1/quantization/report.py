@@ -94,8 +94,10 @@ def contrast(delta: pd.Series, ids: list[str], weights: np.ndarray) -> dict:
     for d in sorted(delta.index.get_level_values("draw").unique()):
         g = delta.loc[d].dropna()
         w = weights[:, [ids.index(s) for s in g.index]]
-        boot.append(w @ g.to_numpy() / w.sum(axis=1))
-    lo, hi = np.percentile(np.mean(boot, axis=0), [2.5, 97.5])
+        total = w.sum(axis=1)
+        # A resample that holds none of the participants with a value (a stage absent from their PSG) has no mean for that draw.
+        boot.append(np.where(total > 0, w @ g.to_numpy() / np.maximum(total, 1), np.nan))
+    lo, hi = np.nanpercentile(np.nanmean(boot, axis=0), [2.5, 97.5])
     return dict(mean=by_draw.mean(), sd=by_draw.std(), boot_low=lo, boot_high=hi, draws=len(by_draw))
 
 
