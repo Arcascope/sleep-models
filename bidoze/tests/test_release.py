@@ -186,3 +186,12 @@ def test_the_local_entry_point_trains_a_tiny_final_phase_and_writes_the_bundle(t
     assert status == 0
     bundle = tmp_path / "results/tiny/training/final/bundle"
     assert json.loads((bundle / "composite.json").read_text())["seeds"] == ["seed0", "seed1"]
+
+
+def test_the_training_image_installs_the_extras_a_release_bundle_needs() -> None:
+    import re
+
+    dockerfile = (Path(__file__).resolve().parents[1] / "docker/train.Dockerfile").read_text()
+    (extras,) = re.findall(r'pip install[^\n]*"\.\[([^\]]+)\]"', dockerfile)
+
+    assert {"bidoze", "train", "aws", "publish"} <= set(extras.split(","))
