@@ -5,14 +5,14 @@ wrist-worn accelerometer in children and adolescents aged 5 to 18. Running BiDoz
 require polysomnography (PSG). PSG can be used to measure its accuracy on your
 own cohort.
 
-Sleep/wake is the primary task. 
+Sleep/wake is the primary task. Staging kappa is still within bounds often considered "good" for wrist based sleep scoring.
 
 **Not a medical device.** Do not use it to diagnose sleep disorders (including
 obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
 ## Limitations
 
-- **Wake specificity is lower than sleep sensitivity.** In the pediatric
+- **High specificity, but underestimates sleep.** In the pediatric
   cross-validation, sleep sensitivity is 93.2% and wake specificity is 81.1%.
   Total sleep time is underestimated by 12.4 minutes on average.
 - **Stage durations have larger errors than total sleep time.** In the
