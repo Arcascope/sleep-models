@@ -14,7 +14,7 @@ its training nights. The divisor removes both:
     divisor_c = w_c × π_train,c / π_adult,c
 
 where w_c is the stage's effective weight in the training batches, π_train its
-prevalence in the training nights and π_adult its prevalence in adult PSG. Only
+prevalence in the training nights and π_adult its prevalence in the adult (SleepAccel and Wearanize+) training nights. Only
 light, deep and REM are divided: dividing wake as well moves the sleep/wake
 operating point by an amount that depends on the cohort's share of wake.
 

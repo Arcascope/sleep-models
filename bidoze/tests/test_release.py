@@ -61,9 +61,8 @@ def _feature_root(tmp_path: Path) -> Path:
         _save(cache, "wearanize", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     for sid in SLEEPACCEL:
         _save(cache, "SleepAccel", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
-    for sid in CLINICAL + ["ref0", "ref1"]:
-        dataset = "SleepAccel-Clinical" if sid.startswith("cl") else "eesm19"
-        _save(cache, dataset, sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
+    for sid in CLINICAL:
+        _save(cache, "SleepAccel-Clinical", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     return tmp_path / "root"
 
 
@@ -145,7 +144,7 @@ def test_a_final_phase_builds_the_adult_bundle_with_one_bundle_per_seed(tmp_path
     final = _final_phase(tmp_path, setup, TINY_TRAINING)
 
     bundle = build_release("adult", final, tmp_path / "bundle", "v0.0.0",
-                           train_cache=setup / "cache", cache_root=root)
+                           train_cache=setup / "cache")
 
     composite = json.loads((bundle / "composite.json").read_text())
     assert composite["seeds"] == ["seed0", "seed1"]
@@ -165,7 +164,7 @@ def test_an_f2_final_phase_builds_the_adult_bundle_of_all_or_chosen_seeds(
     final = _final_phase(tmp_path, setup, TINY_TRAINING, model=F2_MODEL)
 
     bundle = build_release("adult", final, tmp_path / "bundle", "v0.0.0",
-                           train_cache=setup / "cache", cache_root=root, seeds=seeds)
+                           train_cache=setup / "cache", seeds=seeds)
 
     composite = json.loads((bundle / "composite.json").read_text())
     assert composite["seeds"] == expected
@@ -183,7 +182,7 @@ def test_a_seed_the_phase_did_not_train_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         build_release("adult", final, tmp_path / "bundle", "v0.0.0",
-                      train_cache=setup / "cache", cache_root=root, seeds=[7])
+                      train_cache=setup / "cache", seeds=[7])
 
 
 def test_a_final_phase_builds_the_pediatric_bundle(tmp_path: Path) -> None:
