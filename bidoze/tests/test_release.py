@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -15,10 +16,14 @@ from arcasleep.models import get_family  # noqa: E402
 from arcasleep.training.config import RunConfig  # noqa: E402
 from arcasleep.training.driver import RunPaths, run_training  # noqa: E402
 from arcasleep_bidoze.release import (  # noqa: E402
+    ADULT_REFERENCE_PREFIXES,
     CACHE_NAME,
+    adult_card_metrics,
     build_release,
+    phase_divisor,
     prepare_adult,
     weaver_dataset_name,
+    write_adult_card,
 )
 
 FRAMES_PER_EPOCH = 3
@@ -114,8 +119,10 @@ F2_MODEL = {"num_classes": 4, "score_gap": True, "gap_from_row": True, "n_heads"
             "fusion_proj": 4, "fusion_width": 8, "fusion_layers": 1, "fusion_heads": 2, "fusion_ffn": 8}
 
 
-def _final_phase(tmp_path: Path, setup: Path, training: dict, model: dict | None = None) -> Path:
-    config = tmp_path / "run-config"
+def _final_phase(
+    tmp_path: Path, setup: Path, training: dict, model: dict | None = None, phase: str = "final"
+) -> Path:
+    config = tmp_path / f"run-config-{phase}"
     config.mkdir()
     files = {
         "inputs.json": {"type": "nufft", "cache_prefix": CACHE_NAME, "window_seconds": 10, "window_step_seconds": 10},
@@ -124,16 +131,16 @@ def _final_phase(tmp_path: Path, setup: Path, training: dict, model: dict | None
                                 "dropout": 0.0},
         "training.json": training,
         "metrics.json": {"num_classes": 4, "class_names": ["wake", "light", "deep", "rem", "gap"],
-                         "psg_dt_minutes": 0.5, "min_stage_minutes": 5.0, "metrics": ["sleep_sensitivity"]},
+                         "psg_dt_minutes": 0.5, "min_stage_minutes": 5.0, "metrics": ["sleep_sensitivity", "wake_specificity", "kappa_sleep_wake"]},
     }
     for name, payload in files.items():
         (config / name).write_text(json.dumps(payload))
     run = RunConfig.from_paths(
         family=get_family("bidoze"), inputs=config / "inputs.json", model=config / "model.json",
-        cv=setup / "cv/cv_final.json", training=config / "training.json", metrics=config / "metrics.json",
+        cv=setup / f"cv/cv_{phase}.json", training=config / "training.json", metrics=config / "metrics.json",
     )
-    results = tmp_path / "results"
-    run_training(run, RunPaths(results=results, feature_cache=setup / "cache"), run_id="final")
+    results = tmp_path / "results" / phase
+    run_training(run, RunPaths(results=results, feature_cache=setup / "cache"), run_id=phase)
     return results
 
 
@@ -172,6 +179,58 @@ def test_an_f2_final_phase_builds_the_adult_bundle_of_all_or_chosen_seeds(
     from arcasleep.predict import load_predictor
 
     assert load_predictor(bundle) is not None
+
+
+def _adult_run(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A tiny adult run: ``training/fold0``, ``fold1`` and ``final`` phases, the setup cache and the bundle."""
+    root = _feature_root(tmp_path)
+    setup = tmp_path / "setup"
+    prepare_adult(setup, root, "all", _config_dir(tmp_path))
+    training = tmp_path / "training"
+    for phase in ("fold0", "fold1", "final"):
+        results = _final_phase(tmp_path, setup, TINY_TRAINING, model=F2_MODEL, phase=phase)
+        shutil.move(results, training / phase)
+    bundle = build_release("adult", training / "final", tmp_path / "bundle", "v0.0.0",
+                           train_cache=setup / "cache")
+    return training, setup / "cache", bundle
+
+
+def test_the_adult_divisor_comes_from_the_adult_training_sets(tmp_path: Path) -> None:
+    training, cache, bundle = _adult_run(tmp_path)
+
+    composite = json.loads((bundle / "composite.json").read_text())
+    provenance = composite["provenance"]
+
+    assert all(name.startswith(ADULT_REFERENCE_PREFIXES) for name in provenance["adult_reference"])
+    assert provenance["adult_reference_nights"] == len(SLEEPACCEL) + len(WEARANIZE)
+    divisor, train, adult = phase_divisor(training / "fold0", cache)
+    assert len(adult) == len(SLEEPACCEL) // 2 + len(WEARANIZE) // 2
+    assert len(train) == len(REVISED) + len(adult)
+    assert (divisor > 0).all()
+
+
+def test_the_adult_card_is_scored_per_cohort_and_written_into_a_verified_bundle(tmp_path: Path) -> None:
+    import csv
+
+    from arcasleep.artifacts.publish import verify_bundle
+
+    training, cache, bundle = _adult_run(tmp_path)
+    info = tmp_path / "info.toml"
+    info.write_text('repo = "org/adult"\naudience = "Adults"\nheadline = "SleepAccel"\n'
+                    '[cohorts]\nSleepAccel = "a"\n')
+
+    summary = adult_card_metrics(training, bundle, tmp_path / "summary.csv", train_cache=cache)
+    readme = write_adult_card(bundle, summary, info)
+
+    with summary.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {r["cohort"] for r in rows} == {"SleepAccel", "Wearanize+", "SleepAccel-Clinical"}
+    counts = {r["cohort"]: int(float(r["n"])) for r in rows if r["metric"] == "sleep_sensitivity"}
+    assert counts == {"SleepAccel": len(SLEEPACCEL), "Wearanize+": len(WEARANIZE),
+                      "SleepAccel-Clinical": len(CLINICAL)}
+    assert readme == bundle / "README.md" and readme.is_file()
+    verify_bundle(bundle)
+    verify_bundle(bundle / "seed0")
 
 
 def test_a_seed_the_phase_did_not_train_is_refused(tmp_path: Path) -> None:

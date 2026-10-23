@@ -24,6 +24,8 @@ Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set all|matched]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
                 [--train-cache <setup dir>/cache] [--seeds 0 1 2]
+       python -m arcasleep_bidoze.release card adult <training dir> <bundle dir> --info cards/bidoze-adult.toml
+                --train-cache <setup dir>/cache [--summary-out <csv>]
 """
 from __future__ import annotations
 
@@ -305,6 +307,124 @@ def build_release(
     )
 
 
+#: Cohorts of the adult card: name, and the index in a fold's ``test_sets`` where the fold
+#: that scores it holds it out (SleepAccel, then Wearanize+).
+ADULT_CV_COHORTS = {"SleepAccel": 0, "Wearanize+": 1}
+ADULT_FINAL_COHORT = "SleepAccel-Clinical"
+CARD_METRICS = ("kappa_sleep_wake", "kappa_4stage", "sleep_sensitivity", "wake_specificity",
+                "tst_error_minutes", "waso_error_minutes", "light_mape", "deep_mape", "rem_mape")
+
+
+def load_scored_recording(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """``(PSG stage per epoch, 5-way probabilities)`` of a recording's scored-prediction CSV.
+
+    The stage probabilities are scaled by 1 − the gap head's, which is the 5th column;
+    PSG is -1 where the epoch is not scored.
+    """
+    import pandas as pd
+
+    stages = ["wake", "light", "deep", "rem"]
+    d = pd.read_csv(path, dtype={"psg": str})
+    gap = d["gap_head"].to_numpy(float)
+    proba = np.column_stack([d[stages].to_numpy(float) * (1.0 - gap)[:, None], gap])
+    y = d["psg"].map({s: i for i, s in enumerate(stages)}).fillna(-1).astype(int).to_numpy()
+    return y, proba
+
+
+def seed_mean_recordings(phase: Path, dataset: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Each recording of ``dataset`` the phase scored: PSG, and the mean output over its seeds."""
+    seeds = [d for d in sorted((phase / "predictions").iterdir()) if d.is_dir()]
+    if not seeds:
+        raise FileNotFoundError(f"{phase} holds no predictions")
+    scored = [
+        {f.stem[len(dataset) + 1:]: load_scored_recording(f) for f in seed.glob(f"{dataset}_*.csv")}
+        for seed in seeds
+    ]
+    return {
+        sid: (y, np.mean([s[sid][1] for s in scored], axis=0)) for sid, (y, _) in scored[0].items()
+    }
+
+
+def adult_card_metrics(
+    training: Path,
+    bundle: Path,
+    output: Path,
+    *,
+    train_cache: Path,
+) -> Path:
+    """Score the adult release as its bundle scores recordings; writes the card's summary CSV.
+
+    ``training`` holds the phases ``fold0`` to ``fold<n>`` and ``final``. Each recording is
+    scored by the seed-mean output of one phase, as ``AdultPredictor`` does: that output decides
+    wake or sleep, and light/deep/REM are divided by the phase's divisor (``hybrid_calls``).
+
+    - SleepAccel and Wearanize+: each recording is scored by the fold phase that held it out,
+      with that phase's divisor (``phase_divisor``).
+    - SleepAccel-Clinical: the ``final`` phase, with the divisor in the bundle's ``composite.json``.
+
+    ``output`` has the columns ``metric, cohort, n, mean, ...`` of ``arcasleep summarize``; a
+    cohort's n is its recordings.
+    """
+    import tempfile
+
+    import pandas as pd
+
+    import arcasleep.evaluation  # noqa: F401  (registers the metrics)
+    from arcasleep.reporting.summary import build_cohorts, discover_phases, summary_table
+    from arcasleep.training.config import load_metrics_config
+    from arcasleep_bidoze.adult import LIGHT, REM, SLEEP_STAGE_NAMES, hybrid_calls
+    from pisces_lite.metrics.logger import MetricsLogger
+
+    training, bundle = Path(training), Path(bundle)
+    final = training / "final"
+    metrics_path = final / "config/metrics_effective.json"
+    if not metrics_path.is_file():
+        metrics_path = final / "config/metrics.json"
+    config, _ = load_metrics_config(metrics_path)
+    wanted = [m for m in CARD_METRICS if m in config.metrics]
+    logger = MetricsLogger(config)
+
+    recordings: dict[str, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+    folds = sorted(training.glob("fold[0-9]*"), key=lambda p: int(p.name[len("fold"):]))
+    if not folds:
+        raise FileNotFoundError(f"{training} holds no fold phase")
+    for fold in folds:
+        divisor, _, _ = phase_divisor(fold, train_cache)
+        test_sets = json.loads((fold / "config/cv.json").read_text())["test_sets"]
+        for cohort, index in ADULT_CV_COHORTS.items():
+            for sid, (y, mean) in seed_mean_recordings(fold, test_sets[index]).items():
+                recordings.setdefault(cohort, {})[sid] = (y, mean, hybrid_calls(mean, mean, divisor))
+    spec = json.loads((bundle / "composite.json").read_text())
+    divisor = np.array([1.0] + [spec["stage_divisor"][n] for n in SLEEP_STAGE_NAMES])
+    for sid, (y, mean) in seed_mean_recordings(final, ADULT_FINAL_COHORT).items():
+        recordings.setdefault(ADULT_FINAL_COHORT, {})[sid] = (y, mean, hybrid_calls(mean, mean, divisor))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = Path(tmp) / "cv_results_4_stages.csv"
+        for cohort, subjects in recordings.items():
+            for sid, (y, mean, calls) in subjects.items():
+                logger.record(csv_path, y_true=y, y_pred_proba=mean, y_pred=calls, run_id="", fold="",
+                              epoch=0, subject_id=sid, dataset=cohort, training_dataset="")
+        frame = pd.read_csv(csv_path)
+    from arcasleep.reporting.summary import to_subjects
+
+    cohorts = {c: to_subjects(g) for c, g in frame.groupby("dataset", sort=False)}
+    table = summary_table(cohorts)
+    table = table[table["metric"].isin(wanted)]
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(output, index=False)
+    return Path(output)
+
+
+def write_adult_card(bundle: Path, metrics_summary: Path, info: Path) -> Path:
+    """The composite bundle's generated README.md, from its scores and the release-info TOML."""
+    from arcasleep.artifacts.publish import verify_bundle, write_composite_card
+
+    readme = write_composite_card(bundle, metrics_summary=metrics_summary, info=info)
+    verify_bundle(bundle)
+    return readme
+
+
 def run_release(
     release: str,
     *,
@@ -377,6 +497,17 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("--train-cache", type=Path)
     bundle.add_argument("--seeds", type=int, nargs="+", help="adult only: bundle only these fit seeds "
                         "(one seed gives a single-model bundle)")
+    card = commands.add_parser(
+        "card", help="score a finished adult release and write the composite bundle's README.md"
+    )
+    card.add_argument("release", choices=("adult",))
+    card.add_argument("training", type=Path, help="the training directory holding fold0 to fold4 and final")
+    card.add_argument("bundle", type=Path, help="the composite bundle written by `bundle`")
+    card.add_argument("--info", type=Path, required=True, help="release-info TOML, e.g. cards/bidoze-adult.toml")
+    card.add_argument("--train-cache", type=Path, required=True,
+                      help="the setup cache of the phases (<setup dir>/cache)")
+    card.add_argument("--summary-out", type=Path,
+                      help="where to write the scores (default: <training dir>/metrics_summary.csv)")
     args = parser.parse_args(argv)
     if args.command == "run":
         return run_release(
@@ -386,6 +517,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "pediatric-recipe":
         print(*pediatric_recipe(args.weaver_set))
+    elif args.command == "card":
+        summary = adult_card_metrics(args.training, args.bundle, args.summary_out or args.training / "metrics_summary.csv",
+                                     train_cache=args.train_cache)
+        print(write_adult_card(args.bundle, summary, args.info))
     elif args.command == "prepare-adult":
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
