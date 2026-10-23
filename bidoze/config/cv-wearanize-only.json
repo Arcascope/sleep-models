@@ -1,0 +1,12 @@
+{
+  "mode": "transfer",
+  "train_sets": [
+    "wearanize"
+  ],
+  "test_sets": [
+    "SleepAccel",
+    "SleepAccel-Clinical",
+    "aauwss"
+  ],
+  "validation_sets": []
+}
