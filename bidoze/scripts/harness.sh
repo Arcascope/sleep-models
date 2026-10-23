@@ -79,7 +79,7 @@ if [[ -n "$RELEASE" ]]; then
     [[ -z "$EXPERIMENT" ]] || { echo "BIDOZE_RELEASE and BIDOZE_EXPERIMENT are exclusive" >&2; exit 2; }
     case "$RELEASE" in
         adult)     TRAINING_CONFIG=config/training-adult.json ;;
-        pediatric) TRAINING_CONFIG=config/training-adult.json ;;
+        pediatric) TRAINING_CONFIG=config/training-pediatric.json ;;
         *) echo "BIDOZE_RELEASE must be adult or pediatric, got $RELEASE" >&2; exit 2 ;;
     esac
     TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$TRAINING_CONFIG}"
