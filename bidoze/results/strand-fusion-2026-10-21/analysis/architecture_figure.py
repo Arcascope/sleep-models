@@ -148,7 +148,16 @@ def attention_dots(svg, cx, cy, mode, color, gap=9, r=3):
         svg.add(f'<circle cx="{x:.1f}" cy="{cy:.1f}" r="{r}" fill="{color if seen else "#e2e8f0"}"/>')
 
 
-def stream(svg, x, y, w, h, kind, title, detail, weights, mode):
+def layer_stack(svg, x, y, w, h, kind, layers, step, up=True, r=8):
+    """The layers behind the front one, as offset cards: one card per stacked transformer layer."""
+    stroke, fill = COL[kind]
+    for i in range(layers - 1, 0, -1):
+        dy = -i * step if up else i * step
+        svg.rect(x + i * step, y + dy, w, h, fill=fill, stroke=stroke, r=r, sw=1.0)
+
+
+def stream(svg, x, y, w, h, kind, title, detail, weights, mode, layers, up):
+    layer_stack(svg, x, y, w, h, kind, layers, 4, up)
     svg.rect(x, y, w, h, kind)
     stroke = COL[kind][0]
     svg.text(x + 14, y + 21, title, size=14, color=stroke, weight=700)
@@ -199,9 +208,11 @@ def panel_a(svg, y0, cfg, c, cg, scale):
           [f"kernels {', '.join(map(str, cfg.conv_kernels))} epochs", f"{len(cfg.conv_kernels)} × {d // 4} → {d}"], c["conv"])
     sx, sw_ = 464, 300
     stream(svg, sx, yc - 58, sw_, 52, "fwd", "Forward stream",
-           f"{cfg.n_transformer_layers} layers · width {s} · {cfg.n_heads // 2} heads", c["fwd"], "fwd")
+           f"{cfg.n_transformer_layers} layers · width {s} · {cfg.n_heads // 2} heads", c["fwd"], "fwd",
+           cfg.n_transformer_layers, True)
     stream(svg, sx, yc + 6, sw_, 52, "rev", "Reverse stream",
-           f"{cfg.n_transformer_layers} layers · width {s} · {cfg.n_heads // 2} heads", c["rev"], "rev")
+           f"{cfg.n_transformer_layers} layers · width {s} · {cfg.n_heads // 2} heads", c["rev"], "rev",
+           cfg.n_transformer_layers, False)
     block(svg, 800, top, 150, h, "cat", "Concat", [f"{s} + {s} → {d}", "+ LayerNorm"], c["cat"])
     block(svg, 986, top, 176, h, "gate", "Gated fusion", ["gate × conv +", "(1 − gate) × transformer"], c["gate"])
     block(svg, 1198, top, 160, h, "head", "Head", [f"Dense {d} → {s} → 5", "v0.1.0: gap learned"], c["hidden"] + c["logits"])
@@ -210,8 +221,8 @@ def panel_a(svg, y0, cfg, c, cg, scale):
     svg.arrow(192, yc, 228, yc)
     svg.arrow(428, yc, sx, yc - 32)
     svg.arrow(428, yc, sx, yc + 32)
-    svg.arrow(sx + sw_, yc - 32, 800, yc)
-    svg.arrow(sx + sw_, yc + 32, 800, yc)
+    svg.arrow(sx + sw_ + 12, yc - 44, 800, yc)
+    svg.arrow(sx + sw_ + 12, yc + 44, 800, yc)
     svg.arrow(950, yc, 986, yc)
     svg.arrow(1162, yc, 1198, yc)
     svg.arrow(1358, yc, 1394, yc)
@@ -219,12 +230,12 @@ def panel_a(svg, y0, cfg, c, cg, scale):
     svg.path(f"M328,{top} V{skip} H1074 V{top}", color=COL["conv"][0], dashed=True)
     svg.text(700, skip - 7, "conv features skip the streams", size=12, color=COL["conv"][0], anchor="middle", italic=True)
 
-    legend_y = yc + 82
+    legend_y = yc + 92
     attention_dots(svg, 46, legend_y - 4, "fwd", FAINT, gap=7, r=2.5)
-    svg.text(76, legend_y, "epochs each epoch attends to (ringed: the epoch itself). ALiBi position bias; "
-             "absent epochs are hidden as attention keys.", size=12, color=MUTED)
+    svg.text(76, legend_y, "epochs each epoch attends to (ringed: the epoch itself). Stacked cards: one per transformer layer. "
+             "ALiBi position bias; absent epochs are hidden as attention keys.", size=12, color=MUTED)
 
-    bar_y = yc + 118
+    bar_y = yc + 128
     weight_bar(svg, 24, bar_y, scale, [
         (c["conv"], "conv", "conv 39%"), (c["fwd"], "fwd", "forward 25%"), (c["rev"], "rev", "reverse 25%"),
         (c["cat"], "cat", ""), (c["gate"], "gate", "gate"), (c["hidden"] + c["logits"], "head", ""),
@@ -260,7 +271,8 @@ def panel_b(svg, y0, spec, f, scale):
         svg.text(x + 48, rc - 4, "Conv bank", size=12, weight=700, color=COL["conv"][0], anchor="middle")
         svg.text(x + 48, rc + 12, f"4 × {w // 4} → {w}", size=11, color=MUTED, anchor="middle")
         x2 = x + 96 + 16
-        for kind, yy, mode, label in (("fwd", rc - 22, "fwd", "Forward"), ("rev", rc + 1, "rev", "Reverse")):
+        for kind, yy, mode, label, up in (("fwd", rc - 22, "fwd", "Forward", True), ("rev", rc + 1, "rev", "Reverse", False)):
+            layer_stack(svg, x2, yy, 128, 21, kind, cfg.n_transformer_layers, 2.5, up, r=5)
             svg.rect(x2, yy, 128, 21, kind, r=5)
             svg.text(x2 + 8, yy + 15, label, size=11, weight=700, color=COL[kind][0])
             attention_dots(svg, x2 + 94, yy + 10.5, mode, COL[kind][0], gap=6, r=2)
@@ -270,8 +282,8 @@ def panel_b(svg, y0, spec, f, scale):
         svg.rect(x3, rc - 22, 64, 44, "cat")
         svg.text(x3 + 32, rc - 4, "Concat", size=12, weight=700, color=COL["cat"][0], anchor="middle")
         svg.text(x3 + 32, rc + 12, f"→ {w}", size=11, color=MUTED, anchor="middle")
-        svg.arrow(x2 + 128, rc - 11.5, x3, rc, sw=1.2)
-        svg.arrow(x2 + 128, rc + 11.5, x3, rc, sw=1.2)
+        svg.arrow(x2 + 128 + 7.5, rc - 19, x3, rc, sw=1.2)
+        svg.arrow(x2 + 128 + 7.5, rc + 19, x3, rc, sw=1.2)
         x4 = x3 + 64 + 14
         svg.rect(x4, rc - 22, 60, 44, "gate")
         svg.text(x4 + 30, rc - 4, "Gate", size=12, weight=700, color=COL["gate"][0], anchor="middle")
@@ -305,6 +317,7 @@ def panel_b(svg, y0, spec, f, scale):
 
     fx = px + 150 + 28
     fw = 204
+    layer_stack(svg, fx, mid - 60, fw, 120, "fusion", spec.fusion_layers, 6)
     svg.rect(fx, mid - 60, fw, 120, "fusion")
     svg.text(fx + fw / 2, mid - 38, "Fusion transformer", size=14, weight=700, color=COL["fusion"][0], anchor="middle")
     svg.text(fx + fw / 2, mid - 19, f"{spec.fusion_layers} layers · width {spec.fusion_width} · {spec.fusion_heads} heads",
@@ -318,7 +331,7 @@ def panel_b(svg, y0, spec, f, scale):
     hw = 1394 - 28 - hx
     block(svg, hx, mid - 60, hw, 120, "head", "Head", [f"Dense {spec.fusion_width} → 4", "gap from", "the gap row"],
           f["norm"] + f["out"])
-    svg.arrow(fx + fw, mid, hx, mid)
+    svg.arrow(fx + fw + 6, mid, hx, mid)
     svg.arrow(hx + hw, mid, 1394, mid)
     outputs(svg, 1394, mid - 58, 182, 116, STAGES)
 
