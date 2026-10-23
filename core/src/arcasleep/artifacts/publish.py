@@ -121,6 +121,8 @@ class ReleaseInfo:
     ``audience``       the glance table's "For" row
     ``protocol``       paragraph describing how the reported numbers were produced
     ``require_cv``     the glance score must come from the pooled ``cv`` cohort
+    ``headline``       the cohort the glance score comes from, and the first one listed, in
+                       place of ``cv``; the card has no glance score when it is missing
     ``[cohorts]``      cohort name -> one-line description for the performance section
     """
 
@@ -129,10 +131,11 @@ class ReleaseInfo:
     audience: str | None = None
     protocol: str | None = None
     require_cv: bool = False
+    headline: str | None = None
     cohorts: Mapping[str, str] = field(default_factory=dict)
 
 
-_INFO_KEYS = frozenset({"repo", "card", "audience", "protocol", "require_cv", "cohorts"})
+_INFO_KEYS = frozenset({"repo", "card", "audience", "protocol", "require_cv", "headline", "cohorts"})
 
 
 def load_release_info(path: Path | str) -> ReleaseInfo:
@@ -153,6 +156,7 @@ def load_release_info(path: Path | str) -> ReleaseInfo:
         audience=raw.get("audience"),
         protocol=raw.get("protocol"),
         require_cv=bool(raw.get("require_cv", False)),
+        headline=raw.get("headline"),
         cohorts=dict(raw.get("cohorts", {})),
     )
 
@@ -375,13 +379,14 @@ def _summary_by_cohort(table: Any) -> dict[str, dict[str, dict[str, Any]]]:
     return by_cohort
 
 
-def _draw_metrics_grid(table: Any, output_dir: Path) -> str:
+def _draw_metrics_grid(table: Any, output_dir: Path, label: str | None = None) -> str:
     """Draw the summary's headline metrics into a PNG under :data:`ASSETS_DIR`.
 
     One panel per metric, cohorts across the x-axis, so the card carries the
     same figure ``arcasleep summarize`` and ``arcasleep compare`` would produce.
     Returns the bundle-relative asset path. Imported lazily: drawing needs the
     ``publish`` extra's matplotlib/pandas, which the base install does not carry.
+    ``label`` names the run in the figure; the default follows the cohorts.
     """
     try:
         from arcasleep.reporting.compare import RunSummary, draw_comparison
@@ -395,7 +400,7 @@ def _draw_metrics_grid(table: Any, output_dir: Path) -> str:
     assets_dir = output_dir / ASSETS_DIR
     assets_dir.mkdir(parents=True, exist_ok=True)
     cohorts = {str(c) for c in table["cohort"].unique()}
-    label = "5-fold CV + hold-out" if "cv" in cohorts else "hold-out"
+    label = label or ("5-fold CV + hold-out" if "cv" in cohorts else "hold-out")
     run = RunSummary(path=output_dir, label=label, table=table)
     written = draw_comparison(
         [run],
@@ -539,9 +544,9 @@ def _cohort_title(cohort: str) -> str:
     return "Cross-validation" if cohort == _CV_COHORT else cohort
 
 
-def _ordered_cohorts(summary: Mapping[str, Any]) -> list[str]:
-    """Pooled CV first -- it is the headline -- then hold-outs by name."""
-    return sorted(summary, key=lambda c: (c != _CV_COHORT, c))
+def _ordered_cohorts(summary: Mapping[str, Any], first: str = _CV_COHORT) -> list[str]:
+    """The headline cohort (pooled CV unless the release names another) first, then the rest by name."""
+    return sorted(summary, key=lambda c: (c != first, c))
 
 
 def _cohort_n(values: Mapping[str, Mapping[str, Any]]) -> str:
@@ -557,9 +562,9 @@ def _ordered_metrics(values: Mapping[str, Any], declared: Sequence[str]) -> list
     return ordered
 
 
-def _headline_table(summary: Mapping[str, Mapping[str, Any]]) -> list[str]:
+def _headline_table(summary: Mapping[str, Mapping[str, Any]], first: str = _CV_COHORT) -> list[str]:
     """Headline metrics down, cohorts across: mean with its 95% CI beneath."""
-    cohorts = _ordered_cohorts(summary)
+    cohorts = _ordered_cohorts(summary, first)
     metrics = [
         m
         for m in _METRIC_LABELS
@@ -588,18 +593,23 @@ def _headline_table(summary: Mapping[str, Mapping[str, Any]]) -> list[str]:
 
 
 def _glance_score(
-    summary: Mapping[str, Mapping[str, Any]] | None, *, require_cv: bool = False
+    summary: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    require_cv: bool = False,
+    headline: str | None = None,
 ) -> str | None:
     """One line for the at-a-glance table: the headline κ on its headline cohort.
 
-    With ``require_cv`` the card must not silently substitute an external
-    holdout when the pooled cross-validation results are missing.
+    The headline cohort is ``headline`` when given, otherwise the pooled
+    cross-validation. With ``require_cv`` or ``headline`` the card must not
+    silently substitute another cohort when the headline one is missing.
     """
     if not summary:
         return None
-    if require_cv and _CV_COHORT not in summary:
+    first = headline or _CV_COHORT
+    if (require_cv or headline) and first not in summary:
         return None
-    cohort = _CV_COHORT if _CV_COHORT in summary else _ordered_cohorts(summary)[0]
+    cohort = first if first in summary else _ordered_cohorts(summary)[0]
     values = summary[cohort]
     parts = []
     for metric, name in (("kappa_sleep_wake", "sleep/wake"), ("kappa_4stage", "4-stage")):
@@ -611,20 +621,31 @@ def _glance_score(
     return (
         "Cohen's κ "
         + " · ".join(parts)
-        + f" ({_cohort_title(cohort).lower()}, {_cohort_n(values)} subjects)"
+        + f" ({_cohort_title(cohort).lower() if cohort == _CV_COHORT else cohort}, "
+        + f"{_cohort_n(values)} subjects)"
     )
 
 
 def _quickstart(
-    family: str, repo_id: str, local_dir: str, stage_names: Sequence[str]
+    family: str,
+    repo_id: str,
+    local_dir: str,
+    stage_names: Sequence[str],
+    composite: bool = False,
 ) -> list[str]:
     """Raw accelerometer file in, per-epoch stages out: the card's main use case.
 
     The prose lives in ``templates/quickstart.md`` so it can be edited as
     Markdown; ``$family``, ``$repo_id``, ``$local_dir``, ``$columns`` and
-    ``$n_stages`` are filled from the bundle.
+    ``$n_stages`` are filled from the bundle. ``$predictor_import`` and
+    ``$predictor_load`` load the bundle: ``Predictor`` reads a single release, and
+    ``load_predictor`` also reads a composite bundle.
     """
     text = Template(_template_path("quickstart").read_text()).safe_substitute(
+        predictor_import="load_predictor" if composite else "Predictor",
+        predictor_load=(
+            f'load_predictor("{local_dir}")  ' if composite else f'Predictor("{local_dir}")     '
+        ),
         family=family,
         repo_id=repo_id,
         local_dir=local_dir,
@@ -715,7 +736,8 @@ def _performance(
         "averaged over subjects, with 95% confidence intervals of the mean.",
         "",
     ]
-    described = [c for c in _ordered_cohorts(summary) if c in info.cohorts]
+    first = info.headline or _CV_COHORT
+    described = [c for c in _ordered_cohorts(summary, first) if c in info.cohorts]
     lines += [f"- **{_cohort_title(c)}:** {info.cohorts[c]}." for c in described]
     if described:
         lines.append("")
@@ -732,9 +754,9 @@ def _performance(
         "model or a comparison between cohorts.",
         "",
     ]
-    lines += _headline_table(summary)
+    lines += _headline_table(summary, first)
     lines.append("")
-    for cohort in _ordered_cohorts(summary):
+    for cohort in _ordered_cohorts(summary, first):
         values = {
             m: v
             for m, v in summary[cohort].items()
@@ -776,6 +798,7 @@ def _model_card(
     grid_asset: str | None = None,
     parameter_count: int | None = None,
     assets: Sequence[str] = (),
+    composite: Mapping[str, Any] | None = None,
 ) -> str:
     """Assemble the model card: how to run it, how well it does, then run facts.
 
@@ -789,6 +812,10 @@ def _model_card(
     ``None`` when no results CSV was found). The title and metadata follow the
     destination ``repo_id``, so a variant in its own repository is labelled as
     that variant.
+
+    ``composite`` is the ``composite.json`` of a composite bundle: the card then
+    describes the seed bundles and the stage divisor, loads the bundle with
+    ``load_predictor``, and lists the composite layout as its files.
     """
     reviewed = authored_card is not None
     labels = _label_map(config)
@@ -828,7 +855,7 @@ def _model_card(
     ]
     if info.audience:
         glance.insert(1, ("For", info.audience))
-    score = _glance_score(summary, require_cv=info.require_cv)
+    score = _glance_score(summary, require_cv=info.require_cv, headline=info.headline)
     if score:
         glance.append(("Score", score))
     glance.append(
@@ -844,7 +871,7 @@ def _model_card(
     lines.append("|:---|:---|")
     lines += [f"| **{key}** | {value} |" for key, value in glance[1:]]
     lines.append("")
-    lines += _quickstart(family.name, repo_id, local_dir, stage_names)
+    lines += _quickstart(family.name, repo_id, local_dir, stage_names, composite is not None)
     lines += _performance(info, metrics, evaluation, summary, grid_asset)
 
     if reviewed:
@@ -864,6 +891,8 @@ def _model_card(
     lines += ["## Model", ""]
     lines += family.describe_architecture(config, parameter_count)
     lines.append("")
+    if composite is not None:
+        lines += _describe_composite(composite)
     lines += _describe_preprocessing(
         preprocessing, input_shape, int(config.get("frames_per_epoch", 1))
     )
@@ -876,9 +905,19 @@ def _model_card(
         "| File | Contents |",
         "|:---|:---|",
     ]
-    for name in BUNDLE_FILES:
-        if name in _FILE_DESCRIPTIONS:
-            lines.append(f"| `{name}` | {_FILE_DESCRIPTIONS[name]} |")
+    if composite is None:
+        for name in BUNDLE_FILES:
+            if name in _FILE_DESCRIPTIONS:
+                lines.append(f"| `{name}` | {_FILE_DESCRIPTIONS[name]} |")
+    else:
+        seeds = composite["seeds"]
+        lines += [
+            f"| `{COMPOSITE_FILENAME}` | The seed directories and the stage divisor |",
+            f"| `{seeds[0]}/` to `{seeds[-1]}/` | One release bundle per seed: weights, "
+            "`config.json`, `preprocessing.json`, `metrics.json`, `provenance.json` and "
+            "its own `checksums.sha256` |",
+            "| `checksums.sha256` | SHA-256 of every file in this release, seed directories included |",
+        ]
     for name in assets:
         lines.append(f"| `{name}` | Figure shown on this card |")
     lines += ["", "| Field | Value |", "|:---|:---|"]
@@ -886,12 +925,12 @@ def _model_card(
         "package_version",
         "git_commit",
         "container_image_digest",
-        "seed",
+        *(() if composite is not None else ("seed",)),
         "run_id",
         "fold",
-        "epoch",
+        *(() if composite is not None else ("epoch",)),
         "trained_on",
-        "checkpoint_sha256",
+        *(() if composite is not None else ("checkpoint_sha256",)),
         "split_manifest_sha256",
         "model_config_sha256",
         "processing_config_sha256",
@@ -905,11 +944,30 @@ def _model_card(
         "",
         "</details>",
         "",
-        f"<sub>Generated by `arcasleep {family.name} publish` from "
-        f"`{provenance.get('git_commit', '?')}`.</sub>",
+        "<sub>Generated by "
+        + (
+            f"`python -m arcasleep_{family.name}.release card`"
+            if composite is not None
+            else f"`arcasleep {family.name} publish`"
+        )
+        + f" from `{provenance.get('git_commit', '?')}`.</sub>",
         "",
     ]
     return "\n".join(lines)
+
+
+def _describe_composite(composite: Mapping[str, Any]) -> list[str]:
+    """How a composite bundle's seeds are combined into one scoring."""
+    divisor = composite["stage_divisor"]
+    values = ", ".join(f"{name} {divisor[name]:.3g}" for name in divisor)
+    return [
+        f"The release is {len(composite['seeds'])} models of this architecture, one per seed "
+        "directory, each trained with a different seed. The mean of their outputs decides "
+        "wake or sleep. On the epochs called sleep, the mean light, deep and REM "
+        f"probabilities are each divided by the stage divisor ({values}) before the most "
+        "probable stage is chosen.",
+        "",
+    ]
 
 
 def _fmt_n(value: Any) -> str:
@@ -1365,6 +1423,83 @@ def build_release_bundle(
     )
 
 
+def write_composite_card(
+    bundle_dir: Path | str,
+    *,
+    metrics_summary: Path | str,
+    info: Path | str,
+    repo_id: str | None = None,
+) -> Path:
+    """Write ``README.md`` and ``checksums.sha256`` of a composite bundle.
+
+    The card is built as :func:`build_release_bundle` builds one: the
+    architecture, preprocessing, input requirements and provenance come from the
+    first seed's bundle, the scores from ``metrics_summary``, and the repo,
+    audience, protocol, cohorts and authored card from the release-info TOML
+    ``info``. The checksums cover ``composite.json``, the README, its images and
+    every file of the seed bundles, so :func:`verify_bundle` accepts the result.
+    Returns the README's path.
+    """
+    bundle_dir = Path(bundle_dir)
+    composite_path = bundle_dir / COMPOSITE_FILENAME
+    if not composite_path.is_file():
+        raise FileNotFoundError(f"{bundle_dir} is not a composite bundle; missing {COMPOSITE_FILENAME}")
+    composite = _read_json(composite_path)
+    seed_dir = bundle_dir / composite["seeds"][0]
+    release_info = load_release_info(info)
+    repo_id = repo_id or release_info.repo or ""
+
+    model_family = get_family(release_family(composite))
+    config = _read_json(seed_dir / "config.json")
+    provenance = _read_json(seed_dir / "provenance.json")
+    shutil.rmtree(bundle_dir / ASSETS_DIR, ignore_errors=True)
+
+    authored_text: str | None = None
+    asset_list: list[str] = []
+    if release_info.card is not None:
+        if not release_info.card.is_file():
+            raise FileNotFoundError(f"no such card file: {release_info.card}")
+        authored_text, authored_assets = _collect_assets(
+            release_info.card.read_text(), release_info.card.parent, bundle_dir
+        )
+        asset_list.extend(authored_assets)
+    grid_asset = _draw_metrics_grid(
+        _grid_table(metrics_summary), bundle_dir, label="5-fold CV + hold-out"
+    )
+    asset_list.append(grid_asset)
+    assets = tuple(dict.fromkeys(asset_list))
+
+    card_text = _model_card(
+        family=model_family,
+        repo_id=repo_id,
+        version=composite.get("version", ""),
+        config=config,
+        preprocessing=_read_json(seed_dir / "preprocessing.json"),
+        metrics=_read_json(seed_dir / "metrics.json"),
+        provenance=provenance,
+        evaluation=None,
+        summary=_summary_metrics(metrics_summary),
+        authored_card=authored_text,
+        info=release_info,
+        grid_asset=grid_asset,
+        parameter_count=load_bundle_model(seed_dir).parameter_count(),
+        assets=assets,
+        composite=composite,
+    )
+    readme = bundle_dir / "README.md"
+    readme.write_text(card_text)
+
+    seed_files = [
+        path.relative_to(bundle_dir).as_posix()
+        for seed in composite["seeds"]
+        for path in sorted((bundle_dir / seed).rglob("*"))
+        if path.is_file()
+    ]
+    checksummed = [COMPOSITE_FILENAME, "README.md", *assets, *seed_files]
+    (bundle_dir / "checksums.sha256").write_text(_checksums(bundle_dir, checksummed))
+    return readme
+
+
 def load_bundle_model(bundle_dir: Path | str):
     """Load a released bundle's ``config.json`` + ``model.safetensors``.
 
@@ -1399,8 +1534,13 @@ def bundle_family(bundle_dir: Path | str) -> str:
 
 
 def verify_bundle(bundle_dir: Path | str) -> None:
-    """Check every file in ``checksums.sha256`` matches, and required files exist."""
+    """Check every file in ``checksums.sha256`` matches, and required files exist.
+
+    A composite bundle requires ``composite.json`` and ``README.md``; its seed
+    bundles are checksummed file by file in the composite's ``checksums.sha256``.
+    """
     bundle_dir = Path(bundle_dir)
+    composite_path = bundle_dir / COMPOSITE_FILENAME
     checksums = bundle_dir / "checksums.sha256"
     if not checksums.is_file():
         raise ValueError(f"{bundle_dir} has no checksums.sha256")
@@ -1410,9 +1550,10 @@ def verify_bundle(bundle_dir: Path | str) -> None:
             continue
         digest, _, name = line.partition("  ")
         expected[name] = digest
+    required = (COMPOSITE_FILENAME, "README.md") if composite_path.is_file() else BUNDLE_FILES
     missing = [
         name
-        for name in BUNDLE_FILES
+        for name in required
         if name != "checksums.sha256" and not (bundle_dir / name).is_file()
     ]
     if missing:
