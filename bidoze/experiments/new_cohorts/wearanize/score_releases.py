@@ -18,7 +18,8 @@ nearest one. Shift 0 is the nearest pairing; the "best of 5" variant picks, per 
 ``--fold-dirs`` (optional, for the F2 x3 v0.2.0 cross-validation folds, which train on other Wearanize+
 folds) scores each fold's held-out Wearanize+ recordings from its ``predictions/`` seed mean, with the
 fold's divisor (``phase_divisor``, which needs ``--train-cache``: a directory holding
-``12Hz_log_PSD_aligned/`` with the fold's training links).
+``12Hz_log_PSD_aligned/`` with the fold's training links). The CSVs come from the cached features, so only
+the epochs they hold are scored.
 """
 import argparse
 import json
@@ -132,8 +133,31 @@ def predicted_on_grid(starts, labels, times):
     return pred
 
 
+def csv_offset(y, names):
+    """Index in the PSG epoch grid ``y`` of the first epoch of a prediction CSV whose ``psg`` column is ``names``.
+
+    The cached features start after the PSG's first epochs, so the CSV is placed by matching its PSG stages
+    to scorer 1's (cache codes mapped to stages, "x" where unscored); the match must be at least 99% of the CSV's epochs.
+    """
+    stage = {0: "wake", 1: "light", 2: "light", 3: "deep", 5: "rem"}
+    ref = np.array([stage.get(int(v), "x") if v >= 0 else "x" for v in y], dtype=object)
+    names = np.where(pd.isna(names), "x", names).astype(object)
+    best, best_match = None, 0.0
+    for off in range(0, len(ref) - len(names) + 1):
+        match = float(np.mean(ref[off:off + len(names)] == names))
+        if match > best_match:
+            best, best_match = off, match
+    if best is None or best_match < 0.99:
+        raise ValueError(f"the prediction CSV's PSG stages match scorer 1 at best {best_match:.3f}")
+    return best
+
+
 def fold_rows(fold_dirs, train_cache, loaded):
-    """Held-out Wearanize+ nights of each fold phase, scored by its seed-mean output and its divisor."""
+    """Held-out Wearanize+ nights of each fold phase, scored by its seed-mean output and its divisor.
+
+    Each CSV is placed on the PSG grid by ``csv_offset``; only the epochs the CSV holds are scored
+    (the cached features omit the PSG's first scored epoch and its last).
+    """
     from arcasleep_bidoze.adult import hybrid_calls
     from arcasleep_bidoze.release import ADULT_CV_COHORTS, phase_divisor, seed_mean_recordings
     rows = []
@@ -145,16 +169,20 @@ def fold_rows(fold_dirs, train_cache, loaded):
         for sid in sorted(stems):
             night = next((n for n in loaded if sid == n or sid.endswith(n)), None)
             if night is None:
-                continue
-            frames = [pd.read_csv(s / f"{dataset}_{sid}.csv") for s in seeds]
+                raise ValueError(f"{fold.name}: held-out night {sid} is not a converted Wearanize+ night")
+            frames = [pd.read_csv(s / f"{dataset}_{sid}.csv", dtype={"psg": str}) for s in seeds]
             gap = np.mean([f["gap_head"].to_numpy(float) for f in frames], axis=0)
             stage = np.mean([f[["wake", "light", "deep", "rem"]].to_numpy(float) * (1 - f["gap_head"].to_numpy(float))[:, None]
                              for f in frames], axis=0)
             mean = np.column_stack([stage, gap])
             calls = hybrid_calls(mean, mean, divisor)
             times, y = loaded[night]
-            pred = predicted_on_grid(frames[0]["start_s"].to_numpy(float), calls, times)
-            scored = y >= 0
+            off = csv_offset(y, frames[0]["psg"].to_numpy())
+            pred = np.full(len(times), 4)
+            pred[off:off + len(calls)] = calls
+            covered = np.zeros(len(times), bool)
+            covered[off:off + len(calls)] = True
+            scored = (y >= 0) & covered
             row = dict(model=FOLD_MODEL, night=night, participant=night.split("_")[0], n_epochs=int(scored.sum()),
                        n_pred_epochs=len(frames[0]), n_gap_scored=int((pred[scored] == 4).sum()))
             row.update(night_metrics(y[scored], pred[scored]))
