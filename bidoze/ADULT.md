@@ -87,18 +87,18 @@ compared with the release recipe's 3 independent seeds; ± is the 95% interval o
 
 ## Retraining a release
 
-`python -m arcasleep_bidoze.release run <adult|pediatric>` retrains a release locally with the
-gap rule (`config/model-gap-rule.json`). Run from `bidoze/`:
+`python -m arcasleep_bidoze.release run <adult|pediatric>` retrains a release locally. Run from
+`bidoze/`:
 
 ```bash
-python -m arcasleep_bidoze.release run adult --run-id adult-gap-matched-2026-10-21 \
-    --cache-root <feature-cache root> --weaver-set matched
+python -m arcasleep_bidoze.release run adult --run-id adult-f2-2026-10-23 \
+    --cache-root <feature-cache root>
 python -m arcasleep_bidoze.release run pediatric --run-id pediatric-gap-2026-10-21 \
     --cache-root <feature-cache root> --phases final
 ```
 
 The command runs `scripts/harness.sh` with `BIDOZE_RELEASE` set, which is also how the cloud
-tasks run. Its options: `--weaver-set`, `--phases`, `--version`, `--training-config` and
+tasks run. Its options: `--weaver-set`, `--phases`, `--version`, `--model`, `--training-config` and
 `--results-dir`.
 
 With no `--phases`, the command runs `fold0` to `fold4` and `final`; name phases to run some.
@@ -107,15 +107,16 @@ Results go under `results/<run id>/training/<phase>/`.
 | | adult | pediatric |
 |:---|:---|:---|
 | Training config | `config/training-adult.json`: balanced recipe, patience in steps, 3 seeds | `config/training-pediatric.json`: balanced recipe, patience in epochs, 1 seed, as `v0.1.0` |
-| Training data | revised Weaver (`BIDOZE_WEAVER_SET`) and 4 of the 5 SleepAccel folds | Weaver (`BIDOZE_WEAVER_SET`), 4 of the 5 folds |
-| `fold<k>` | scored on SleepAccel fold k and SleepAccel-Clinical | scored on Weaver fold k |
-| `final` | all of SleepAccel; scored on SleepAccel-Clinical | all of Weaver; scored on SleepAccel and SleepAccel-Clinical |
+| Model | F2, `config/model-f2.json` | BiDoze-G, `config/model-gap-rule.json` |
+| Training data | revised Weaver (`BIDOZE_WEAVER_SET`), 4 of the 5 SleepAccel folds and 4 of the 5 Wearanize+ folds (`config/splits/wearanize_5fold.json`) | Weaver (`BIDOZE_WEAVER_SET`), 4 of the 5 folds |
+| `fold<k>` | scored on SleepAccel fold k, Wearanize+ fold k and SleepAccel-Clinical | scored on Weaver fold k |
+| `final` | all of SleepAccel and Wearanize+; scored on SleepAccel-Clinical | all of Weaver; scored on SleepAccel and SleepAccel-Clinical |
 
-- **`BIDOZE_WEAVER_SET=matched`** (default):
+- **`BIDOZE_WEAVER_SET=matched`**:
   - adult: trains on the 202 revised-Weaver recordings of the nights of the earlier Weaver
     cache; the v0.1.0 release uses these;
   - pediatric: trains on the earlier Weaver cache (202 recordings, `config/splits/weaver_5fold.json`).
-- **`BIDOZE_WEAVER_SET=all`** trains on all 634 revised-Weaver recordings (237 children).
+- **`BIDOZE_WEAVER_SET=all`** (default) trains on all 634 revised-Weaver recordings (237 children).
   The pediatric folds are `config/splits/weaver_revised_pediatric_5fold.json`: a child's
   recordings are in one fold, and each child of `weaver_5fold.json` keeps its fold (the one child
   with nights in two of its folds keeps the first).
@@ -123,14 +124,23 @@ Results go under `results/<run id>/training/<phase>/`.
   `BIDOZE_RELEASE_VERSION` (default `v0.2.0`). The adult bundle is one release bundle per seed
   and `composite.json`; the divisor comes from the final phase's training nights and BIDSleep.
   Its card is generated and marked pending review.
+- **`BIDOZE_RELEASE_MODEL`** (`--model` for the local command) selects the architecture:
+  `g` is BiDoze-G, `config/model-gap-rule.json`; `f2` is the strand-fusion network,
+  `config/model-f2.json` (3 strands, 2.20 M weights, trained on the output head's loss only:
+  `strand_loss_weight` is 0). The default is `f2` for adult and `g` for pediatric. The training
+  config is the same; `seed_count` seeds give 3 F2 models, bundled as for BiDoze-G.
+- **A single-seed bundle** comes from one seed of the same run:
+  `python -m arcasleep_bidoze.release bundle adult <final phase dir> <output> <version>
+  --train-cache <setup dir>/cache --cache-root <cache root> --seeds 0`. The stage divisor is
+  computed from the training labels, so it is the same for any seed of the run.
 - **`BIDOZE_RELEASE_TRAINING`** names another training config, such as
   `config/training-smoke.json` for a wiring check.
 
 On AWS, one task per phase:
 
 ```bash
-deploy/scripts/run_task.sh --run-id adult-gap-matched-2026-10-21 \
-    --env BIDOZE_RELEASE=adult --env BIDOZE_WEAVER_SET=matched \
+deploy/scripts/run_task.sh --run-id adult-f2-2026-10-23 \
+    --env BIDOZE_RELEASE=adult \
     bidoze <train image> final fold0 fold1 fold2 fold3 fold4
 ```
 

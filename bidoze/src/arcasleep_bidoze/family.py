@@ -98,6 +98,8 @@ class BiDozeFamily(ModelFamily):
     def describe_architecture(
         self, config: Mapping[str, Any], parameter_count: int | None
     ) -> list[str]:
+        if config.get("strands"):
+            return self._describe_strands(config, parameter_count)
         d_model = config.get("d_model", 256)
         n_heads = config.get("n_heads", 8)
         n_layers = config.get("n_transformer_layers", 4)
@@ -109,6 +111,19 @@ class BiDozeFamily(ModelFamily):
             f"patterns; a {direction} transformer (`{n_layers}` layers per direction, "
             f"width `{d_model}`, `{n_heads}` heads) carries context across the whole "
             f"recording; a learned gate fuses the two before a per-epoch readout{size}.",
+        ]
+
+    @staticmethod
+    def _describe_strands(config: Mapping[str, Any], parameter_count: int | None) -> list[str]:
+        kernels = ", ".join(str(k) for k in config.get("conv_kernels", [3, 7, 31, 63]))
+        size = f" ({parameter_count / 1e6:.2f} M parameters)" if parameter_count else ""
+        return [
+            f"`{config['strands']}` narrow bi-causal networks (strands) each score every epoch: a "
+            f"convolution bank (kernels `{kernels}` epochs, width `{config.get('strand_width', 112)}`), "
+            f"a bi-causal transformer (`{config.get('n_transformer_layers', 4)}` layers per direction) and "
+            f"a learned gate. A fusion transformer (`{config.get('fusion_layers', 2)}` layers, width "
+            f"`{config.get('fusion_width', 128)}`, `{config.get('fusion_heads', 4)}` heads) reads the "
+            f"strands' features across the whole recording and gives the per-epoch output{size}.",
         ]
 
 
