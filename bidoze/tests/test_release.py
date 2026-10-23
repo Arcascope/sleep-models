@@ -62,7 +62,7 @@ def _feature_root(tmp_path: Path) -> Path:
     for sid in SLEEPACCEL:
         _save(cache, "SleepAccel", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     for sid in CLINICAL + ["ref0", "ref1"]:
-        dataset = "SleepAccel-Clinical" if sid.startswith("cl") else "bidsleep"
+        dataset = "SleepAccel-Clinical" if sid.startswith("cl") else "eesm19"
         _save(cache, dataset, sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     return tmp_path / "root"
 
