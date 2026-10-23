@@ -40,24 +40,27 @@ Output columns:
 
 ## Limitations
 
-<!-- TODO(v0.2.0): fill every value marked TBD from the adult-f2-2026-10-23 scoring. -->
-
-- **Wake specificity is lower than sleep sensitivity.** Sleep sensitivity is
-  TBD% and wake specificity TBD% in the SleepAccel cross-validation; TBD% and
-  TBD% on SleepAccel-Clinical. Total sleep time is overestimated by TBD minutes
-  on average on SleepAccel-Clinical.
+- **Wake specificity is lower than sleep sensitivity.**
+  - SleepAccel cross-validation: sleep sensitivity 95.8%, wake specificity
+    74.8%.
+  - Wearanize+ cross-validation: sleep sensitivity 94.5%, wake specificity
+    82.8%.
+  - SleepAccel-Clinical: sleep sensitivity 94.5%, wake specificity 67.0%.
+    Total sleep time is overestimated by 17.1 minutes on average.
 - **Stage durations have larger errors than total sleep time.** On SleepAccel
-  (cross-validation), the mean absolute percentage error is TBD% for total
-  sleep time, TBD% for light sleep, TBD% for deep sleep and TBD% for REM sleep.
+  (cross-validation), the mean absolute percentage error is 3.8% for total
+  sleep time, 17.9% for light sleep, 78.5% for deep sleep and 50.5% for REM
+  sleep.
 - **Deep sleep is overestimated in cohorts with little deep sleep.**
-  - Deep sleep is TBD% of predicted sleep vs 11.2% of PSG sleep on
-    SleepAccel-Clinical, and TBD% vs 14.5% on SleepAccel.
+  - Deep sleep is 25.5% of predicted sleep vs 11.0% of PSG sleep on
+    SleepAccel-Clinical, and 22.7% vs 16.2% on SleepAccel (cross-validation),
+    as the mean over nights.
   - The divisor assumes the adult training recordings' 19.7% deep sleep.
     Cohorts with less deep sleep, such as older adults or people with sleep
     apnea, are overestimated more.
   - Do not use deep-sleep time as a per-night outcome.
 - **Single nights differ more than cohort means.** 95% limits of agreement for
-  total sleep time are TBD to TBD minutes on SleepAccel-Clinical.
+  total sleep time are −64 to +99 minutes on SleepAccel-Clinical.
 - **Only the PSG night has been evaluated.** Daytime sleep, naps and non-wear
   periods in multi-day recordings have not been compared against a reference.
 - **Device and placement.** The model was trained on wrist data from
