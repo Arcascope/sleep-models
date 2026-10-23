@@ -24,6 +24,7 @@ Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set all|matched]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
                 [--train-cache <setup dir>/cache --cache-root <cache root>] [--seeds 0 1 2]
+                [--reference eesm19]
 """
 from __future__ import annotations
 
@@ -53,6 +54,9 @@ PEDIATRIC_RECIPES = {
     "all": ("config/splits/weaver_revised_pediatric_5fold.json", "config/cv-weaver-revised.json"),
 }
 ADULT_SEEDS = 3
+#: The cache cohort whose stage mix is the adult reference of the stage divisor: EESM19
+#: (OpenNeuro ds005185; 20 adults, 4 nights each, manually scored).
+ADULT_REFERENCE = "eesm19"
 FOLDS = 5
 #: The release architectures: ``g`` is BiDoze-G, ``f2`` the strand-fusion network.
 MODEL_CONFIGS = {"g": "config/model-gap-rule.json", "f2": "config/model-f2.json"}
@@ -224,6 +228,7 @@ def build_release(
     train_cache: Path | None = None,
     cache_root: Path | None = None,
     seeds: Sequence[int] | None = None,
+    reference: str = ADULT_REFERENCE,
 ) -> Path:
     """The release bundle of a finished ``final`` phase directory.
 
@@ -231,7 +236,7 @@ def build_release(
     - adult: a release bundle per seed checkpoint in ``model_outputs/`` and ``composite.json``;
       the divisor comes from the phase's training nights (``train_cache`` holds
       ``12Hz_log_PSD_aligned/`` with their links) and
-      the nights of BIDSleep under ``cache_root``, the adult reference. With ``seeds`` (fit
+      the nights of the ``reference`` cohort (EESM19) under ``cache_root``, the adult reference. With ``seeds`` (fit
       seeds), only those seeds' checkpoints are bundled; the divisor is computed from the
       training labels alone, so it is the same for any subset of the phase's seeds.
 
@@ -252,13 +257,13 @@ def build_release(
     training = json.loads((final / "config/training.json").read_text())
     train = discover_cached_subjects(cv["train_sets"], Path(train_cache) / CACHE_NAME)
     train_paths = [s.path for subjects in train.values() for s in subjects]
-    bidsleep = discover_cached_subjects(["bidsleep"], Path(cache_root) / CACHE_NAME)["bidsleep"]
+    reference_nights = discover_cached_subjects([reference], Path(cache_root) / CACHE_NAME)[reference]
 
     def counts(paths: list[Path]) -> np.ndarray:
         return np.array([stage_counts(np.load(p)["y"]) for p in paths])
 
     divisor = adult_stage_divisor(
-        counts(train_paths), counts([s.path for s in bidsleep]),
+        counts(train_paths), counts([s.path for s in reference_nights]),
         training["balance_beta"], training["batch_size"],
     )
     staging = output.parent / f"{output.name}-seeds"
@@ -278,8 +283,8 @@ def build_release(
         provenance={
             "train_sets": cv["train_sets"],
             "training_nights": len(train_paths),
-            "adult_reference": "bidsleep",
-            "adult_reference_nights": len(bidsleep),
+            "adult_reference": reference,
+            "adult_reference_nights": len(reference_nights),
             "seed_checkpoints": [p.name for p in seed_bundles],
         },
     )
@@ -356,6 +361,8 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("version")
     bundle.add_argument("--train-cache", type=Path)
     bundle.add_argument("--cache-root", type=Path)
+    bundle.add_argument("--reference", default=ADULT_REFERENCE,
+                        help="adult only: the cache cohort whose stage mix is the adult reference")
     bundle.add_argument("--seeds", type=int, nargs="+", help="adult only: bundle only these fit seeds "
                         "(one seed gives a single-model bundle)")
     args = parser.parse_args(argv)
@@ -371,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
         print(build_release(args.release, args.final, args.output, args.version,
-                            train_cache=args.train_cache, cache_root=args.cache_root, seeds=args.seeds))
+                            train_cache=args.train_cache, cache_root=args.cache_root, seeds=args.seeds,
+                            reference=args.reference))
     return 0
 
 
