@@ -23,8 +23,7 @@ Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --
        python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set all|matched]
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set all|matched]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
-                [--train-cache <setup dir>/cache --cache-root <cache root>] [--seeds 0 1 2]
-                [--reference eesm19]
+                [--train-cache <setup dir>/cache] [--seeds 0 1 2]
 """
 from __future__ import annotations
 
@@ -54,9 +53,9 @@ PEDIATRIC_RECIPES = {
     "all": ("config/splits/weaver_revised_pediatric_5fold.json", "config/cv-weaver-revised.json"),
 }
 ADULT_SEEDS = 3
-#: The cache cohort whose stage mix is the adult reference of the stage divisor: EESM19
-#: (OpenNeuro ds005185; 20 adults, 4 nights each, manually scored).
-ADULT_REFERENCE = "eesm19"
+#: Training sets of a phase that give the adult stage mix of its divisor: the SleepAccel and
+#: Wearanize+ folds; the Weaver recordings are not part of it.
+ADULT_REFERENCE_PREFIXES = ("BiDozeSleepAccel", "BiDozeWearanize")
 FOLDS = 5
 #: The release architectures: ``g`` is BiDoze-G, ``f2`` the strand-fusion network.
 MODEL_CONFIGS = {"g": "config/model-gap-rule.json", "f2": "config/model-f2.json"}
@@ -219,6 +218,36 @@ def prepare_adult(
     return chosen
 
 
+def phase_divisor(phase: Path, train_cache: Path) -> tuple[np.ndarray, list[Path], list[Path]]:
+    """The adult stage divisor of a phase, and the recordings it was computed from.
+
+    The training stage mix is that of all the phase's training sets and the adult stage mix that of
+    its SleepAccel and Wearanize+ training sets (``ADULT_REFERENCE_PREFIXES``); ``train_cache``
+    holds ``12Hz_log_PSD_aligned/`` with their links. Returns the divisor, the training
+    recordings and the adult recordings.
+    """
+    from arcasleep_bidoze.adult import adult_stage_divisor, stage_counts
+
+    cv = json.loads((phase / "config/cv.json").read_text())
+    training = json.loads((phase / "config/training.json").read_text())
+    train = discover_cached_subjects(cv["train_sets"], Path(train_cache) / CACHE_NAME)
+    train_paths = [s.path for subjects in train.values() for s in subjects]
+    adult_paths = [
+        s.path for name, subjects in train.items() if name.startswith(ADULT_REFERENCE_PREFIXES)
+        for s in subjects
+    ]
+    if not adult_paths:
+        raise ValueError(f"{phase} trains on no SleepAccel or Wearanize+ recording")
+
+    def counts(paths: list[Path]) -> np.ndarray:
+        return np.array([stage_counts(np.load(p)["y"]) for p in paths])
+
+    divisor = adult_stage_divisor(
+        counts(train_paths), counts(adult_paths), training["balance_beta"], training["batch_size"]
+    )
+    return divisor, train_paths, adult_paths
+
+
 def build_release(
     release: str,
     final: Path,
@@ -226,17 +255,14 @@ def build_release(
     version: str,
     *,
     train_cache: Path | None = None,
-    cache_root: Path | None = None,
     seeds: Sequence[int] | None = None,
-    reference: str = ADULT_REFERENCE,
 ) -> Path:
     """The release bundle of a finished ``final`` phase directory.
 
     - pediatric: one release bundle of the phase's checkpoint.
     - adult: a release bundle per seed checkpoint in ``model_outputs/`` and ``composite.json``;
-      the divisor comes from the phase's training nights (``train_cache`` holds
-      ``12Hz_log_PSD_aligned/`` with their links) and
-      the nights of the ``reference`` cohort (EESM19) under ``cache_root``, the adult reference. With ``seeds`` (fit
+      the divisor comes from the phase's training nights (``phase_divisor``; ``train_cache`` holds
+      ``12Hz_log_PSD_aligned/`` with their links). With ``seeds`` (fit
       seeds), only those seeds' checkpoints are bundled; the divisor is computed from the
       training labels alone, so it is the same for any subset of the phase's seeds.
 
@@ -249,23 +275,12 @@ def build_release(
         return build_release_bundle(final, output, version=version, family="bidoze", overwrite=True).directory
     if release != "adult":
         raise ValueError(f"release must be one of {RELEASES}, got {release!r}")
-    if train_cache is None or cache_root is None:
-        raise ValueError("the adult bundle needs the training cache and the cache root")
-    from arcasleep_bidoze.adult import adult_stage_divisor, build_adult_bundle, stage_counts
+    if train_cache is None:
+        raise ValueError("the adult bundle needs the training cache")
+    from arcasleep_bidoze.adult import build_adult_bundle
 
     cv = json.loads((final / "config/cv.json").read_text())
-    training = json.loads((final / "config/training.json").read_text())
-    train = discover_cached_subjects(cv["train_sets"], Path(train_cache) / CACHE_NAME)
-    train_paths = [s.path for subjects in train.values() for s in subjects]
-    reference_nights = discover_cached_subjects([reference], Path(cache_root) / CACHE_NAME)[reference]
-
-    def counts(paths: list[Path]) -> np.ndarray:
-        return np.array([stage_counts(np.load(p)["y"]) for p in paths])
-
-    divisor = adult_stage_divisor(
-        counts(train_paths), counts([s.path for s in reference_nights]),
-        training["balance_beta"], training["batch_size"],
-    )
+    divisor, train_paths, reference_nights = phase_divisor(final, train_cache)
     staging = output.parent / f"{output.name}-seeds"
     checkpoints = [
         p for p in sorted((final / "model_outputs").glob("*.pisces"))
@@ -283,7 +298,7 @@ def build_release(
         provenance={
             "train_sets": cv["train_sets"],
             "training_nights": len(train_paths),
-            "adult_reference": reference,
+            "adult_reference": [n for n in cv["train_sets"] if n.startswith(ADULT_REFERENCE_PREFIXES)],
             "adult_reference_nights": len(reference_nights),
             "seed_checkpoints": [p.name for p in seed_bundles],
         },
@@ -360,9 +375,6 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("output", type=Path)
     bundle.add_argument("version")
     bundle.add_argument("--train-cache", type=Path)
-    bundle.add_argument("--cache-root", type=Path)
-    bundle.add_argument("--reference", default=ADULT_REFERENCE,
-                        help="adult only: the cache cohort whose stage mix is the adult reference")
     bundle.add_argument("--seeds", type=int, nargs="+", help="adult only: bundle only these fit seeds "
                         "(one seed gives a single-model bundle)")
     args = parser.parse_args(argv)
@@ -378,8 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
         print(build_release(args.release, args.final, args.output, args.version,
-                            train_cache=args.train_cache, cache_root=args.cache_root, seeds=args.seeds,
-                            reference=args.reference))
+                            train_cache=args.train_cache, seeds=args.seeds))
     return 0
 
 
