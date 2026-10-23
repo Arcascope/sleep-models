@@ -75,14 +75,9 @@ RESULTS_S3_PREFIX="${BIDOZE_RESULTS_S3_PREFIX:-}"
 EXPERIMENT="${BIDOZE_EXPERIMENT:-}"
 RELEASE="${BIDOZE_RELEASE:-}"
 RELEASE_VERSION="${BIDOZE_RELEASE_VERSION:-v0.2.0}"
+TRAINING_CONFIG=config/training-adult.json
 if [[ -n "$RELEASE" ]]; then
     [[ -z "$EXPERIMENT" ]] || { echo "BIDOZE_RELEASE and BIDOZE_EXPERIMENT are exclusive" >&2; exit 2; }
-    case "$RELEASE" in
-        adult)     TRAINING_CONFIG=config/training-adult.json ;;
-        pediatric) TRAINING_CONFIG=config/training-pediatric.json ;;
-        *) echo "BIDOZE_RELEASE must be adult or pediatric, got $RELEASE" >&2; exit 2 ;;
-    esac
-    TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$TRAINING_CONFIG}"
     MODEL_CONFIG=config/model-gap-rule.json
     RECIPE=balanced
     WEAVER_SET="${BIDOZE_WEAVER_SET:-matched}"
