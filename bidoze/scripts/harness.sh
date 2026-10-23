@@ -10,9 +10,10 @@
 # (src/arcasleep_bidoze/release.py): fold0..fold4 and final by default, and the final phase
 # also writes the release bundle to <final phase dir>/bundle.
 #   BIDOZE_RELEASE_VERSION     the bundle's version (default v0.2.0)
-#   BIDOZE_RELEASE_MODEL       g (default): BiDoze-G, config/model-gap-rule.json; f2: the
-#                              strand-fusion network, config/model-f2.json
-#   BIDOZE_WEAVER_SET          the Weaver recordings trained on: matched (default) or all.
+#   BIDOZE_RELEASE_MODEL       g: BiDoze-G, config/model-gap-rule.json; f2: the strand-fusion
+#                              network, config/model-f2.json. Default: f2 for adult, g for pediatric.
+#                              The adult phases train on Weaver, SleepAccel and Wearanize+.
+#   BIDOZE_WEAVER_SET          the Weaver recordings trained on: all (default) or matched.
 #                              adult: matched is the 202 revised recordings of the earlier Weaver
 #                              nights; pediatric: matched is the earlier weaver cache itself
 #                              (config/splits/weaver_5fold.json). all is every revised-Weaver
@@ -85,13 +86,14 @@ if [[ -n "$RELEASE" ]]; then
         *) echo "BIDOZE_RELEASE must be adult or pediatric, got $RELEASE" >&2; exit 2 ;;
     esac
     TRAINING_CONFIG="${BIDOZE_RELEASE_TRAINING:-$TRAINING_CONFIG}"
-    case "${BIDOZE_RELEASE_MODEL:-g}" in
+    RELEASE_MODEL="${BIDOZE_RELEASE_MODEL:-$([[ "$RELEASE" == adult ]] && echo f2 || echo g)}"
+    case "$RELEASE_MODEL" in
         g)  MODEL_CONFIG=config/model-gap-rule.json ;;
         f2) MODEL_CONFIG=config/model-f2.json ;;
-        *) echo "BIDOZE_RELEASE_MODEL must be g or f2, got $BIDOZE_RELEASE_MODEL" >&2; exit 2 ;;
+        *) echo "BIDOZE_RELEASE_MODEL must be g or f2, got $RELEASE_MODEL" >&2; exit 2 ;;
     esac
     RECIPE=balanced
-    WEAVER_SET="${BIDOZE_WEAVER_SET:-matched}"
+    WEAVER_SET="${BIDOZE_WEAVER_SET:-all}"
     if [[ "$RELEASE" == pediatric ]]; then
         read -r SPLIT_PLAN CV_CONFIG < <(python -m arcasleep_bidoze.release pediatric-recipe --weaver-set "$WEAVER_SET")
     fi

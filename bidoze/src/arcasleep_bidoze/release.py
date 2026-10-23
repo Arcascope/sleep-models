@@ -1,6 +1,6 @@
 """Retraining the BiDoze releases with the gap rule: the adult and pediatric recipes.
 
-Each release has a model config (``config/model-gap-rule.json``), a training config and phases
+Each release has a model config (``MODEL_CONFIGS``), a training config and phases
 ``fold0`` to ``fold4`` and ``final``; ``scripts/harness.sh`` with ``BIDOZE_RELEASE`` runs them.
 
 - **pediatric:** ``config/training-pediatric.json`` with the folds of a split plan over
@@ -8,18 +8,20 @@ Each release has a model config (``config/model-gap-rule.json``), a training con
   adult cohorts. ``matched`` trains on the earlier ``weaver`` cache with
   ``config/splits/weaver_5fold.json`` (202 recordings); ``all`` trains on every revised-Weaver
   recording with ``config/splits/weaver_revised_pediatric_5fold.json``.
-- **adult:** ``config/training-adult.json`` (3 seeds). Each phase trains on revised-Weaver
-  recordings (``--weaver-set``; ``matched`` is the 202 recordings of the earlier nights) and 4 of the 5 SleepAccel folds of
-  ``config/splits/sleepaccel_5fold.json``; ``final`` trains on all of SleepAccel. The bundle is
-  3 seed bundles and ``composite.json`` (the adult stage divisor).
+- **adult:** ``config/training-adult.json`` (3 seeds) and the F2 network (``--model``). Each phase
+  trains on revised-Weaver recordings (``--weaver-set``; ``matched`` is the 202 recordings of the
+  earlier nights), 4 of the 5 SleepAccel folds of ``config/splits/sleepaccel_5fold.json`` and 4 of
+  the 5 Wearanize+ folds of ``config/splits/wearanize_5fold.json``; ``final`` trains on all of
+  SleepAccel and Wearanize+. The bundle is 3 seed bundles and ``composite.json`` (the adult stage
+  divisor).
 
 ``prepare_adult`` writes the adult phases' feature-cache links and cv configs;
 ``build_release`` writes the release bundle from a finished ``final`` phase.
 
 Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --cache-root <cache root>
-                [--weaver-set matched|all] [--phases fold0 ... final] [--version v0.2.0] [--model g|f2]
-       python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set matched|all]
-       python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set matched|all]
+                [--weaver-set all|matched] [--phases fold0 ... final] [--version v0.2.0] [--model g|f2]
+       python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set all|matched]
+       python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set all|matched]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
                 [--train-cache <setup dir>/cache --cache-root <cache root>] [--seeds 0 1 2]
 """
@@ -55,8 +57,12 @@ FOLDS = 5
 #: The release architectures: ``g`` is BiDoze-G, ``f2`` the strand-fusion network.
 MODEL_CONFIGS = {"g": "config/model-gap-rule.json", "f2": "config/model-f2.json"}
 MODEL_CONFIG = MODEL_CONFIGS["g"]
+#: The architecture each release trains unless one is named.
+DEFAULT_MODELS = {"adult": "f2", "pediatric": "g"}
+DEFAULT_WEAVER_SET = "all"
 TRAINING_CONFIGS = {"adult": "config/training-adult.json", "pediatric": "config/training-pediatric.json"}
 SLEEPACCEL_PLAN = "config/splits/sleepaccel_5fold.json"
+WEARANIZE_PLAN = "config/splits/wearanize_5fold.json"
 
 
 def pediatric_recipe(weaver_set: str) -> tuple[str, str]:
@@ -139,12 +145,13 @@ def link(source: Path, destination: Path) -> None:
 
 
 def prepare_adult(
-    setup: Path, cache_root: Path, weaver_set: str = "matched", config_dir: Path = Path("config")
+    setup: Path, cache_root: Path, weaver_set: str = DEFAULT_WEAVER_SET, config_dir: Path = Path("config")
 ) -> list[str]:
     """Write the adult phases under ``setup``; returns the revised-Weaver recordings trained on.
 
-    ``cache_root`` holds ``12Hz_log_PSD_aligned/`` with ``weaver_revised``, ``SleepAccel`` and
-    ``SleepAccel-Clinical``, and for ``matched`` the earlier ``weaver`` cache. Writes
+    ``cache_root`` holds ``12Hz_log_PSD_aligned/`` with ``weaver_revised``, ``SleepAccel``,
+    ``SleepAccel-Clinical`` and ``wearanize``, and for ``matched`` the earlier ``weaver`` cache.
+    Fold k holds out SleepAccel fold k and Wearanize+ fold k. Writes
     - ``cache/12Hz_log_PSD_aligned/``: symlinks to the recordings of every phase;
     - ``cv/cv_fold<k>.json`` and ``cv/cv_final.json``;
     - ``training.json``: ``config/training-adult.json``;
@@ -154,9 +161,14 @@ def prepare_adult(
         raise ValueError(f"weaver set must be one of {WEAVER_SETS}, got {weaver_set!r}")
     cache = Path(cache_root) / CACHE_NAME
     weaver = {s.subject_id: s.path for s in discover_cached_subjects(["weaver_revised"], cache)["weaver_revised"]}
-    adult = discover_cached_subjects(["SleepAccel", "SleepAccel-Clinical"], cache)
+    adult = discover_cached_subjects(["SleepAccel", "SleepAccel-Clinical", "wearanize"], cache)
     sleepaccel = {s.subject_id: s.path for s in adult["SleepAccel"]}
+    wearanize = {s.subject_id: s.path for s in adult["wearanize"]}
     plan = read_plan(Path(config_dir) / "splits/sleepaccel_5fold.json")
+    wearanize_plan = read_plan(Path(config_dir) / "splits/wearanize_5fold.json")
+    if len(wearanize_plan.fold_names) != len(plan.fold_names):
+        raise ValueError(f"the SleepAccel and Wearanize+ plans have {len(plan.fold_names)} and "
+                         f"{len(wearanize_plan.fold_names)} folds")
     if weaver_set == "all":
         chosen = sorted(weaver)
     else:
@@ -171,22 +183,26 @@ def prepare_adult(
     for fold, sids in plan.folds.items():
         for sid in sids:
             link(sleepaccel[sid], links / f"{fold}_subject_{sid}_features.npz")
+    for fold, sids in wearanize_plan.folds.items():
+        for sid in sids:
+            link(wearanize[sid], links / f"{fold}_subject_{sid}_features.npz")
     for subject in adult["SleepAccel-Clinical"]:
         link(subject.path, links / subject.path.name)
 
     (setup / "cv").mkdir(parents=True, exist_ok=True)
-    for k, held_out in enumerate(plan.fold_names):
+    for k, (held_out, held_out_wearanize) in enumerate(zip(plan.fold_names, wearanize_plan.fold_names)):
         cv = {
             "mode": "transfer",
-            "train_sets": [name] + [f for f in plan.fold_names if f != held_out],
-            "test_sets": [held_out, "SleepAccel-Clinical"],
+            "train_sets": [name] + [f for f in plan.fold_names if f != held_out]
+            + [f for f in wearanize_plan.fold_names if f != held_out_wearanize],
+            "test_sets": [held_out, held_out_wearanize, "SleepAccel-Clinical"],
             "validation_sets": [],
             "fold_label": f"fold{k}",
         }
         (setup / "cv" / f"cv_fold{k}.json").write_text(json.dumps(cv, indent=2) + "\n")
     final = {
         "mode": "transfer",
-        "train_sets": [name] + list(plan.fold_names),
+        "train_sets": [name] + list(plan.fold_names) + list(wearanize_plan.fold_names),
         "test_sets": ["SleepAccel-Clinical"],
         "validation_sets": [],
         "fold_label": "final",
@@ -274,20 +290,22 @@ def run_release(
     *,
     run_id: str,
     cache_root: Path,
-    weaver_set: str = "matched",
+    weaver_set: str = DEFAULT_WEAVER_SET,
     phases: list[str] | None = None,
     version: str = "v0.2.0",
     training_config: str | None = None,
     results_dir: Path | None = None,
     bidoze_dir: Path = Path("."),
-    model: str = "g",
+    model: str | None = None,
 ) -> int:
     """Retrain ``release`` by running ``scripts/harness.sh`` of ``bidoze_dir`` (the ``bidoze/``
-    directory); its exit status is returned. With no ``phases``, every phase runs."""
+    directory); its exit status is returned. With no ``phases``, every phase runs; with no
+    ``model``, the release's own architecture (``DEFAULT_MODELS``) trains."""
     if release not in RELEASES:
         raise ValueError(f"release must be one of {RELEASES}, got {release!r}")
     if weaver_set not in WEAVER_SETS:
         raise ValueError(f"weaver set must be one of {WEAVER_SETS}, got {weaver_set!r}")
+    model = model or DEFAULT_MODELS.get(release)
     if model not in MODEL_CONFIGS:
         raise ValueError(f"model must be one of {tuple(MODEL_CONFIGS)}, got {model!r}")
     env = {
@@ -316,20 +334,20 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("release", choices=RELEASES)
     run.add_argument("--run-id", required=True)
     run.add_argument("--cache-root", type=Path, required=True)
-    run.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
+    run.add_argument("--weaver-set", choices=WEAVER_SETS, default=DEFAULT_WEAVER_SET)
     run.add_argument("--phases", nargs="*", default=None, help="default: fold0 to fold4 and final")
     run.add_argument("--version", default="v0.2.0")
     run.add_argument("--training-config", help="a training config in place of the release's own")
     run.add_argument("--results-dir", type=Path)
-    run.add_argument("--model", choices=tuple(MODEL_CONFIGS), default="g",
-                     help="g: BiDoze-G (default); f2: strand-fusion network")
+    run.add_argument("--model", choices=tuple(MODEL_CONFIGS),
+                     help="g: BiDoze-G; f2: strand-fusion network (default: f2 for adult, g for pediatric)")
     run.add_argument("--bidoze-dir", type=Path, default=Path("."), help="the bidoze/ directory")
     recipe = commands.add_parser("pediatric-recipe", help="print the pediatric split plan and cv template")
-    recipe.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
+    recipe.add_argument("--weaver-set", choices=WEAVER_SETS, default=DEFAULT_WEAVER_SET)
     prepare = commands.add_parser("prepare-adult", help="write the adult phases' cache links and cv configs")
     prepare.add_argument("setup", type=Path)
     prepare.add_argument("cache_root", type=Path)
-    prepare.add_argument("--weaver-set", choices=WEAVER_SETS, default="matched")
+    prepare.add_argument("--weaver-set", choices=WEAVER_SETS, default=DEFAULT_WEAVER_SET)
     prepare.add_argument("--config-dir", type=Path, default=Path("config"))
     bundle = commands.add_parser("bundle", help="write the release bundle of a finished final phase")
     bundle.add_argument("release", choices=RELEASES)

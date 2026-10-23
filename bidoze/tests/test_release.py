@@ -31,6 +31,7 @@ TINY_TRAINING = {
 REVISED = ["kid1_fitbit_n1", "kid1_apple_n1", "kid2_fitbit_n1", "kid2_actigraph_n1", "kid3_apple_n1"]
 EARLIER_NIGHTS = {"early1": "kid1_fitbit_n1", "early2": "kid2_fitbit_n1", "early3": "kid3_apple_n1"}
 SLEEPACCEL = ["sa0", "sa1", "sa2", "sa3"]
+WEARANIZE = ["w0", "w1", "w2", "w3"]
 CLINICAL = ["cl0", "cl1"]
 
 
@@ -56,6 +57,8 @@ def _feature_root(tmp_path: Path) -> Path:
     for early, revised in EARLIER_NIGHTS.items():
         y, X = nights[revised.split("_")[0]]
         _save(cache, "weaver", early, y, X)
+    for sid in WEARANIZE:
+        _save(cache, "wearanize", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     for sid in SLEEPACCEL:
         _save(cache, "SleepAccel", sid, rng.choice([0, 1, 2, 3, 5], size=EPOCHS), rng.normal(size=(EPOCHS * FRAMES_PER_EPOCH, 5, 2)))
     for sid in CLINICAL + ["ref0", "ref1"]:
@@ -72,6 +75,11 @@ def _config_dir(tmp_path: Path) -> Path:
         "folds": {"BiDozeSleepAccelFold0": SLEEPACCEL[:2], "BiDozeSleepAccelFold1": SLEEPACCEL[2:]},
     }
     (config / "splits/sleepaccel_5fold.json").write_text(json.dumps(plan))
+    wearanize = {
+        "schema_version": 1, "cohort": "wearanize", "n_splits": 2, "seed": 0,
+        "folds": {"BiDozeWearanizeFold0": WEARANIZE[:2], "BiDozeWearanizeFold1": WEARANIZE[2:]},
+    }
+    (config / "splits/wearanize_5fold.json").write_text(json.dumps(wearanize))
     (config / "training-adult.json").write_text(json.dumps(TINY_TRAINING))
     return config
 
@@ -88,10 +96,13 @@ def test_the_adult_phases_train_on_the_chosen_weaver_set(tmp_path: Path, weaver_
     assert linked == set(expected)
     final = json.loads((setup / "cv/cv_final.json").read_text())
     assert final["train_sets"][0] == name
+    assert {"BiDozeWearanizeFold0", "BiDozeWearanizeFold1"} <= set(final["train_sets"])
     assert final["test_sets"] == ["SleepAccel-Clinical"]
     fold0 = json.loads((setup / "cv/cv_fold0.json").read_text())
-    assert fold0["test_sets"][0] == "BiDozeSleepAccelFold0"
-    assert "BiDozeSleepAccelFold0" not in fold0["train_sets"]
+    assert fold0["test_sets"] == ["BiDozeSleepAccelFold0", "BiDozeWearanizeFold0", "SleepAccel-Clinical"]
+    assert fold0["train_sets"] == [name, "BiDozeSleepAccelFold1", "BiDozeWearanizeFold1"]
+    wearanize_links = {p.name for p in (setup / "cache" / CACHE_NAME).glob("BiDozeWearanize*")}
+    assert len(wearanize_links) == len(WEARANIZE)
 
 
 def test_an_unknown_weaver_set_is_refused(tmp_path: Path) -> None:
@@ -207,6 +218,7 @@ def test_the_local_entry_point_trains_a_tiny_final_phase_and_writes_the_bundle(t
     (local / "config/model-gap-rule.json").write_text(json.dumps(
         {"num_classes": 4, "score_gap": True, "gap_from_row": True, "d_model": 16, "n_heads": 2,
          "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0}))
+    (local / "config/model-f2.json").write_text(json.dumps(F2_MODEL))
     (local / "config/cv-balanced.json").write_text("{}")
     path = os.environ["PATH"]
     os.environ["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{path}"
