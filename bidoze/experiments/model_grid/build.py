@@ -19,7 +19,9 @@ those nights; delete it or pass ``--rescore`` to score again):
 - TST error of the three draw arms (the logged analysis has no TST column), recomputed from the
   runs' predictions with the logged decoding; the logged kappa and wake specificity are used as is
   and checked against the recomputation;
-- Adult F2 x3 v0.2.0 on SleepAccel-Clinical, from its final run's predictions with the bundle's divisor.
+- Adult F2 x3 v0.2.0 on SleepAccel-Clinical, from its final run's predictions with the bundle's divisor;
+- Adult F2 x3 v0.2.0 on SleepAccel and Wearanize+, from the 5 cross-validation fold runs' predictions of the
+  nights each fold held out (3-seed mean, each fold's own divisor from its training nights).
 """
 from __future__ import annotations
 
@@ -57,6 +59,8 @@ EESM_RUN = R / "eesm19-eval-2026-10-23"
 PED_BUNDLE = R / "pediatric-weaver-all-2026-10-23/training/final/bundle"
 F2_BUNDLE = EESM_RUN / "bundles/adult-f2x3-v0.2.0"
 F2_FINAL = R / "adult-f2-2026-10-23/training/final"
+F2_TRAINING = F2_FINAL.parent
+F2_TRAIN_CACHE = Path("/tmp/bidoze-folds-f2/release-adult/cache")
 UNET_RUN = MAIN / "unet/results/unet-pediatric-v0.1.0"
 UNET_BUNDLE = UNET_RUN / "publish"
 
@@ -85,8 +89,7 @@ TRAINED = {
     F2WO0: {"Wearanize+": "trained on all 92 Wearanize+ nights"},
     F2SA: {"SleepAccel": "trained on all 28 SleepAccel nights"},
     F2AA: {"AAUWSS": "trained on all 13 AAUWSS nights"},
-    F2X3: {"SleepAccel": "trained on all SleepAccel nights", "Wearanize+": "trained on all 92 Wearanize+ nights",
-           "Weaver (children)": "trained on all revised Weaver recordings"},
+    F2X3: {"Weaver (children)": "trained on all revised Weaver recordings"},
 }
 #: (model, dataset) -> why the cell is empty.
 EMPTY = {
@@ -292,6 +295,29 @@ def final_clinical_rows(logger) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def f2_cv_rows(logger) -> pd.DataFrame:
+    """Adult F2 x3 v0.2.0 on SleepAccel and Wearanize+: each fold run scores the nights it held out.
+
+    The 3 seeds' mean output decides wake or sleep and, divided by the fold's own divisor (computed from
+    its training nights), the stage; ``F2_TRAIN_CACHE`` holds the training links.
+    """
+    from arcasleep_bidoze.release import ADULT_CV_COHORTS, phase_divisor, seed_mean_recordings
+    rows = []
+    for k in range(5):
+        fold = F2_TRAINING / f"fold{k}"
+        divisor, _, _ = phase_divisor(fold, F2_TRAIN_CACHE)
+        test_sets = json.loads((fold / "config/cv.json").read_text())["test_sets"]
+        for cohort, index in ADULT_CV_COHORTS.items():
+            for sid, (y, proba) in seed_mean_recordings(fold, test_sets[index]).items():
+                m = subject_metrics(logger, y, proba, hybrid_calls(proba, proba, divisor))
+                rows.append(dict(model=F2X3, dataset=cohort, night=sid, draw=-1,
+                                 kappa_sleep_wake=m["kappa_sleep_wake"], kappa_4stage=m["kappa_4stage"],
+                                 wake_specificity_pct=100 * m["wake_specificity"], tst_error_min=m["tst_error_minutes"],
+                                 source=f"scored here (bidoze/results/adult-f2-2026-10-23/training/fold{{0..4}}/predictions, "
+                                        "held-out nights, 3-seed mean, each fold's divisor)"))
+    return pd.DataFrame(rows)
+
+
 def checkpoints():
     """Ensembles scored on EESM19: name -> list of (draw, [3 checkpoint paths], divisor draw or None)."""
     out = {}
@@ -410,12 +436,15 @@ def self_scored(out: Path, rescore: bool) -> pd.DataFrame:
         if UNET not in set(df.model):
             df = pd.concat([df, score_unet(make_logger())])
             df.to_csv(path, index=False)
+        if not ((df.model == F2X3) & (df.dataset == "Wearanize+")).any():
+            df = pd.concat([df, f2_cv_rows(make_logger())])
+            df.to_csv(path, index=False)
         return df
     logger = make_logger()
     four = ["SleepAccel", "SleepAccel-Clinical", "Wearanize+", "AAUWSS"]
     parts = [score_cache_bundle(logger, PED, PED_BUNDLE, four, False),
              score_cache_bundle(logger, F2X3, F2_BUNDLE, ["AAUWSS"], True),
-             final_clinical_rows(logger), draw_arm_rows(logger), eesm_rows(logger)]
+             final_clinical_rows(logger), f2_cv_rows(logger), draw_arm_rows(logger), eesm_rows(logger)]
     df = pd.concat(parts)
     df = pd.concat([df, score_unet(logger)])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -465,7 +494,8 @@ def build_cells(nights: pd.DataFrame) -> pd.DataFrame:
                                 if dataset != "EESM19" else "external cohort; mean over 5 draw ensembles")
                     if dataset == "AAUWSS" or (dataset == "Wearanize+" and model == "f2-base"):
                         protocol = "external cohort; mean over draws of per-draw means"
-                elif model == ADULT and dataset == "SleepAccel":
+                elif (model == ADULT and dataset == "SleepAccel") or (
+                        model == F2X3 and dataset in ("SleepAccel", "Wearanize+")):
                     protocol = "held-out CV folds pooled"
                 else:
                     protocol = "external cohort"
