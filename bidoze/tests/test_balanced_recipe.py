@@ -57,7 +57,10 @@ def _recorded_split(results: Path) -> tuple[list[SubjectRef], list[SubjectRef]]:
 
 
 def _configs(
-    directory: Path, model_overrides: dict | None = None, cv_overrides: dict | None = None
+    directory: Path,
+    model_overrides: dict | None = None,
+    cv_overrides: dict | None = None,
+    training_overrides: dict | None = None,
 ) -> RunConfig:
     directory.mkdir(parents=True, exist_ok=True)
     files = {
@@ -84,7 +87,7 @@ def _configs(
             "test_sets": ["CohortB"],
             **(cv_overrides or {}),
         },
-        "training.json": BALANCED_TRAINING,
+        "training.json": {**BALANCED_TRAINING, **(training_overrides or {})},
         "metrics.json": {
             "num_classes": 4,
             "class_names": ["wake", "light", "deep", "rem", "gap"],
@@ -133,6 +136,35 @@ def test_balanced_recipe_trains_and_scores_end_to_end(tmp_path: Path, model_over
             rows = list(csv.DictReader(handle))
         assert len(rows) == 9
         assert {row["psg"] for row in rows} <= {"wake", "light", "deep", "rem"}
+
+
+def test_fit_kappa_logging_and_checkpoints_run_on_a_tiny_fit(tmp_path: Path) -> None:
+    diagnostics = tmp_path / "diagnostics"
+    config = _configs(
+        tmp_path / "config",
+        cv_overrides={"train_sets": ["CohortA", "BiDozeSleepAccelFold0"]},
+        training_overrides={
+            "epochs": 3,
+            "fit_kappa_every": 2,
+            "fit_kappa_rows": 4,
+            "checkpoint_epochs": [2],
+            "diagnostics_dir": str(diagnostics),
+        },
+    )
+    cache_root = tmp_path / "feature_cache"
+    _write_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)], epochs=12)
+    _write_cache(cache_root / "test", "BiDozeSleepAccelFold0", ["s0", "s1"], epochs=12)
+    _write_cache(cache_root / "test", "CohortB", ["b0"], epochs=9)
+
+    run_training(
+        config, RunPaths(results=tmp_path / "results" / "training", feature_cache=cache_root), run_id="test"
+    )
+
+    history = json.loads((diagnostics / "history_seed_0.json").read_text())
+    assert history["fit_kappa_epochs"] == [0, 2, 3]
+    assert len(history["fit_kappa_all"]) == len(history["fit_kappa_sleepaccel"]) == 3
+    (checkpoint,) = diagnostics.glob("*.pisces")
+    assert checkpoint_family(checkpoint) == "bidoze"
 
 
 @pytest.mark.parametrize(

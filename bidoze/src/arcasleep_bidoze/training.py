@@ -47,6 +47,10 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+    "fit_kappa_every",
+    "fit_kappa_rows",
+    "checkpoint_epochs",
+    "diagnostics_dir",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +102,16 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # Opt-in diagnostics of the balanced fit, off by default. With fit_kappa_every > 0 the
+    # kappa on the fit recordings (and on the fit recordings of each dataset named "...Fold<k>"
+    # of SleepAccel) is computed at epoch 0, every fit_kappa_every epochs and at the last epoch;
+    # fit_kappa_rows > 0 limits it to that many fit recordings, a fixed random subset that holds
+    # every fit SleepAccel recording. checkpoint_epochs are epochs whose parameters are saved.
+    # Both write to diagnostics_dir (history_seed_<seed>.json, epoch_<n>_seed_<seed>.pisces).
+    fit_kappa_every: int = 0
+    fit_kappa_rows: int = 0
+    checkpoint_epochs: list[int] | None = None
+    diagnostics_dir: str | None = None
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -178,6 +192,10 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+        if self.fit_kappa_every < 0 or self.fit_kappa_rows < 0:
+            raise ValueError("training.json: fit_kappa_every and fit_kappa_rows must be nonnegative")
+        if (self.fit_kappa_every > 0 or self.checkpoint_epochs) and not self.diagnostics_dir:
+            raise ValueError("training.json: fit_kappa_every and checkpoint_epochs need diagnostics_dir")
 
     @property
     def patience(self) -> Patience:
@@ -373,6 +391,7 @@ def _train_fold_balanced(
     if training.init_weights is not None:
         _load_init_weights(model, Path(training.init_weights), X_fit.shape[1:])
         print(f"  starting from the weights of {training.init_weights}")
+    diagnostics = _fit_diagnostics(model, training, fit_refs, fit_seed)
     history = model.fit_balanced(
         X_fit,
         y_fit,
@@ -387,9 +406,56 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+        **diagnostics,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model
+
+
+def _fit_diagnostics(model, training: TrainingConfig, fit_refs, fit_seed: int) -> dict:
+    """The opt-in ``fit_balanced`` diagnostics ``training`` asks for; ``{}`` when it asks for none."""
+    if not (training.fit_kappa_every > 0 or training.checkpoint_epochs):
+        return {}
+    import json
+
+    out = Path(training.diagnostics_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    def on_history(history: dict) -> None:
+        (out / f"history_seed_{fit_seed}.json").write_text(json.dumps(history, default=float))
+
+    def on_checkpoint(epoch: int, params) -> None:
+        held = model.params, model.model
+        model.params, model.model = params, {"params": params}
+        try:
+            model.savez(out / f"epoch_{epoch}_seed_{fit_seed}.pisces")
+        finally:
+            model.params, model.model = held
+
+    groups = {}
+    if training.fit_kappa_every > 0:
+        everything = np.arange(len(fit_refs))
+        sleepaccel = np.array(
+            [i for i, ref in enumerate(fit_refs) if ref.dataset_name.startswith("BiDozeSleepAccel")],
+            dtype=int,
+        )
+        rows = everything
+        if 0 < training.fit_kappa_rows < len(everything):
+            rest = np.setdiff1d(everything, sleepaccel)
+            take = max(0, training.fit_kappa_rows - len(sleepaccel))
+            drawn = np.random.default_rng(0).choice(rest, size=min(take, len(rest)), replace=False)
+            rows = np.sort(np.concatenate([sleepaccel, drawn]))
+        groups = {"all": rows}
+        if len(sleepaccel):
+            groups["sleepaccel"] = sleepaccel
+        print(f"  fit kappa on {len(rows)} fit recordings, {len(sleepaccel)} of them SleepAccel")
+    return {
+        "fit_kappa_every": training.fit_kappa_every,
+        "fit_kappa_groups": groups,
+        "checkpoint_epochs": tuple(training.checkpoint_epochs or ()),
+        "on_checkpoint": on_checkpoint,
+        "on_history": on_history,
+    }
 
 
 def _run_final_deblip(

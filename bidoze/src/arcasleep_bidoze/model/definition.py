@@ -3387,6 +3387,11 @@ class BiDozeNetModel(CVModel):
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
+        fit_kappa_every: int = 0,
+        fit_kappa_groups: dict[str, np.ndarray] | None = None,
+        checkpoint_epochs: tuple[int, ...] = (),
+        on_checkpoint: Callable[[int, Any], None] | None = None,
+        on_history: Callable[[dict], None] | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3408,6 +3413,14 @@ class BiDozeNetModel(CVModel):
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
+
+        Diagnostics, all off by default and with no effect on the fit: with
+        ``fit_kappa_every`` > 0, the kappa on each group of fit rows in
+        ``fit_kappa_groups`` (name to row indices) is computed at epoch 0, every
+        that many epochs, and at the last epoch, and recorded in the history as
+        ``fit_kappa_epochs`` and ``fit_kappa_<name>``; ``on_checkpoint(epoch,
+        params)`` is called at the end of each epoch in ``checkpoint_epochs``;
+        ``on_history(history)`` is called after every epoch.
         """
         cfg = self.config
         train_x = np.asarray(train_x, dtype=np.float32)
@@ -3476,14 +3489,34 @@ class BiDozeNetModel(CVModel):
             else _numpy_feature_activity_mask(eval_x)
         )
 
-        def eval_kappa(params) -> float:
+        def kappa_over(params, x, y, mask, row_ids=None) -> float:
+            row_ids = np.arange(x.shape[0]) if row_ids is None else np.asarray(row_ids)
             cm = np.zeros((num_classes, num_classes + 1), dtype=np.int64)
-            for i in range(0, eval_x.shape[0], eval_batch_size):
-                batch = slice(i, i + eval_batch_size)
-                logits = eval_logits(params, jnp.asarray(eval_x[batch]), jnp.asarray(eval_mask[batch]))
+            for i in range(0, len(row_ids), eval_batch_size):
+                batch = row_ids[i : i + eval_batch_size]
+                logits = eval_logits(params, jnp.asarray(x[batch]), jnp.asarray(mask[batch]))
                 pred = np.argmax(np.asarray(logits), axis=-1)
-                cm += selection_confusion(eval_y[batch], pred, num_classes)
+                cm += selection_confusion(y[batch], pred, num_classes)
             return cohen_kappa_from_confusion(cm)
+
+        def eval_kappa(params) -> float:
+            return kappa_over(params, eval_x, eval_y, eval_mask)
+
+        fit_mask = (
+            np.ones(train_x.shape[:2], dtype=np.float32)
+            if cfg.score_gap
+            else _numpy_feature_activity_mask(train_x)
+        )
+        fit_groups = fit_kappa_groups or {}
+
+        def record_fit_kappa(params, epoch: int) -> str:
+            history.setdefault("fit_kappa_epochs", []).append(epoch)
+            parts = []
+            for name, row_ids in fit_groups.items():
+                value = kappa_over(params, train_x, train_y, fit_mask, row_ids)
+                history.setdefault(f"fit_kappa_{name}", []).append(value)
+                parts.append(f"fit_kappa_{name} {value:.4f}")
+            return "  ".join(parts)
 
         fpe = cfg.frames_per_epoch
         rows = [(train_x[i], train_y[i]) for i in range(train_x.shape[0])]
@@ -3502,6 +3535,8 @@ class BiDozeNetModel(CVModel):
             best_params = params
             best_epoch = 0
             print(f"    epoch   0  eval_kappa {best_kappa:.4f}  (starting weights)", flush=True)
+        if fit_kappa_every > 0:
+            print(f"    epoch   0  {record_fit_kappa(params, 0)}", flush=True)
 
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
@@ -3553,10 +3588,20 @@ class BiDozeNetModel(CVModel):
                 best_epoch = epoch
                 best_params = params
 
+            fit_report = ""
+            if fit_kappa_every > 0 and (
+                epoch % fit_kappa_every == 0 or epoch == max_epochs or decision.stop
+            ):
+                fit_report = "  " + record_fit_kappa(params, epoch)
+            if on_checkpoint is not None and epoch in checkpoint_epochs:
+                on_checkpoint(epoch, params)
+            if on_history is not None:
+                on_history(history)
+
             print(
                 f"    epoch {epoch:3d}  step {plateau.step}  loss {epoch_loss:.3e}  "
                 f"eval_kappa {kappa:.4f}  smoothed {decision.smoothed_kappa:.4f}  "
-                f"best {best_kappa:.4f}@{best_epoch}  lr {lr:.2e}  "
+                f"best {best_kappa:.4f}@{best_epoch}  lr {lr:.2e}{fit_report}  "
                 f"epoch_time={time.time() - epoch_start:.3f}s",
                 flush=True,
             )
