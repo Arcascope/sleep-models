@@ -9,9 +9,10 @@ score, is marked trained on and carries no number. Existing numbers are read fro
 per-night CSVs; cells with no logged score are scored here (``setup/self_scored_nights.csv`` holds
 those nights; delete it or pass ``--rescore`` to score again):
 
-- Pediatric v0.1.1 on SleepAccel, Clinical, Wearanize+ and AAUWSS, and Adult F2 x3 v0.2.0 on AAUWSS,
-  from the cached features through the bundle's network (the way ``new_cohorts/score_models.py``
-  scores bundles);
+- Pediatric v0.1.1 on SleepAccel, Clinical, Wearanize+ and AAUWSS, U-Net v0.1.0 on the same four, and
+  Adult F2 x3 v0.2.0 on AAUWSS, from the cached features through the bundle's network (the way
+  ``new_cohorts/score_models.py`` scores bundles; the U-Net scores a whole recording in one pass, as
+  ``Predictor.predict`` does);
 - g-wearanize, f2-base, f2-wearanize and the five single-cohort runs on the 33 EESM19 nights, from the
   raw accelerometer through the release bundles' feature path (``new_cohorts/eesm19/score_releases.py``)
   and the runs' own checkpoints;
@@ -56,6 +57,8 @@ EESM_RUN = R / "eesm19-eval-2026-10-23"
 PED_BUNDLE = R / "pediatric-weaver-all-2026-10-23/training/final/bundle"
 F2_BUNDLE = EESM_RUN / "bundles/adult-f2x3-v0.2.0"
 F2_FINAL = R / "adult-f2-2026-10-23/training/final"
+UNET_RUN = MAIN / "unet/results/unet-pediatric-v0.1.0"
+UNET_BUNDLE = UNET_RUN / "publish"
 
 DATASETS = ["SleepAccel", "SleepAccel-Clinical", "Wearanize+", "AAUWSS", "EESM19", "Weaver (children)"]
 CACHE_PREFIX = {"SleepAccel": "SleepAccel", "SleepAccel-Clinical": "SleepAccel-Clinical",
@@ -68,9 +71,10 @@ DRAWS = range(5)
 SEEDS = range(3)
 
 PED, ADULT, F2X3 = "Pediatric v0.1.1", "Adult v0.1.0", "Adult F2 ×3 v0.2.0"
+UNET = "U-Net pediatric v0.1.0"
 BWO, F2WO3, F2WO0 = "BiDoze Wearanize+ only", "F2 Wearanize+ only, loss 0.3", "F2 Wearanize+ only, loss 0"
 F2SA, F2AA = "F2 SleepAccel only", "F2 AAUWSS only"
-MODELS = [PED, ADULT, *DRAW_ARMS, BWO, F2WO3, F2WO0, F2SA, F2AA, F2X3]
+MODELS = [PED, UNET, ADULT, *DRAW_ARMS, BWO, F2WO3, F2WO0, F2SA, F2AA, F2X3]
 SINGLE_RUNS = {BWO: "wearanize-only-bidoze", F2WO3: "wearanize-only-f2", F2WO0: "wearanize-only-f2-no-strand-loss",
                F2SA: "sleepaccel-only-f2-no-strand-loss", F2AA: "aauwss-only-f2-no-strand-loss"}
 #: model -> dataset it trained on entirely, with no held-out score.
@@ -90,7 +94,7 @@ EMPTY = {
     **{(m, "Weaver (children)"): "Weaver not scored for this run (not trained on Weaver; 634 recordings not scored here)"
        for m in SINGLE_RUNS},
 }
-DECODING = {PED: "argmax", ADULT: "hybrid (bundle divisor)", F2X3: "hybrid (bundle divisor)",
+DECODING = {PED: "argmax", UNET: "argmax", ADULT: "hybrid (bundle divisor)", F2X3: "hybrid (bundle divisor)",
             **{m: "hybrid (draw divisor)" for m in DRAW_ARMS}, **{m: "argmax" for m in SINGLE_RUNS}}
 
 
@@ -202,10 +206,14 @@ def draw_arm_rows(logger) -> pd.DataFrame:
 # ---------------------------------------------------------------- self-scoring
 
 
-def model_logits(model, context, fpe, X, n):
-    """Per-epoch network output for one recording of cached features, windowed as ``Predictor.predict`` does."""
+def model_logits(model, context, fpe, X, n, multiple=1):
+    """Per-epoch network output for one recording of cached features, windowed as ``Predictor.predict`` does.
+
+    A model without a fixed context window scores the whole recording in one pass, padded to a multiple of ``multiple``.
+    """
     from arcasleep.data.batching import pad_recording_input, recording_input
     inputs = recording_input(X, n, fpe)
+    context = context or -(-n // multiple) * multiple
     chunks = [pad_recording_input(inputs[s * fpe:(s + context) * fpe], context, fpe) for s in range(0, n, context)]
     out = model.infer(np.stack(chunks))
     return out.reshape(-1, out.shape[-1])[:n]
@@ -240,7 +248,7 @@ def score_cache_bundle(logger, name, bundle, cohorts, adult: bool) -> pd.DataFra
             n = len(y)
             pooled = pool_frames_to_epochs(b.X[0][None], np.zeros((1, n)))[0]
             is_gap = split_gap_row(pooled)[1] >= 1.0
-            logits = model_logits(ens.model, ens.context_epochs, fpe, b.X[0], n)
+            logits = model_logits(ens.model, ens.context_epochs, fpe, b.X[0], n, ens.epoch_multiple)
             if adult:
                 mean = np.exp(logits)
                 stage = mean[:, :4] / mean[:, :4].sum(1, keepdims=True)
@@ -256,6 +264,15 @@ def score_cache_bundle(logger, name, bundle, cohorts, adult: bool) -> pd.DataFra
                              tst_error_min=m["tst_error_minutes"], source="scored here (cached features)"))
         print("scored", name, cohort, flush=True)
     return pd.DataFrame(rows)
+
+
+def unet_weaver_rows() -> pd.DataFrame:
+    """U-Net v0.1.0 on Weaver: the argmax scores of its 5 held-out CV folds."""
+    folds = pd.concat([pd.read_csv(UNET_RUN / f"training/fold{i}/cv_results_4_stages.csv") for i in range(5)])
+    w = folds.pivot_table(index="subject_id", columns="metric", values="value")
+    return frame(UNET, "Weaver (children)", w.index.astype(str), -1, w.kappa_sleep_wake, w.kappa_4stage,
+                 w.wake_specificity, w.tst_error_minutes,
+                 "unet/results/unet-pediatric-v0.1.0/training/fold{0..4}/cv_results_4_stages.csv")
 
 
 def final_clinical_rows(logger) -> pd.DataFrame:
@@ -354,15 +371,53 @@ def eesm_rows(logger) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def unet_eesm_rows(logger) -> pd.DataFrame:
+    """U-Net v0.1.0 on the 33 EESM19 nights through the release's own ``Predictor.predict`` (filter off), as ``score_releases.py`` does."""
+    from arcasleep.predict import Predictor
+    from score_releases import EPOCH_S, STAGE_INDEX, night_metrics, read_accel, read_pairs
+    pr = Predictor(UNET_BUNDLE)
+    manifest = json.loads((EESM_RAW / "conversion_manifest.json").read_text())
+    rows = []
+    for sid in sorted(n["id"] for n in manifest if n["status"] == "converted"):
+        psg = read_pairs(EESM_RAW / "cleaned_psg" / f"{sid}_cleaned_psg.out")
+        times, y = psg[:, 0], psg[:, 1].astype(int)
+        scored = y >= 0
+        accel = read_accel(EESM_RAW / "cleaned_accelerometer" / f"{sid}_cleaned_motion.out")
+        res = pr.predict(accel, origin=float(times[0]), ggir_sleep_filter=False, subject_id=sid)
+        pos = {int(round(t / EPOCH_S)): i for i, t in enumerate(times)}
+        pred = np.full(len(times), 4)
+        for st, lab in zip(res.epoch_start_s, res.raw_labels):
+            i = pos.get(int(round(st / EPOCH_S)))
+            if i is not None:
+                pred[i] = STAGE_INDEX[str(lab)]
+        m = night_metrics(y[scored], pred[scored])
+        rows.append(dict(model=UNET, dataset="EESM19", night=sid, draw=-1, kappa_sleep_wake=m["kappa_sleep_wake"],
+                         kappa_4stage=m["kappa_4stage"], wake_specificity_pct=100 * m["wake_specificity"],
+                         tst_error_min=m["tst_error_min"], source="scored here (raw EESM19 accelerometer, release predictor)"))
+    print("scored", UNET, "EESM19", flush=True)
+    return pd.DataFrame(rows)
+
+
+def score_unet(logger) -> pd.DataFrame:
+    four = ["SleepAccel", "SleepAccel-Clinical", "Wearanize+", "AAUWSS"]
+    return pd.concat([score_cache_bundle(logger, UNET, UNET_BUNDLE, four, False), unet_eesm_rows(logger)])
+
+
 def self_scored(out: Path, rescore: bool) -> pd.DataFrame:
     path = out / "setup/self_scored_nights.csv"
     if path.exists() and not rescore:
-        return pd.read_csv(path, dtype={"night": str})
+        df = pd.read_csv(path, dtype={"night": str})
+        if UNET not in set(df.model):
+            df = pd.concat([df, score_unet(make_logger())])
+            df.to_csv(path, index=False)
+        return df
     logger = make_logger()
-    parts = [score_cache_bundle(logger, PED, PED_BUNDLE, ["SleepAccel", "SleepAccel-Clinical", "Wearanize+", "AAUWSS"], False),
+    four = ["SleepAccel", "SleepAccel-Clinical", "Wearanize+", "AAUWSS"]
+    parts = [score_cache_bundle(logger, PED, PED_BUNDLE, four, False),
              score_cache_bundle(logger, F2X3, F2_BUNDLE, ["AAUWSS"], True),
              final_clinical_rows(logger), draw_arm_rows(logger), eesm_rows(logger)]
     df = pd.concat(parts)
+    df = pd.concat([df, score_unet(logger)])
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
     return df
@@ -522,7 +577,7 @@ def main():
     args = ap.parse_args()
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
-    nights = pd.concat([logged_release_rows(), logged_single_rows(), self_scored(out, args.rescore)])
+    nights = pd.concat([logged_release_rows(), unet_weaver_rows(), logged_single_rows(), self_scored(out, args.rescore)])
     nights["night"] = nights.night.astype(str)
     nights.to_csv(out / "per_night.csv", index=False)
     cells = build_cells(nights)
