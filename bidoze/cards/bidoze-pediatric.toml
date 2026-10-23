@@ -6,13 +6,12 @@ audience = "Children and adolescents aged 5 to 18"
 require_cv = true
 
 protocol = """\
-The pediatric dataset from Weaver _et al_ was split into \
-five fixed, participant-level folds, balanced such that training \
-pools contained representative proportions of no-diagnosis, mild, \
-moderate, and severe obstructive sleep apnea. The cross-validation column \
-pools five models, each scoring the fold it did not train on; the \
-released model was then trained on all Weaver data and scored on the two \
-adult cohorts."""
+The pediatric dataset from Weaver _et al_ (634 recordings from 237 \
+children) was split into five fixed, participant-level folds: all \
+recordings of a child, every device and night, are in one fold. The \
+cross-validation column pools five models, each scoring the fold it did \
+not train on, with one value per recording; the released model was then \
+trained on all Weaver data and scored on the two adult cohorts."""
 
 [cohorts]
 cv = "held-out folds of the pediatric training data; the closest estimate for the intended population"
