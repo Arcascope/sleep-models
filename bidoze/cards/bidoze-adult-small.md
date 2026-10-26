@@ -41,26 +41,26 @@ Output columns:
 ## Limitations
 
 - **Wake specificity is lower than sleep sensitivity.**
-  - SleepAccel cross-validation: sleep sensitivity TBD%, wake specificity
-    TBD%.
-  - Wearanize+ cross-validation: sleep sensitivity TBD%, wake specificity
-    TBD%.
-  - SleepAccel-Clinical: sleep sensitivity TBD%, wake specificity TBD%.
-    Total sleep time is overestimated by TBD minutes on average.
+  - SleepAccel cross-validation: sleep sensitivity 95.5%, wake specificity
+    74.4%.
+  - Wearanize+ cross-validation: sleep sensitivity 94.2%, wake specificity
+    80.9%.
+  - SleepAccel-Clinical: sleep sensitivity 95.7%, wake specificity 62.5%.
+    Total sleep time is overestimated by 24.0 minutes on average.
 - **Stage durations have larger errors than total sleep time.** On SleepAccel
-  (cross-validation), the mean absolute percentage error is TBD% for total
-  sleep time, TBD% for light sleep, TBD% for deep sleep and TBD% for REM
+  (cross-validation), the mean absolute percentage error is 4.3% for total
+  sleep time, 18.1% for light sleep, 78.6% for deep sleep and 49.7% for REM
   sleep.
 - **Deep sleep is overestimated in cohorts with little deep sleep.**
-  - Deep sleep is TBD% of predicted sleep vs TBD% of PSG sleep on
-    SleepAccel-Clinical, and TBD% vs TBD% on SleepAccel (cross-validation),
+  - Deep sleep is 22.6% of predicted sleep vs 11.0% of PSG sleep on
+    SleepAccel-Clinical, and 22.6% vs 16.2% on SleepAccel (cross-validation),
     as the mean over nights.
   - The divisor assumes the adult training recordings' 19.7% deep sleep.
     Cohorts with less deep sleep, such as older adults or people with sleep
     apnea, are overestimated more.
   - Do not use deep-sleep time as a per-night outcome.
 - **Single nights differ more than cohort means.** 95% limits of agreement for
-  total sleep time are TBD to TBD minutes on SleepAccel-Clinical.
+  total sleep time are −56 to +104 minutes on SleepAccel-Clinical.
 - **Only the PSG night has been evaluated.** Daytime sleep, naps and non-wear
   periods in multi-day recordings have not been compared against a reference.
 - **Device and placement.** The model was trained on wrist data from
