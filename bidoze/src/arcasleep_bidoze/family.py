@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from arcasleep.models import MODEL_TYPE_KEY, ModelFamily
+from arcasleep.models import MEMBER_PREFIX, MODEL_TYPE_KEY, ModelFamily
 
 
 class BiDozeFamily(ModelFamily):
@@ -69,21 +69,22 @@ class BiDozeFamily(ModelFamily):
         return BiDozeNetModel.loadz(path, input_shape=input_shape)
 
     def load_release(self, config: Mapping[str, Any], weights: Path):
+        """One model, or the ``members`` models of an ensemble bundle as one batched call."""
+        from arcasleep_bidoze.adult import StackedModel
         from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
 
         data = {k: v for k, v in config.items() if k != MODEL_TYPE_KEY}
-        model = BiDozeNetModel(BiDozeNetConfig.from_dict(data))
-        model.load_weights_safetensors(weights)
-        return model
-
-    def load_predictor(self, bundle_dir: Path | str):
-        from arcasleep.artifacts.publish import COMPOSITE_FILENAME
-
-        if (Path(bundle_dir) / COMPOSITE_FILENAME).is_file():
-            from arcasleep_bidoze.adult import AdultPredictor
-
-            return AdultPredictor(bundle_dir)
-        return super().load_predictor(bundle_dir)
+        members = config.get("members")
+        if members is None:
+            model = BiDozeNetModel(BiDozeNetConfig.from_dict(data))
+            model.load_weights_safetensors(weights)
+            return model
+        models = []
+        for k in range(int(members)):
+            model = BiDozeNetModel(BiDozeNetConfig.from_dict(data))
+            model.load_weights_safetensors(weights, prefix=f"{MEMBER_PREFIX}{k}/")
+            models.append(model)
+        return StackedModel(models)
 
     def prediction_window(self, model) -> tuple[int | None, int]:
         return int(model.input_shape[0]), 1

@@ -276,6 +276,52 @@ def test_card_images_are_bundled_checksummed_and_uploaded(tmp_path: Path) -> Non
     assert "README.md" in patterns
 
 
+def test_a_card_includes_a_shared_section_and_bundles_its_assets_images(tmp_path: Path) -> None:
+    phase = _phase(tmp_path)
+    cards = tmp_path / "cards"
+    (cards / "assets").mkdir(parents=True)
+    figure = cards / "assets" / "architecture.png"
+    figure.write_bytes(b"\x89PNG\r\n\x1a\n fake")
+    (cards / "shared.md").write_text("## Shared\n\n![Architecture](assets/architecture.png)\n")
+    authored = cards / "card.md"
+    authored.write_text("## Intended use\n\nText.\n\n<!-- include: shared.md -->\n")
+
+    bundle = build_release_bundle(phase, tmp_path / "release", version="v1.0.0", card=authored)
+
+    assert (tmp_path / "release" / "assets" / "architecture.png").read_bytes() == figure.read_bytes()
+    assert "assets/architecture.png" in bundle.files
+    verify_bundle(tmp_path / "release")
+
+
+def test_an_ensemble_bundle_holds_every_member_under_its_own_prefix(tmp_path: Path) -> None:
+    from safetensors import safe_open
+
+    phase = _phase(tmp_path)
+    _checkpoint(phase / "model_outputs" / "model_final_seed_1.pisces")
+    members = [
+        {"checkpoint": phase / "model_outputs" / f"model_final_seed_{k}.pisces", "seed": k, "epoch": 5 + k}
+        for k in range(2)
+    ]
+
+    build_release_bundle(
+        phase, tmp_path / "release", version="v1.0.0", members=members,
+        stage_divisor={"light": 0.5, "deep": 2.0, "rem": 1.0},
+    )
+
+    config = json.loads((tmp_path / "release" / "config.json").read_text())
+    provenance = json.loads((tmp_path / "release" / "provenance.json").read_text())
+    assert config["members"] == 2 and config["stage_divisor"]["deep"] == 2.0
+    assert [(m["seed"], m["epoch"]) for m in provenance["members"]] == [(0, 5), (1, 6)]
+    assert "seed" not in provenance
+    with safe_open(str(tmp_path / "release" / "model.safetensors"), framework="np") as handle:
+        assert {key.split("/", 1)[0] for key in handle.keys()} == {"member0", "member1"}
+    x = np.random.default_rng(0).standard_normal((1, 8, 3, 2)).astype(np.float32)
+    alone = BiDozeNetModel.loadz(members[1]["checkpoint"], input_shape=(8, 3, 2)).infer(x)
+    stacked = load_bundle_model(tmp_path / "release")
+    assert stacked.count == 2 and stacked.infer(x).shape == alone.shape
+    verify_bundle(tmp_path / "release")
+
+
 def test_card_with_a_missing_image_is_refused(tmp_path: Path) -> None:
     phase = _phase(tmp_path)
     authored = tmp_path / "card.md"

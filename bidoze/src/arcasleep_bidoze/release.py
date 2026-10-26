@@ -12,8 +12,9 @@ Each release has a model config (``MODEL_CONFIGS``), a training config and phase
   trains on revised-Weaver recordings (``--weaver-set``; ``matched`` is the 202 recordings of the
   earlier nights), 4 of the 5 SleepAccel folds of ``config/splits/sleepaccel_5fold.json`` and 4 of
   the 5 Wearanize+ folds of ``config/splits/wearanize_5fold.json``; ``final`` trains on all of
-  SleepAccel and Wearanize+. The bundle is 3 seed bundles and ``composite.json`` (the adult stage
-  divisor).
+  SleepAccel and Wearanize+. A release bundle holds the weights of the chosen seeds (``--seeds``)
+  in one ``model.safetensors`` and the adult stage divisor in ``config.json``; ``adult`` is the 3
+  seeds and ``adult-small`` seed 0 alone.
 
 ``prepare_adult`` writes the adult phases' feature-cache links and cv configs;
 ``build_release`` writes the release bundle from a finished ``final`` phase.
@@ -23,7 +24,9 @@ Usage: python -m arcasleep_bidoze.release run <adult|pediatric> --run-id <id> --
        python -m arcasleep_bidoze.release pediatric-recipe [--weaver-set all|matched]
        python -m arcasleep_bidoze.release prepare-adult <setup dir> <cache root> [--weaver-set all|matched]
        python -m arcasleep_bidoze.release bundle <adult|pediatric> <final phase dir> <output> <version>
-                [--train-cache <setup dir>/cache --cache-root <cache root>] [--seeds 0 1 2]
+                [--train-cache <setup dir>/cache] [--seeds 0 1 2]
+       python -m arcasleep_bidoze.release card adult <training dir> <bundle dir> --info cards/bidoze-adult.toml
+                --train-cache <setup dir>/cache [--seeds 0 1 2] [--summary-out <csv>]
 """
 from __future__ import annotations
 
@@ -53,6 +56,9 @@ PEDIATRIC_RECIPES = {
     "all": ("config/splits/weaver_revised_pediatric_5fold.json", "config/cv-weaver-revised.json"),
 }
 ADULT_SEEDS = 3
+#: Training sets of a phase that give the adult stage mix of its divisor: the SleepAccel and
+#: Wearanize+ folds; the Weaver recordings are not part of it.
+ADULT_REFERENCE_PREFIXES = ("BiDozeSleepAccel", "BiDozeWearanize")
 FOLDS = 5
 #: The release architectures: ``g`` is BiDoze-G, ``f2`` the strand-fusion network.
 MODEL_CONFIGS = {"g": "config/model-gap-rule.json", "f2": "config/model-f2.json"}
@@ -215,6 +221,55 @@ def prepare_adult(
     return chosen
 
 
+def phase_divisor(phase: Path, train_cache: Path) -> tuple[np.ndarray, list[Path], list[Path]]:
+    """The adult stage divisor of a phase, and the recordings it was computed from.
+
+    The training stage mix is that of all the phase's training sets and the adult stage mix that of
+    its SleepAccel and Wearanize+ training sets (``ADULT_REFERENCE_PREFIXES``); ``train_cache``
+    holds ``12Hz_log_PSD_aligned/`` with their links. Returns the divisor, the training
+    recordings and the adult recordings.
+    """
+    from arcasleep_bidoze.adult import adult_stage_divisor, stage_counts
+
+    cv = json.loads((phase / "config/cv.json").read_text())
+    training = json.loads((phase / "config/training.json").read_text())
+    train = discover_cached_subjects(cv["train_sets"], Path(train_cache) / CACHE_NAME)
+    train_paths = [s.path for subjects in train.values() for s in subjects]
+    adult_paths = [
+        s.path for name, subjects in train.items() if name.startswith(ADULT_REFERENCE_PREFIXES)
+        for s in subjects
+    ]
+    if not adult_paths:
+        raise ValueError(f"{phase} trains on no SleepAccel or Wearanize+ recording")
+
+    def counts(paths: list[Path]) -> np.ndarray:
+        return np.array([stage_counts(np.load(p)["y"]) for p in paths])
+
+    divisor = adult_stage_divisor(
+        counts(train_paths), counts(adult_paths), training["balance_beta"], training["batch_size"]
+    )
+    return divisor, train_paths, adult_paths
+
+
+def checkpoint_epoch(phase: Path, checkpoint: Path) -> int | None:
+    """The epoch a checkpoint's weights are from, read from the phase's ``training.log``.
+
+    The log gives ``best eval kappa <κ> at epoch <n>`` and then ``saved <checkpoint>``;
+    ``None`` when the log does not.
+    """
+    log = Path(phase) / "training.log"
+    if not log.is_file():
+        return None
+    best = None
+    for line in log.read_text().splitlines():
+        found = re.search(r"best eval kappa \S+ at epoch (\d+)", line)
+        if found:
+            best = int(found.group(1))
+        elif line.strip().startswith("saved ") and Path(line.split()[-1]).name == checkpoint.name:
+            return best
+    return None
+
+
 def build_release(
     release: str,
     final: Path,
@@ -222,67 +277,194 @@ def build_release(
     version: str,
     *,
     train_cache: Path | None = None,
-    cache_root: Path | None = None,
     seeds: Sequence[int] | None = None,
 ) -> Path:
     """The release bundle of a finished ``final`` phase directory.
 
     - pediatric: one release bundle of the phase's checkpoint.
-    - adult: a release bundle per seed checkpoint in ``model_outputs/`` and ``composite.json``;
-      the divisor comes from the phase's training nights (``train_cache`` holds
-      ``12Hz_log_PSD_aligned/`` with their links) and
-      the nights of BIDSleep under ``cache_root``, the adult reference. With ``seeds`` (fit
+    - adult: one flat bundle of the seed checkpoints in ``model_outputs/``: their weights in
+      one ``model.safetensors`` (``member<k>/…``) and the adult stage divisor in
+      ``config.json``. The divisor comes from the phase's training nights (``phase_divisor``;
+      ``train_cache`` holds ``12Hz_log_PSD_aligned/`` with their links). With ``seeds`` (fit
       seeds), only those seeds' checkpoints are bundled; the divisor is computed from the
       training labels alone, so it is the same for any subset of the phase's seeds.
 
     The bundle's card is the generated one, marked pending review.
     """
     from arcasleep.artifacts.publish import build_release_bundle
+    from arcasleep.divisor import LIGHT, REM, SLEEP_STAGE_NAMES
 
     final, output = Path(final), Path(output)
     if release == "pediatric":
         return build_release_bundle(final, output, version=version, family="bidoze", overwrite=True).directory
     if release != "adult":
         raise ValueError(f"release must be one of {RELEASES}, got {release!r}")
-    if train_cache is None or cache_root is None:
-        raise ValueError("the adult bundle needs the training cache and the cache root")
-    from arcasleep_bidoze.adult import adult_stage_divisor, build_adult_bundle, stage_counts
+    if train_cache is None:
+        raise ValueError("the adult bundle needs the training cache")
 
     cv = json.loads((final / "config/cv.json").read_text())
-    training = json.loads((final / "config/training.json").read_text())
-    train = discover_cached_subjects(cv["train_sets"], Path(train_cache) / CACHE_NAME)
-    train_paths = [s.path for subjects in train.values() for s in subjects]
-    bidsleep = discover_cached_subjects(["bidsleep"], Path(cache_root) / CACHE_NAME)["bidsleep"]
-
-    def counts(paths: list[Path]) -> np.ndarray:
-        return np.array([stage_counts(np.load(p)["y"]) for p in paths])
-
-    divisor = adult_stage_divisor(
-        counts(train_paths), counts([s.path for s in bidsleep]),
-        training["balance_beta"], training["batch_size"],
-    )
-    staging = output.parent / f"{output.name}-seeds"
+    divisor, train_paths, reference_nights = phase_divisor(final, train_cache)
     checkpoints = [
         p for p in sorted((final / "model_outputs").glob("*.pisces"))
         if seeds is None or checkpoint_seed(p) in seeds
     ]
     if not checkpoints:
         raise ValueError(f"no checkpoint in {final / 'model_outputs'} has a seed in {list(seeds)}")
-    seed_bundles = [
-        build_release_bundle(final, staging / checkpoint.stem, version=version, checkpoint=checkpoint,
-                             family="bidoze", overwrite=True).directory
-        for checkpoint in checkpoints
-    ]
-    return build_adult_bundle(
-        output, seed_bundles, divisor, version=version, overwrite=True,
-        provenance={
+    return build_release_bundle(
+        final, output, version=version, family="bidoze", overwrite=True,
+        members=[
+            {"checkpoint": p, "seed": checkpoint_seed(p), "epoch": checkpoint_epoch(final, p)}
+            for p in checkpoints
+        ],
+        stage_divisor=dict(zip(SLEEP_STAGE_NAMES, list(divisor)[LIGHT : REM + 1], strict=True)),
+        extra_provenance={
+            "version": version,
             "train_sets": cv["train_sets"],
             "training_nights": len(train_paths),
-            "adult_reference": "bidsleep",
-            "adult_reference_nights": len(bidsleep),
-            "seed_checkpoints": [p.name for p in seed_bundles],
+            "stage_divisor_reference_sets": [n for n in cv["train_sets"] if n.startswith(ADULT_REFERENCE_PREFIXES)],
+            "stage_divisor_reference_nights": len(reference_nights),
         },
+    ).directory
+
+
+#: Cohorts of the adult card: name, and the index in a fold's ``test_sets`` where the fold
+#: that scores it holds it out (SleepAccel, then Wearanize+).
+ADULT_CV_COHORTS = {"SleepAccel": 0, "Wearanize+": 1}
+ADULT_FINAL_COHORT = "SleepAccel-Clinical"
+CARD_METRICS = ("kappa_sleep_wake", "kappa_4stage", "sleep_sensitivity", "wake_specificity",
+                "tst_error_minutes", "waso_error_minutes", "light_mape", "deep_mape", "rem_mape")
+
+
+def load_scored_recording(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """``(PSG stage per epoch, 5-way probabilities)`` of a recording's scored-prediction CSV.
+
+    The stage probabilities are scaled by 1 − the gap head's, which is the 5th column;
+    PSG is -1 where the epoch is not scored.
+    """
+    import pandas as pd
+
+    stages = ["wake", "light", "deep", "rem"]
+    d = pd.read_csv(path, dtype={"psg": str})
+    gap = d["gap_head"].to_numpy(float)
+    proba = np.column_stack([d[stages].to_numpy(float) * (1.0 - gap)[:, None], gap])
+    y = d["psg"].map({s: i for i, s in enumerate(stages)}).fillna(-1).astype(int).to_numpy()
+    return y, proba
+
+
+def seed_mean_recordings(
+    phase: Path, dataset: str, seeds: Sequence[int] | None = None
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Each recording of ``dataset`` the phase scored: PSG, and the mean output over its seeds.
+
+    ``seeds`` are fit seeds (all the phase's when ``None``); a seed's predictions are in the
+    directory ``<phase name>_seed_<seed>``.
+    """
+    directories = [
+        d for d in sorted((phase / "predictions").iterdir())
+        if d.is_dir() and (seeds is None or checkpoint_seed(d) in seeds)
+    ]
+    if not directories:
+        raise FileNotFoundError(f"{phase} holds no predictions for seeds {seeds}")
+    scored = [
+        {f.stem[len(dataset) + 1:]: load_scored_recording(f) for f in directory.glob(f"{dataset}_*.csv")}
+        for directory in directories
+    ]
+    return {
+        sid: (y, np.mean([s[sid][1] for s in scored], axis=0)) for sid, (y, _) in scored[0].items()
+    }
+
+
+def bundle_seeds(bundle: Path) -> list[int]:
+    """The fit seeds of a flat bundle's members, from its ``provenance.json``."""
+    members = json.loads((Path(bundle) / "provenance.json").read_text()).get("members") or []
+    seeds = [m["seed"] for m in members]
+    if not seeds or any(seed is None for seed in seeds):
+        raise ValueError(f"{bundle} does not record its members' seeds")
+    return seeds
+
+
+def adult_card_metrics(
+    training: Path,
+    bundle: Path,
+    output: Path,
+    *,
+    train_cache: Path,
+) -> Path:
+    """Score the adult release as its bundle scores recordings; writes the card's summary CSV.
+
+    ``training`` holds the phases ``fold0`` to ``fold<n>`` and ``final``. Each recording is
+    scored by the mean output over the bundle's members (the seeds in its ``provenance.json``)
+    in one phase, as ``Predictor`` does: that output decides wake or sleep, and light/deep/REM
+    are divided by the phase's divisor (``hybrid_calls``).
+
+    - SleepAccel and Wearanize+: each recording is scored by the fold phase that held it out,
+      with that phase's divisor (``phase_divisor``).
+    - SleepAccel-Clinical: the ``final`` phase, with the divisor in the bundle's ``config.json``.
+
+    ``output`` has the columns ``metric, cohort, n, mean, ...`` of ``arcasleep summarize``; a
+    cohort's n is its recordings.
+    """
+    import tempfile
+
+    import pandas as pd
+
+    import arcasleep.evaluation  # noqa: F401  (registers the metrics)
+    from arcasleep.reporting.summary import build_cohorts, discover_phases, summary_table
+    from arcasleep.training.config import load_metrics_config
+    from arcasleep.divisor import divisor_vector, hybrid_calls
+    from pisces_lite.metrics.logger import MetricsLogger
+
+    training, bundle = Path(training), Path(bundle)
+    seeds = bundle_seeds(bundle)
+    final = training / "final"
+    metrics_path = final / "config/metrics_effective.json"
+    if not metrics_path.is_file():
+        metrics_path = final / "config/metrics.json"
+    config, _ = load_metrics_config(metrics_path)
+    wanted = [m for m in CARD_METRICS if m in config.metrics]
+    logger = MetricsLogger(config)
+
+    recordings: dict[str, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+    folds = sorted(training.glob("fold[0-9]*"), key=lambda p: int(p.name[len("fold"):]))
+    if not folds:
+        raise FileNotFoundError(f"{training} holds no fold phase")
+    for fold in folds:
+        divisor, _, _ = phase_divisor(fold, train_cache)
+        test_sets = json.loads((fold / "config/cv.json").read_text())["test_sets"]
+        for cohort, index in ADULT_CV_COHORTS.items():
+            for sid, (y, mean) in seed_mean_recordings(fold, test_sets[index], seeds).items():
+                recordings.setdefault(cohort, {})[sid] = (y, mean, hybrid_calls(mean, mean, divisor))
+    divisor = divisor_vector(json.loads((bundle / "config.json").read_text())["stage_divisor"])
+    for sid, (y, mean) in seed_mean_recordings(final, ADULT_FINAL_COHORT, seeds).items():
+        recordings.setdefault(ADULT_FINAL_COHORT, {})[sid] = (y, mean, hybrid_calls(mean, mean, divisor))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = Path(tmp) / "cv_results_4_stages.csv"
+        for cohort, subjects in recordings.items():
+            for sid, (y, mean, calls) in subjects.items():
+                logger.record(csv_path, y_true=y, y_pred_proba=mean, y_pred=calls, run_id="", fold="",
+                              epoch=0, subject_id=sid, dataset=cohort, training_dataset="")
+        frame = pd.read_csv(csv_path)
+    from arcasleep.reporting.summary import to_subjects
+
+    cohorts = {c: to_subjects(g) for c, g in frame.groupby("dataset", sort=False)}
+    table = summary_table(cohorts)
+    table = table[table["metric"].isin(wanted)]
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(output, index=False)
+    return Path(output)
+
+
+def write_adult_card(bundle: Path, metrics_summary: Path, info: Path) -> Path:
+    """The bundle's generated README.md, from its scores and the release-info TOML."""
+    from arcasleep.artifacts.publish import verify_bundle, write_bundle_card
+
+    readme = write_bundle_card(
+        bundle, metrics_summary=metrics_summary, info=info, grid_label="5-fold CV + hold-out",
+        generated_by="`python -m arcasleep_bidoze.release card`",
     )
+    verify_bundle(bundle)
+    return readme
 
 
 def run_release(
@@ -355,9 +537,21 @@ def main(argv: list[str] | None = None) -> int:
     bundle.add_argument("output", type=Path)
     bundle.add_argument("version")
     bundle.add_argument("--train-cache", type=Path)
-    bundle.add_argument("--cache-root", type=Path)
     bundle.add_argument("--seeds", type=int, nargs="+", help="adult only: bundle only these fit seeds "
-                        "(one seed gives a single-model bundle)")
+                        "(default: every seed of the phase)")
+    card = commands.add_parser(
+        "card", help="score a finished adult release and write the bundle's README.md"
+    )
+    card.add_argument("release", choices=("adult",))
+    card.add_argument("training", type=Path, help="the training directory holding fold0 to fold4 and final")
+    card.add_argument("bundle", type=Path, help="the bundle written by `bundle`")
+    card.add_argument("--seeds", type=int, nargs="+",
+                      help="the bundle's member seeds, as given to `bundle` (default: read from the bundle)")
+    card.add_argument("--info", type=Path, required=True, help="release-info TOML, e.g. cards/bidoze-adult.toml")
+    card.add_argument("--train-cache", type=Path, required=True,
+                      help="the setup cache of the phases (<setup dir>/cache)")
+    card.add_argument("--summary-out", type=Path,
+                      help="where to write the scores (default: <bundle dir>-metrics-summary.csv beside the bundle)")
     args = parser.parse_args(argv)
     if args.command == "run":
         return run_release(
@@ -367,11 +561,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "pediatric-recipe":
         print(*pediatric_recipe(args.weaver_set))
+    elif args.command == "card":
+        if args.seeds is not None and sorted(args.seeds) != sorted(bundle_seeds(args.bundle)):
+            raise SystemExit(f"{args.bundle} holds seeds {bundle_seeds(args.bundle)}, not {args.seeds}")
+        default_out = args.bundle.parent / f"{args.bundle.name}-metrics-summary.csv"
+        summary = adult_card_metrics(args.training, args.bundle, args.summary_out or default_out,
+                                     train_cache=args.train_cache)
+        print(write_adult_card(args.bundle, summary, args.info))
     elif args.command == "prepare-adult":
         prepare_adult(args.setup, args.cache_root, args.weaver_set, args.config_dir)
     else:
         print(build_release(args.release, args.final, args.output, args.version,
-                            train_cache=args.train_cache, cache_root=args.cache_root, seeds=args.seeds))
+                            train_cache=args.train_cache, seeds=args.seeds))
     return 0
 
 

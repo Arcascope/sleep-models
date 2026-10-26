@@ -1,0 +1,290 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1490" height="724" viewBox="0 0 1490 724">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+</marker>
+</defs>
+<rect width="1490" height="724" fill="#ffffff"/>
+<g transform="translate(0,-352)">
+<text x="24.0" y="384.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="20" fill="#0f172a" font-weight="900" text-anchor="start">a</text>
+<text x="52.0" y="384.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start">F2: one network of three BiDoze strands and a fusion transformer</text>
+<text x="1466.0" y="384.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="15" fill="#475569" font-weight="400" text-anchor="end">2,196,792 weights</text>
+<line x1="24" y1="394" x2="1466" y2="394" stroke="#e2e8f0" stroke-width="1.5"/>
+<rect x="220.0" y="414.0" width="560.0" height="272.0" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="236.0" y="436.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="14" fill="#0f172a" font-weight="700" text-anchor="start">Strand × 3: a BiDoze at width 112</text>
+<text x="764.0" y="436.0" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#475569" font-weight="400" text-anchor="end">631,740 weights each</text>
+<text x="236.0" y="455.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="start">conv 368,480 · streams 2 × 109,144 · concat 12,880 · gate 25,536 · hidden 6,328 · unused head 228</text>
+<rect x="236.0" y="471.0" width="96.0" height="44.0" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="284.0" y="489.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#1d4ed8" font-weight="700" text-anchor="middle">Conv bank</text>
+<text x="284.0" y="505.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">4 × 28 → 112</text>
+<rect x="355.5" y="463.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="353.0" y="466.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="350.5" y="468.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="348.0" y="471.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+<text x="356.0" y="486.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#6d28d9" font-weight="700" text-anchor="start">Forward</text>
+<circle cx="424.0" cy="481.5" r="2" fill="#6d28d9"/>
+<circle cx="430.0" cy="481.5" r="2" fill="#6d28d9"/>
+<circle cx="436.0" cy="481.5" r="2" fill="#6d28d9"/>
+<circle cx="442.0" cy="481.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="481.5" r="2" fill="#6d28d9"/>
+<circle cx="448.0" cy="481.5" r="2" fill="#e2e8f0"/>
+<circle cx="454.0" cy="481.5" r="2" fill="#e2e8f0"/>
+<circle cx="460.0" cy="481.5" r="2" fill="#e2e8f0"/>
+<rect x="355.5" y="501.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="353.0" y="499.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="350.5" y="496.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="348.0" y="494.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.5"/>
+<text x="356.0" y="509.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#be185d" font-weight="700" text-anchor="start">Reverse</text>
+<circle cx="424.0" cy="504.5" r="2" fill="#e2e8f0"/>
+<circle cx="430.0" cy="504.5" r="2" fill="#e2e8f0"/>
+<circle cx="436.0" cy="504.5" r="2" fill="#e2e8f0"/>
+<circle cx="442.0" cy="504.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="504.5" r="2" fill="#be185d"/>
+<circle cx="448.0" cy="504.5" r="2" fill="#be185d"/>
+<circle cx="454.0" cy="504.5" r="2" fill="#be185d"/>
+<circle cx="460.0" cy="504.5" r="2" fill="#be185d"/>
+<path d="M332.0,493.0 C340.0,493.0 340.0,481.5 348.0,481.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M332.0,493.0 C340.0,493.0 340.0,504.5 348.0,504.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="492.0" y="471.0" width="64.0" height="44.0" rx="8" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.5"/>
+<text x="524.0" y="489.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f766e" font-weight="700" text-anchor="middle">Concat</text>
+<text x="524.0" y="505.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">→ 112</text>
+<path d="M483.5,474.0 C487.8,474.0 487.8,493.0 492.0,493.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M483.5,512.0 C487.8,512.0 487.8,493.0 492.0,493.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="570.0" y="471.0" width="60.0" height="44.0" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+<text x="600.0" y="489.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#15803d" font-weight="700" text-anchor="middle">Gate</text>
+<text x="600.0" y="505.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">112</text>
+<path d="M556.0,493.0 H570.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="644.0" y="471.0" width="88.0" height="44.0" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="1.5"/>
+<text x="688.0" y="489.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#c2410c" font-weight="700" text-anchor="middle">Hidden</text>
+<text x="688.0" y="505.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">56 per epoch</text>
+<path d="M630.0,493.0 H644.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="228.0" y="497.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#94a3b8" font-weight="700" text-anchor="middle">1</text>
+<rect x="236.0" y="543.0" width="96.0" height="44.0" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="284.0" y="561.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#1d4ed8" font-weight="700" text-anchor="middle">Conv bank</text>
+<text x="284.0" y="577.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">4 × 28 → 112</text>
+<rect x="355.5" y="535.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="353.0" y="538.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="350.5" y="540.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="348.0" y="543.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+<text x="356.0" y="558.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#6d28d9" font-weight="700" text-anchor="start">Forward</text>
+<circle cx="424.0" cy="553.5" r="2" fill="#6d28d9"/>
+<circle cx="430.0" cy="553.5" r="2" fill="#6d28d9"/>
+<circle cx="436.0" cy="553.5" r="2" fill="#6d28d9"/>
+<circle cx="442.0" cy="553.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="553.5" r="2" fill="#6d28d9"/>
+<circle cx="448.0" cy="553.5" r="2" fill="#e2e8f0"/>
+<circle cx="454.0" cy="553.5" r="2" fill="#e2e8f0"/>
+<circle cx="460.0" cy="553.5" r="2" fill="#e2e8f0"/>
+<rect x="355.5" y="573.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="353.0" y="571.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="350.5" y="568.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="348.0" y="566.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.5"/>
+<text x="356.0" y="581.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#be185d" font-weight="700" text-anchor="start">Reverse</text>
+<circle cx="424.0" cy="576.5" r="2" fill="#e2e8f0"/>
+<circle cx="430.0" cy="576.5" r="2" fill="#e2e8f0"/>
+<circle cx="436.0" cy="576.5" r="2" fill="#e2e8f0"/>
+<circle cx="442.0" cy="576.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="576.5" r="2" fill="#be185d"/>
+<circle cx="448.0" cy="576.5" r="2" fill="#be185d"/>
+<circle cx="454.0" cy="576.5" r="2" fill="#be185d"/>
+<circle cx="460.0" cy="576.5" r="2" fill="#be185d"/>
+<path d="M332.0,565.0 C340.0,565.0 340.0,553.5 348.0,553.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M332.0,565.0 C340.0,565.0 340.0,576.5 348.0,576.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="492.0" y="543.0" width="64.0" height="44.0" rx="8" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.5"/>
+<text x="524.0" y="561.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f766e" font-weight="700" text-anchor="middle">Concat</text>
+<text x="524.0" y="577.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">→ 112</text>
+<path d="M483.5,546.0 C487.8,546.0 487.8,565.0 492.0,565.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M483.5,584.0 C487.8,584.0 487.8,565.0 492.0,565.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="570.0" y="543.0" width="60.0" height="44.0" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+<text x="600.0" y="561.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#15803d" font-weight="700" text-anchor="middle">Gate</text>
+<text x="600.0" y="577.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">112</text>
+<path d="M556.0,565.0 H570.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="644.0" y="543.0" width="88.0" height="44.0" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="1.5"/>
+<text x="688.0" y="561.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#c2410c" font-weight="700" text-anchor="middle">Hidden</text>
+<text x="688.0" y="577.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">56 per epoch</text>
+<path d="M630.0,565.0 H644.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="228.0" y="569.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#94a3b8" font-weight="700" text-anchor="middle">2</text>
+<rect x="236.0" y="615.0" width="96.0" height="44.0" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.5"/>
+<text x="284.0" y="633.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#1d4ed8" font-weight="700" text-anchor="middle">Conv bank</text>
+<text x="284.0" y="649.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">4 × 28 → 112</text>
+<rect x="355.5" y="607.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="353.0" y="610.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="350.5" y="612.5" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.0"/>
+<rect x="348.0" y="615.0" width="128.0" height="21.0" rx="5" fill="#ede9fe" stroke="#6d28d9" stroke-width="1.5"/>
+<text x="356.0" y="630.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#6d28d9" font-weight="700" text-anchor="start">Forward</text>
+<circle cx="424.0" cy="625.5" r="2" fill="#6d28d9"/>
+<circle cx="430.0" cy="625.5" r="2" fill="#6d28d9"/>
+<circle cx="436.0" cy="625.5" r="2" fill="#6d28d9"/>
+<circle cx="442.0" cy="625.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="625.5" r="2" fill="#6d28d9"/>
+<circle cx="448.0" cy="625.5" r="2" fill="#e2e8f0"/>
+<circle cx="454.0" cy="625.5" r="2" fill="#e2e8f0"/>
+<circle cx="460.0" cy="625.5" r="2" fill="#e2e8f0"/>
+<rect x="355.5" y="645.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="353.0" y="643.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="350.5" y="640.5" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.0"/>
+<rect x="348.0" y="638.0" width="128.0" height="21.0" rx="5" fill="#fce7f3" stroke="#be185d" stroke-width="1.5"/>
+<text x="356.0" y="653.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#be185d" font-weight="700" text-anchor="start">Reverse</text>
+<circle cx="424.0" cy="648.5" r="2" fill="#e2e8f0"/>
+<circle cx="430.0" cy="648.5" r="2" fill="#e2e8f0"/>
+<circle cx="436.0" cy="648.5" r="2" fill="#e2e8f0"/>
+<circle cx="442.0" cy="648.5" r="3.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="442.0" cy="648.5" r="2" fill="#be185d"/>
+<circle cx="448.0" cy="648.5" r="2" fill="#be185d"/>
+<circle cx="454.0" cy="648.5" r="2" fill="#be185d"/>
+<circle cx="460.0" cy="648.5" r="2" fill="#be185d"/>
+<path d="M332.0,637.0 C340.0,637.0 340.0,625.5 348.0,625.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M332.0,637.0 C340.0,637.0 340.0,648.5 348.0,648.5" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="492.0" y="615.0" width="64.0" height="44.0" rx="8" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.5"/>
+<text x="524.0" y="633.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f766e" font-weight="700" text-anchor="middle">Concat</text>
+<text x="524.0" y="649.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">→ 112</text>
+<path d="M483.5,618.0 C487.8,618.0 487.8,637.0 492.0,637.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M483.5,656.0 C487.8,656.0 487.8,637.0 492.0,637.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="570.0" y="615.0" width="60.0" height="44.0" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+<text x="600.0" y="633.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#15803d" font-weight="700" text-anchor="middle">Gate</text>
+<text x="600.0" y="649.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">112</text>
+<path d="M556.0,637.0 H570.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="644.0" y="615.0" width="88.0" height="44.0" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="1.5"/>
+<text x="688.0" y="633.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#c2410c" font-weight="700" text-anchor="middle">Hidden</text>
+<text x="688.0" y="649.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="middle">56 per epoch</text>
+<path d="M630.0,637.0 H644.0" fill="none" stroke="#475569" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="228.0" y="641.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#94a3b8" font-weight="700" text-anchor="middle">3</text>
+<rect x="24.0" y="502.0" width="160.0" height="96.0" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+<text x="104.0" y="524.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="14" fill="#475569" font-weight="700" text-anchor="middle">Input</text>
+<text x="104.0" y="543.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">per 30-s epoch</text>
+<text x="104.0" y="559.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">61 rows × 2 channels</text>
+<text x="104.0" y="587.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle" font-style="italic">whole night</text>
+<path d="M184.0,550.0 C210.0,550.0 210.0,493.0 236.0,493.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M184.0,550.0 C210.0,550.0 210.0,565.0 236.0,565.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M184.0,550.0 C210.0,550.0 210.0,637.0 236.0,637.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M732,483.0 H776" fill="none" stroke="#c2410c" stroke-width="1.2"/>
+<path d="M732,555.0 H776" fill="none" stroke="#c2410c" stroke-width="1.2"/>
+<path d="M732,627.0 H776" fill="none" stroke="#c2410c" stroke-width="1.2"/>
+<text x="24.0" y="718.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="start">Weights to scale</text>
+<rect x="24.0" y="726.0" width="241.8" height="18.0" rx="2" fill="#dbeafe" stroke="#1d4ed8" stroke-width="0.8"/>
+<text x="144.9" y="739.5" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#1d4ed8" font-weight="400" text-anchor="middle">strand 1</text>
+<rect x="265.8" y="726.0" width="71.6" height="18.0" rx="2" fill="#ede9fe" stroke="#6d28d9" stroke-width="0.8"/>
+<rect x="337.4" y="726.0" width="71.6" height="18.0" rx="2" fill="#fce7f3" stroke="#be185d" stroke-width="0.8"/>
+<rect x="409.1" y="726.0" width="25.3" height="18.0" rx="2" fill="#dcfce7" stroke="#15803d" stroke-width="0.8"/>
+<rect x="434.2" y="726.0" width="4.3" height="18.0" rx="2" fill="#ffedd5" stroke="#c2410c" stroke-width="0.8"/>
+<rect x="438.6" y="726.0" width="241.8" height="18.0" rx="2" fill="#dbeafe" stroke="#1d4ed8" stroke-width="0.8"/>
+<text x="559.5" y="739.5" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#1d4ed8" font-weight="400" text-anchor="middle">strand 2</text>
+<rect x="680.3" y="726.0" width="71.6" height="18.0" rx="2" fill="#ede9fe" stroke="#6d28d9" stroke-width="0.8"/>
+<rect x="752.0" y="726.0" width="71.6" height="18.0" rx="2" fill="#fce7f3" stroke="#be185d" stroke-width="0.8"/>
+<rect x="823.6" y="726.0" width="25.3" height="18.0" rx="2" fill="#dcfce7" stroke="#15803d" stroke-width="0.8"/>
+<rect x="848.8" y="726.0" width="4.3" height="18.0" rx="2" fill="#ffedd5" stroke="#c2410c" stroke-width="0.8"/>
+<rect x="853.1" y="726.0" width="241.8" height="18.0" rx="2" fill="#dbeafe" stroke="#1d4ed8" stroke-width="0.8"/>
+<text x="974.0" y="739.5" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#1d4ed8" font-weight="400" text-anchor="middle">strand 3</text>
+<rect x="1094.9" y="726.0" width="71.6" height="18.0" rx="2" fill="#ede9fe" stroke="#6d28d9" stroke-width="0.8"/>
+<rect x="1166.5" y="726.0" width="71.6" height="18.0" rx="2" fill="#fce7f3" stroke="#be185d" stroke-width="0.8"/>
+<rect x="1238.2" y="726.0" width="25.3" height="18.0" rx="2" fill="#dcfce7" stroke="#15803d" stroke-width="0.8"/>
+<rect x="1263.3" y="726.0" width="4.3" height="18.0" rx="2" fill="#ffedd5" stroke="#c2410c" stroke-width="0.8"/>
+<rect x="1267.7" y="726.0" width="23.5" height="18.0" rx="2" fill="#fef9c3" stroke="#a16207" stroke-width="0.8"/>
+<rect x="1291.1" y="726.0" width="173.9" height="18.0" rx="2" fill="#fde68a" stroke="#b45309" stroke-width="0.8"/>
+<text x="1378.1" y="739.5" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#b45309" font-weight="400" text-anchor="middle">fusion</text>
+<g transform="translate(-40,0)">
+<rect x="850.0" y="490.0" width="150.0" height="120.0" rx="8" fill="#fef9c3" stroke="#a16207" stroke-width="1.5"/>
+<text x="925.0" y="512.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="14" fill="#a16207" font-weight="700" text-anchor="middle">Project, mix</text>
+<text x="925.0" y="531.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">each strand 56 → 64</text>
+<text x="925.0" y="547.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">+ strand embedding</text>
+<text x="925.0" y="563.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">concat 192 → 128</text>
+<text x="925.0" y="599.0" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#a16207" font-weight="400" text-anchor="middle">35,840</text>
+<path d="M816.0,483.0 C833.0,483.0 833.0,520.0 850.0,520.0" fill="none" stroke="#c2410c" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M816.0,555.0 C833.0,555.0 833.0,550.0 850.0,550.0" fill="none" stroke="#c2410c" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M816.0,627.0 C833.0,627.0 833.0,580.0 850.0,580.0" fill="none" stroke="#c2410c" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="1034.0" y="484.0" width="204.0" height="120.0" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.0"/>
+<rect x="1028.0" y="490.0" width="204.0" height="120.0" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.5"/>
+<text x="1130.0" y="512.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="14" fill="#b45309" font-weight="700" text-anchor="middle">Fusion transformer</text>
+<text x="1130.0" y="531.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">2 layers · width 128 · 4 heads</text>
+<text x="1130.0" y="547.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">full attention, both ways</text>
+<circle cx="1103.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1112.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1121.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1130.0" cy="568.0" r="4.5" fill="none" stroke="#0f172a" stroke-width="1.2"/>
+<circle cx="1130.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1139.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1148.0" cy="568.0" r="3" fill="#b45309"/>
+<circle cx="1157.0" cy="568.0" r="3" fill="#b45309"/>
+<text x="1130.0" y="599.0" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#b45309" font-weight="400" text-anchor="middle">264,960</text>
+<path d="M1000.0,550.0 H1028.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="1260.0" y="490.0" width="106.0" height="120.0" rx="8" fill="#ffedd5" stroke="#c2410c" stroke-width="1.5"/>
+<text x="1313.0" y="512.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="14" fill="#c2410c" font-weight="700" text-anchor="middle">Head</text>
+<text x="1313.0" y="531.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">Dense 128 → 4</text>
+<text x="1313.0" y="547.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">gap from</text>
+<text x="1313.0" y="563.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">the gap row</text>
+<text x="1313.0" y="599.0" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#c2410c" font-weight="400" text-anchor="middle">772</text>
+<path d="M1238.0,550.0 H1260.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M1366.0,550.0 H1394.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="1394.0" y="492.0" width="112.0" height="116.0" rx="8" fill="#ffffff" stroke="#0f172a" stroke-width="1.2"/>
+<text x="1450.0" y="512.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">per epoch</text>
+<rect x="1408.0" y="518.0" width="12.0" height="12.0" rx="2" fill="#f5a623" stroke="none" stroke-width="0"/>
+<text x="1426.0" y="528.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start">wake</text>
+<rect x="1408.0" y="535.0" width="12.0" height="12.0" rx="2" fill="#5b8def" stroke="none" stroke-width="0"/>
+<text x="1426.0" y="545.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start">light</text>
+<rect x="1408.0" y="552.0" width="12.0" height="12.0" rx="2" fill="#2e3a8c" stroke="none" stroke-width="0"/>
+<text x="1426.0" y="562.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start">deep</text>
+<rect x="1408.0" y="569.0" width="12.0" height="12.0" rx="2" fill="#2bc4d6" stroke="none" stroke-width="0"/>
+<text x="1426.0" y="579.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start">REM</text>
+<rect x="1408.0" y="586.0" width="12.0" height="12.0" rx="2" fill="#94a3b8" stroke="none" stroke-width="0"/>
+<text x="1426.0" y="596.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start">gap</text>
+</g>
+<text x="24" y="772" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="start">Trained in one fit with a class-balanced cross-entropy on the fusion head&#x27;s output.</text>
+</g>
+<text x="24" y="440" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="start">Dots: the epochs each epoch attends to (ringed: the epoch itself). Stacked cards: one per transformer layer.</text>
+<text x="24" y="480" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="20" fill="#0f172a" font-weight="900" text-anchor="start">b</text>
+<text x="52" y="480" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="20" fill="#0f172a" font-weight="700" text-anchor="start">The two adult releases</text>
+<line x1="24" y1="490" x2="1466" y2="490" stroke="#e2e8f0" stroke-width="1.5"/>
+<text x="24" y="522" font-family="'DejaVu Sans Mono', monospace" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">arcasleep-bidoze-adult-small</text>
+<text x="24" y="542" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#475569" font-weight="400" text-anchor="start">2,196,792 weights</text>
+<rect x="24" y="582" width="160" height="44" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+<text x="104.0" y="601.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#b45309" font-weight="700" text-anchor="middle">one F2 network</text>
+<text x="104.0" y="617.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#b45309" font-weight="700" text-anchor="middle">(seed 0)</text>
+<path d="M184,604 H224" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="224" y="582" width="130" height="44" rx="8" fill="#ffffff" stroke="#0f172a" stroke-width="1.2"/>
+<text x="289.0" y="601.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="middle">stage divisor</text>
+<text x="289.0" y="617.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">(no weights)</text>
+<path d="M354,604 H384" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="392" y="560" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="start">per epoch</text>
+<rect x="392" y="572" width="10" height="10" rx="2" fill="#f5a623"/>
+<text x="408" y="581" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">wake</text>
+<rect x="392" y="587" width="10" height="10" rx="2" fill="#5b8def"/>
+<text x="408" y="596" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">light</text>
+<rect x="392" y="602" width="10" height="10" rx="2" fill="#2e3a8c"/>
+<text x="408" y="611" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">deep</text>
+<rect x="392" y="617" width="10" height="10" rx="2" fill="#2bc4d6"/>
+<text x="408" y="626" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">REM</text>
+<rect x="392" y="632" width="10" height="10" rx="2" fill="#94a3b8"/>
+<text x="408" y="641" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">gap: no data for this epoch</text>
+<text x="760" y="522" font-family="'DejaVu Sans Mono', monospace" font-size="16" fill="#0f172a" font-weight="700" text-anchor="start">arcasleep-bidoze-adult</text>
+<text x="760" y="542" font-family="'DejaVu Sans Mono', monospace" font-size="12" fill="#475569" font-weight="400" text-anchor="start">3 × 2,196,792 = 6,590,376 weights</text>
+<rect x="760" y="557" width="160" height="26" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+<text x="840.0" y="574.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#b45309" font-weight="700" text-anchor="middle">F2, seed 0</text>
+<rect x="760" y="591" width="160" height="26" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+<text x="840.0" y="608.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#b45309" font-weight="700" text-anchor="middle">F2, seed 1</text>
+<rect x="760" y="625" width="160" height="26" rx="8" fill="#fde68a" stroke="#b45309" stroke-width="1.2"/>
+<text x="840.0" y="642.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#b45309" font-weight="700" text-anchor="middle">F2, seed 2</text>
+<path d="M920,570 C940,570 940,604 960,604" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M920,604 C940,604 940,604 960,604" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M920,638 C940,638 940,604 960,604" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="960" y="582" width="128" height="44" rx="8" fill="#ffffff" stroke="#0f172a" stroke-width="1.2"/>
+<text x="1024.0" y="601.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="middle">mean of</text>
+<text x="1024.0" y="617.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">probabilities</text>
+<path d="M1088,604 H1120" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="1120" y="582" width="130" height="44" rx="8" fill="#ffffff" stroke="#0f172a" stroke-width="1.2"/>
+<text x="1185.0" y="601.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="middle">stage divisor</text>
+<text x="1185.0" y="617.0" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="middle">(no weights)</text>
+<path d="M1250,604 H1280" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="1288" y="560" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#475569" font-weight="400" text-anchor="start">per epoch</text>
+<rect x="1288" y="572" width="10" height="10" rx="2" fill="#f5a623"/>
+<text x="1304" y="581" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">wake</text>
+<rect x="1288" y="587" width="10" height="10" rx="2" fill="#5b8def"/>
+<text x="1304" y="596" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">light</text>
+<rect x="1288" y="602" width="10" height="10" rx="2" fill="#2e3a8c"/>
+<text x="1304" y="611" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">deep</text>
+<rect x="1288" y="617" width="10" height="10" rx="2" fill="#2bc4d6"/>
+<text x="1304" y="626" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">REM</text>
+<rect x="1288" y="632" width="10" height="10" rx="2" fill="#94a3b8"/>
+<text x="1304" y="641" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="11" fill="#0f172a" font-weight="400" text-anchor="start">gap: no data for this epoch</text>
+<line x1="735" y1="510" x2="735" y2="676" stroke="#e2e8f0" stroke-width="1.5"/>
+<text x="24" y="706" font-family="Lato, 'Liberation Sans', Arial, sans-serif" font-size="12" fill="#475569" font-weight="400" text-anchor="start">Seed 0 of the adult release is the same network as adult-small. Both use the same stage divisor.</text>
+</svg>

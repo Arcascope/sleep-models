@@ -226,7 +226,6 @@ for phase in "${PHASES[@]}"; do
     if [[ -n "$RELEASE" && "$phase" == final ]]; then
         echo "==> release bundle $RELEASE $RELEASE_VERSION"
         python -m arcasleep_bidoze.release bundle "$RELEASE" "$BASE_DIR" "$BASE_DIR/bundle" "$RELEASE_VERSION" \
-            ${REAL_CACHE_DIR:+--cache-root "$REAL_CACHE_DIR"} \
             $([[ "$RELEASE" == adult ]] && echo "--train-cache $RELEASE_SETUP/cache")
     fi
 done

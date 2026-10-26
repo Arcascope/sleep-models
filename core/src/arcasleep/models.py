@@ -32,6 +32,9 @@ DEFAULT_FAMILY = "bidoze"
 
 #: The key in a release bundle's ``config.json`` naming its family.
 MODEL_TYPE_KEY = "model_type"
+#: Tensor-name prefix of member ``k`` in the ``model.safetensors`` of a bundle whose
+#: ``config.json`` has ``members``: ``member<k>/``.
+MEMBER_PREFIX = "member"
 
 
 class ModelConfig(Protocol):
@@ -134,7 +137,11 @@ class ModelFamily(ABC):
 
     @abstractmethod
     def load_release(self, config: Mapping[str, Any], weights: Path) -> SleepModel:
-        """Load a release bundle's ``config.json`` and ``model.safetensors``."""
+        """Load a release bundle's ``config.json`` and ``model.safetensors``.
+
+        A ``members`` entry in the config marks several models in one file, which are
+        scored together as one model.
+        """
 
     @abstractmethod
     def prediction_window(self, model: SleepModel) -> tuple[int | None, int]:
@@ -143,15 +150,6 @@ class ModelFamily(ABC):
         A fixed ``context`` scores consecutive windows of that length; ``None``
         scores the whole recording, padded to a multiple of ``multiple``.
         """
-
-    def load_predictor(self, bundle_dir: Path | str):
-        """The predictor for one of this family's bundles.
-
-        A family with composite bundles returns its own predictor for them.
-        """
-        from arcasleep.predict import Predictor
-
-        return Predictor(bundle_dir)
 
     @abstractmethod
     def describe_length(self, input_shape: Sequence[int]) -> str:

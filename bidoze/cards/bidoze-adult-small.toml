@@ -1,0 +1,20 @@
+# Release info for the small adult variant (one model): `python -m arcasleep_bidoze.release card adult <training dir> <bundle dir> --info cards/bidoze-adult-small.toml --seeds 0`
+repo = "arcascope/arcasleep-bidoze-adult-small"
+card = "bidoze-adult-small.md"   # authored Markdown, relative to this file
+audience = "Adults"
+# The glance score comes from the SleepAccel cross-validation, never from the clinical holdout.
+headline = "SleepAccel"
+
+protocol = """\
+The model is the F2 network, trained once (seed 0) on all 634 \
+revised-Weaver recordings (237 children) plus SleepAccel (28 recordings) and \
+Wearanize+ (92 nights). SleepAccel and Wearanize+ were each split into five \
+fixed, participant-level folds. The SleepAccel and Wearanize+ columns pool \
+five fold models (one per fold), each scoring the fold it did not train on, with one value \
+per recording. The released model was trained on all of Weaver, SleepAccel \
+and Wearanize+ and scored on SleepAccel-Clinical, which no model trained on."""
+
+[cohorts]
+SleepAccel = "healthy adults; cross-validation"
+"Wearanize+" = "adults, recorded with an Empatica E4; cross-validation"
+SleepAccel-Clinical = "adults with sleep apnea of varying severity; scored by the released model"

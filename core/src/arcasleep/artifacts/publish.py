@@ -29,6 +29,7 @@ from typing import Any
 
 from arcasleep.artifacts.provenance import code_digest, run_provenance, sha256_file
 from arcasleep.models import (
+    MEMBER_PREFIX,
     MODEL_TYPE_KEY,
     ModelFamily,
     checkpoint_family,
@@ -38,8 +39,6 @@ from arcasleep.models import (
 
 #: Hand-edited Markdown that ships with the package (``quickstart.md``).
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-#: A composite bundle's description, in place of ``config.json``.
-COMPOSITE_FILENAME = "composite.json"
 
 
 def _template_path(name: str) -> Path:
@@ -121,6 +120,8 @@ class ReleaseInfo:
     ``audience``       the glance table's "For" row
     ``protocol``       paragraph describing how the reported numbers were produced
     ``require_cv``     the glance score must come from the pooled ``cv`` cohort
+    ``headline``       the cohort the glance score comes from, and the first one listed, in
+                       place of ``cv``; the card has no glance score when it is missing
     ``[cohorts]``      cohort name -> one-line description for the performance section
     """
 
@@ -129,10 +130,11 @@ class ReleaseInfo:
     audience: str | None = None
     protocol: str | None = None
     require_cv: bool = False
+    headline: str | None = None
     cohorts: Mapping[str, str] = field(default_factory=dict)
 
 
-_INFO_KEYS = frozenset({"repo", "card", "audience", "protocol", "require_cv", "cohorts"})
+_INFO_KEYS = frozenset({"repo", "card", "audience", "protocol", "require_cv", "headline", "cohorts"})
 
 
 def load_release_info(path: Path | str) -> ReleaseInfo:
@@ -153,6 +155,7 @@ def load_release_info(path: Path | str) -> ReleaseInfo:
         audience=raw.get("audience"),
         protocol=raw.get("protocol"),
         require_cv=bool(raw.get("require_cv", False)),
+        headline=raw.get("headline"),
         cohorts=dict(raw.get("cohorts", {})),
     )
 
@@ -375,13 +378,14 @@ def _summary_by_cohort(table: Any) -> dict[str, dict[str, dict[str, Any]]]:
     return by_cohort
 
 
-def _draw_metrics_grid(table: Any, output_dir: Path) -> str:
+def _draw_metrics_grid(table: Any, output_dir: Path, label: str | None = None) -> str:
     """Draw the summary's headline metrics into a PNG under :data:`ASSETS_DIR`.
 
     One panel per metric, cohorts across the x-axis, so the card carries the
     same figure ``arcasleep summarize`` and ``arcasleep compare`` would produce.
     Returns the bundle-relative asset path. Imported lazily: drawing needs the
     ``publish`` extra's matplotlib/pandas, which the base install does not carry.
+    ``label`` names the run in the figure; the default follows the cohorts.
     """
     try:
         from arcasleep.reporting.compare import RunSummary, draw_comparison
@@ -395,7 +399,7 @@ def _draw_metrics_grid(table: Any, output_dir: Path) -> str:
     assets_dir = output_dir / ASSETS_DIR
     assets_dir.mkdir(parents=True, exist_ok=True)
     cohorts = {str(c) for c in table["cohort"].unique()}
-    label = "5-fold CV + hold-out" if "cv" in cohorts else "hold-out"
+    label = label or ("5-fold CV + hold-out" if "cv" in cohorts else "hold-out")
     run = RunSummary(path=output_dir, label=label, table=table)
     written = draw_comparison(
         [run],
@@ -539,9 +543,9 @@ def _cohort_title(cohort: str) -> str:
     return "Cross-validation" if cohort == _CV_COHORT else cohort
 
 
-def _ordered_cohorts(summary: Mapping[str, Any]) -> list[str]:
-    """Pooled CV first -- it is the headline -- then hold-outs by name."""
-    return sorted(summary, key=lambda c: (c != _CV_COHORT, c))
+def _ordered_cohorts(summary: Mapping[str, Any], first: str = _CV_COHORT) -> list[str]:
+    """The headline cohort (pooled CV unless the release names another) first, then the rest by name."""
+    return sorted(summary, key=lambda c: (c != first, c))
 
 
 def _cohort_n(values: Mapping[str, Mapping[str, Any]]) -> str:
@@ -557,9 +561,9 @@ def _ordered_metrics(values: Mapping[str, Any], declared: Sequence[str]) -> list
     return ordered
 
 
-def _headline_table(summary: Mapping[str, Mapping[str, Any]]) -> list[str]:
+def _headline_table(summary: Mapping[str, Mapping[str, Any]], first: str = _CV_COHORT) -> list[str]:
     """Headline metrics down, cohorts across: mean with its 95% CI beneath."""
-    cohorts = _ordered_cohorts(summary)
+    cohorts = _ordered_cohorts(summary, first)
     metrics = [
         m
         for m in _METRIC_LABELS
@@ -588,18 +592,23 @@ def _headline_table(summary: Mapping[str, Mapping[str, Any]]) -> list[str]:
 
 
 def _glance_score(
-    summary: Mapping[str, Mapping[str, Any]] | None, *, require_cv: bool = False
+    summary: Mapping[str, Mapping[str, Any]] | None,
+    *,
+    require_cv: bool = False,
+    headline: str | None = None,
 ) -> str | None:
     """One line for the at-a-glance table: the headline κ on its headline cohort.
 
-    With ``require_cv`` the card must not silently substitute an external
-    holdout when the pooled cross-validation results are missing.
+    The headline cohort is ``headline`` when given, otherwise the pooled
+    cross-validation. With ``require_cv`` or ``headline`` the card must not
+    silently substitute another cohort when the headline one is missing.
     """
     if not summary:
         return None
-    if require_cv and _CV_COHORT not in summary:
+    first = headline or _CV_COHORT
+    if (require_cv or headline) and first not in summary:
         return None
-    cohort = _CV_COHORT if _CV_COHORT in summary else _ordered_cohorts(summary)[0]
+    cohort = first if first in summary else _ordered_cohorts(summary)[0]
     values = summary[cohort]
     parts = []
     for metric, name in (("kappa_sleep_wake", "sleep/wake"), ("kappa_4stage", "4-stage")):
@@ -611,12 +620,16 @@ def _glance_score(
     return (
         "Cohen's κ "
         + " · ".join(parts)
-        + f" ({_cohort_title(cohort).lower()}, {_cohort_n(values)} subjects)"
+        + f" ({_cohort_title(cohort).lower() if cohort == _CV_COHORT else cohort}, "
+        + f"{_cohort_n(values)} subjects)"
     )
 
 
 def _quickstart(
-    family: str, repo_id: str, local_dir: str, stage_names: Sequence[str]
+    family: str,
+    repo_id: str,
+    local_dir: str,
+    stage_names: Sequence[str],
 ) -> list[str]:
     """Raw accelerometer file in, per-epoch stages out: the card's main use case.
 
@@ -715,7 +728,8 @@ def _performance(
         "averaged over subjects, with 95% confidence intervals of the mean.",
         "",
     ]
-    described = [c for c in _ordered_cohorts(summary) if c in info.cohorts]
+    first = info.headline or _CV_COHORT
+    described = [c for c in _ordered_cohorts(summary, first) if c in info.cohorts]
     lines += [f"- **{_cohort_title(c)}:** {info.cohorts[c]}." for c in described]
     if described:
         lines.append("")
@@ -732,9 +746,9 @@ def _performance(
         "model or a comparison between cohorts.",
         "",
     ]
-    lines += _headline_table(summary)
+    lines += _headline_table(summary, first)
     lines.append("")
-    for cohort in _ordered_cohorts(summary):
+    for cohort in _ordered_cohorts(summary, first):
         values = {
             m: v
             for m, v in summary[cohort].items()
@@ -776,6 +790,7 @@ def _model_card(
     grid_asset: str | None = None,
     parameter_count: int | None = None,
     assets: Sequence[str] = (),
+    generated_by: str | None = None,
 ) -> str:
     """Assemble the model card: how to run it, how well it does, then run facts.
 
@@ -789,6 +804,10 @@ def _model_card(
     ``None`` when no results CSV was found). The title and metadata follow the
     destination ``repo_id``, so a variant in its own repository is labelled as
     that variant.
+
+    A ``config`` with ``members`` and ``stage_divisor`` (an ensemble bundle) gets a
+    description of how the members are combined; ``parameter_count`` is the weights of
+    all members together. ``generated_by`` names the command shown in the card's footer.
     """
     reviewed = authored_card is not None
     labels = _label_map(config)
@@ -828,7 +847,7 @@ def _model_card(
     ]
     if info.audience:
         glance.insert(1, ("For", info.audience))
-    score = _glance_score(summary, require_cv=info.require_cv)
+    score = _glance_score(summary, require_cv=info.require_cv, headline=info.headline)
     if score:
         glance.append(("Score", score))
     glance.append(
@@ -862,8 +881,13 @@ def _model_card(
     lines += _outputs(stage_names)
 
     lines += ["## Model", ""]
-    lines += family.describe_architecture(config, parameter_count)
+    members = int(config.get("members", 1))
+    lines += family.describe_architecture(
+        config, None if parameter_count is None else parameter_count // members
+    )
     lines.append("")
+    if "members" in config or "stage_divisor" in config:
+        lines += _describe_members(config, parameter_count)
     lines += _describe_preprocessing(
         preprocessing, input_shape, int(config.get("frames_per_epoch", 1))
     )
@@ -899,17 +923,45 @@ def _model_card(
     ):
         if key in provenance and provenance[key] is not None:
             lines.append(f"| {key} | `{provenance[key]}` |")
+    for k, member in enumerate(provenance.get("members") or ()):
+        fields = ", ".join(f"{name} `{member[name]}`" for name in ("seed", "epoch", "checkpoint_sha256")
+                           if member.get(name) is not None)
+        lines.append(f"| {MEMBER_PREFIX}{k} | {fields} |")
     lines += [
         "",
         "Check a download with `sha256sum -c checksums.sha256`.",
         "",
         "</details>",
         "",
-        f"<sub>Generated by `arcasleep {family.name} publish` from "
-        f"`{provenance.get('git_commit', '?')}`.</sub>",
+        f"<sub>Generated by {generated_by or f'`arcasleep {family.name} publish`'}"
+        f" from `{provenance.get('git_commit', '?')}`.</sub>",
         "",
     ]
     return "\n".join(lines)
+
+
+def _describe_members(config: Mapping[str, Any], parameter_count: int | None) -> list[str]:
+    """How an ensemble bundle's members are combined into one scoring."""
+    members = int(config.get("members", 1))
+    if members == 1:
+        lines = ["The release is one model of this architecture."]
+    else:
+        total = "" if parameter_count is None else f" ({parameter_count:,} weights in all)"
+        lines = [
+            f"The release is {members} models of this architecture, each trained with a "
+            f"different seed{total}. Their weights are in `model.safetensors` under the "
+            f"prefixes `{MEMBER_PREFIX}0/` to `{MEMBER_PREFIX}{members - 1}/`. The mean of "
+            "their outputs decides wake or sleep."
+        ]
+    divisor = config.get("stage_divisor")
+    if divisor:
+        values = ", ".join(f"{name} {divisor[name]:.3g}" for name in divisor)
+        lines.append(
+            "On the epochs called sleep, the light, deep and REM probabilities are each "
+            f"divided by the stage divisor in `config.json` ({values}) before the most "
+            "probable stage is chosen."
+        )
+    return [" ".join(lines), ""]
 
 
 def _fmt_n(value: Any) -> str:
@@ -939,25 +991,51 @@ def _is_remote_image(src: str) -> bool:
     return bool(re.match(r"^[a-z][a-z0-9+.-]*://", src)) or src.startswith(("data:", "#"))
 
 
+#: A line of an authored card that is replaced by the text of another file, whose path is
+#: relative to the card's directory: ``<!-- include: shared-section.md -->``.
+_INCLUDE = re.compile(r"^<!-- include: (?P<path>[^\n]+?) -->[ \t]*$", re.MULTILINE)
+
+
+def _expand_includes(card_text: str, card_dir: Path) -> str:
+    """Replace each include line of the authored card with the file it names."""
+
+    def read(match: re.Match[str]) -> str:
+        path = card_dir / match.group("path")
+        if not path.is_file():
+            raise FileNotFoundError(f"card include {match.group('path')!r} not found at {path}")
+        return path.read_text().strip("\n")
+
+    return _INCLUDE.sub(read, card_text)
+
+
 def _collect_assets(
     card_text: str, card_dir: Path, output_dir: Path
 ) -> tuple[str, tuple[str, ...]]:
     """Copy images the authored card references into :data:`ASSETS_DIR`.
 
+    Lines ``<!-- include: file.md -->`` are first replaced by that file's text (a
+    section shared by several cards); every image path is read relative to the card's
+    directory, included text included.
+
     A relative ``src`` is read from next to the card file, copied into the
     bundle's :data:`ASSETS_DIR`, and the link is rewritten to point there, so the
-    published card resolves on the Hub without the author's machine. A remote URL
-    (``https://``, ``data:`` or an already-bundled :data:`ASSETS_DIR` path) is left
-    alone. A relative path that does not resolve is an error: silently dropping a
-    figure the author asked for would ship a card with broken images.
+    published card resolves on the Hub without the author's machine. A ``src`` that
+    already starts with :data:`ASSETS_DIR` is copied the same way when that file exists
+    next to the card, and otherwise names a file the builder writes itself. A remote URL
+    (``https://`` or ``data:``) is left alone. A relative path that does not resolve is
+    an error: silently dropping a figure the author asked for would ship a card with
+    broken images.
     """
+    card_text = _expand_includes(card_text, card_dir)
     assets: list[str] = []
     #: destination basename -> source, to detect and disambiguate name clashes.
     used: dict[str, Path] = {}
 
     def rewrite(match: re.Match[str]) -> str:
         src = match.group("src")
-        if _is_remote_image(src) or src.startswith(f"{ASSETS_DIR}/"):
+        if _is_remote_image(src) or (
+            src.startswith(f"{ASSETS_DIR}/") and not (card_dir / src).is_file()
+        ):
             return match.group(0)
         source = (card_dir / src).resolve()
         if not source.is_file():
@@ -1202,6 +1280,9 @@ def build_release_bundle(
     repo_id: str | None = None,
     info: Path | str | None = None,
     family: str | None = None,
+    members: Sequence[Mapping[str, Any]] | None = None,
+    stage_divisor: Mapping[str, float] | None = None,
+    extra_provenance: Mapping[str, Any] | None = None,
     overwrite: bool = False,
 ) -> ReleaseBundle:
     """Build the release bundle from ``training_dir`` into ``output_dir``.
@@ -1213,6 +1294,14 @@ def build_release_bundle(
 
     ``family`` names the model family the checkpoint must belong to; the
     family is always read from the checkpoint itself.
+
+    ``members`` builds an ensemble bundle in place of the single checkpoint: one entry
+    per member with its ``checkpoint`` path and optionally its ``seed`` and ``epoch``.
+    All members' weights go in one ``model.safetensors`` under the prefixes
+    ``member0/``, ``member1/``, and so on; ``config.json`` gets ``"members": N``, and
+    ``provenance.json`` a ``members`` list of each one's seed, epoch and checkpoint
+    hash. ``stage_divisor`` (light, deep and REM, by name) goes in ``config.json``,
+    and ``extra_provenance`` is added to ``provenance.json``.
 
     ``info`` is a release-info TOML (:class:`ReleaseInfo`) describing the
     variant: its repo, audience, protocol, cohort descriptions and authored
@@ -1249,8 +1338,20 @@ def build_release_bundle(
                 child.unlink()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_path = _resolve_checkpoint(training_dir, checkpoint)
+    if members is not None and checkpoint is not None:
+        raise ValueError("pass either checkpoint or members, not both")
+    if members is not None and not members:
+        raise ValueError("an ensemble bundle needs at least one member")
+    checkpoint_paths = (
+        [_resolve_checkpoint(training_dir, m["checkpoint"]) for m in members]
+        if members is not None
+        else [_resolve_checkpoint(training_dir, checkpoint)]
+    )
+    checkpoint_path = checkpoint_paths[0]
     model_family = get_family(checkpoint_family(checkpoint_path))
+    for path in checkpoint_paths:
+        if checkpoint_family(path) != model_family.name:
+            raise ValueError(f"{path} is not a {model_family.name} checkpoint")
     if family is not None and family != model_family.name:
         raise ValueError(
             f"{checkpoint_path} is a {model_family.name} checkpoint, not {family}"
@@ -1259,12 +1360,20 @@ def build_release_bundle(
     model_config = phase_configs["model.json"]
     preprocessing = phase_configs["inputs.json"]
 
-    model = model_family.load_checkpoint(checkpoint_path, input_shape=input_shape)
+    models = [model_family.load_checkpoint(path, input_shape=input_shape) for path in checkpoint_paths]
+    model = models[0]
     resolved_shape = tuple(model.input_shape or ())
-    parameter_count = model.parameter_count()
-    model.save_weights_safetensors(output_dir / "model.safetensors")
+    parameter_count = sum(m.parameter_count() for m in models)
+    bundle_config: dict[str, Any] = {MODEL_TYPE_KEY: model_family.name, **model_config}
+    if members is None:
+        model.save_weights_safetensors(output_dir / "model.safetensors")
+    else:
+        _save_member_weights(models, output_dir / "model.safetensors")
+        bundle_config["members"] = len(models)
+    if stage_divisor is not None:
+        bundle_config["stage_divisor"] = {name: float(value) for name, value in stage_divisor.items()}
 
-    _write_json(output_dir / "config.json", {MODEL_TYPE_KEY: model_family.name, **model_config})
+    _write_json(output_dir / "config.json", bundle_config)
     _write_json(output_dir / "preprocessing.json", preprocessing)
     # metrics_effective.json is the resolved protocol the run actually scored
     # with; metrics.json is the request. Prefer the resolved one when present.
@@ -1299,9 +1408,20 @@ def build_release_bundle(
         git_commit=code_digest(),
         image_digest=None,
     )
+    if members is None:
+        provenance["checkpoint_sha256"] = sha256_file(checkpoint_path)
+    else:
+        del provenance["seed"]
+        provenance["members"] = [
+            {
+                "seed": m.get("seed"),
+                "epoch": m.get("epoch"),
+                "checkpoint_sha256": sha256_file(path),
+            }
+            for m, path in zip(members, checkpoint_paths, strict=True)
+        ]
     provenance.update(
         {
-            "checkpoint_sha256": sha256_file(checkpoint_path),
             "input_shape": list(resolved_shape),
             "run_id": identity.get("run_id"),
             "fold": identity.get("fold"),
@@ -1309,6 +1429,7 @@ def build_release_bundle(
             "trained_on": identity.get("training_dataset"),
             "training_dir": str(training_dir),
             "metrics_summary": str(metrics_summary) if metrics_summary else None,
+            **(extra_provenance or {}),
         }
     )
     _write_json(output_dir / "provenance.json", provenance)
@@ -1336,7 +1457,7 @@ def build_release_bundle(
         family=model_family,
         repo_id=repo_id,
         version=version,
-        config=model_config,
+        config=bundle_config,
         preprocessing=preprocessing,
         metrics=_read_json(output_dir / "metrics.json"),
         provenance=provenance,
@@ -1358,11 +1479,101 @@ def build_release_bundle(
     return ReleaseBundle(
         directory=output_dir,
         version=version,
-        checkpoint_sha256=provenance["checkpoint_sha256"],
+        checkpoint_sha256=provenance.get("checkpoint_sha256") or provenance["members"][0]["checkpoint_sha256"],
         input_shape=resolved_shape,
         files=BUNDLE_FILES + assets,
         card_review_status=CARD_REVIEW_PENDING if authored_text is None else "reviewed",
     )
+
+
+def _save_member_weights(models: Sequence[Any], path: Path) -> None:
+    """All members' weights in one safetensors file, member ``k``'s under ``member<k>/``.
+
+    Each model is exported as for a single-model bundle, so the member's tensor names
+    and the input-shape metadata are those of its own file.
+    """
+    import tempfile
+
+    from safetensors import safe_open
+    from safetensors.numpy import save_file
+
+    tensors: dict[str, Any] = {}
+    metadata: dict[str, str] | None = None
+    with tempfile.TemporaryDirectory() as tmp:
+        for k, model in enumerate(models):
+            member_path = Path(tmp) / f"member{k}.safetensors"
+            model.save_weights_safetensors(member_path)
+            with safe_open(str(member_path), framework="np") as handle:
+                member_metadata = handle.metadata() or {}
+                if metadata is not None and member_metadata != metadata:
+                    raise ValueError("every member must share one input shape")
+                metadata = member_metadata
+                for name in handle.keys():
+                    tensors[f"{MEMBER_PREFIX}{k}/{name}"] = handle.get_tensor(name)
+    save_file(tensors, str(path), metadata=metadata)
+
+
+def write_bundle_card(
+    bundle_dir: Path | str,
+    *,
+    metrics_summary: Path | str,
+    info: Path | str,
+    repo_id: str | None = None,
+    grid_label: str | None = None,
+    generated_by: str | None = None,
+) -> Path:
+    """Write ``README.md`` and ``checksums.sha256`` of a built bundle from its scores.
+
+    The card is built as :func:`build_release_bundle` builds one: the architecture,
+    preprocessing, input requirements and provenance come from the bundle's own files,
+    the scores from ``metrics_summary``, and the repo, audience, protocol, cohorts and
+    authored card from the release-info TOML ``info``. The assets are redrawn. The
+    checksums cover the fixed bundle files and the assets, so :func:`verify_bundle`
+    accepts the result. Returns the README's path.
+    """
+    bundle_dir = Path(bundle_dir)
+    release_info = load_release_info(info)
+    repo_id = repo_id or release_info.repo or ""
+    config = _read_json(bundle_dir / "config.json")
+    provenance = _read_json(bundle_dir / "provenance.json")
+    model_family = get_family(release_family(config))
+    shutil.rmtree(bundle_dir / ASSETS_DIR, ignore_errors=True)
+
+    authored_text: str | None = None
+    asset_list: list[str] = []
+    if release_info.card is not None:
+        if not release_info.card.is_file():
+            raise FileNotFoundError(f"no such card file: {release_info.card}")
+        authored_text, authored_assets = _collect_assets(
+            release_info.card.read_text(), release_info.card.parent, bundle_dir
+        )
+        asset_list.extend(authored_assets)
+    grid_asset = _draw_metrics_grid(_grid_table(metrics_summary), bundle_dir, label=grid_label)
+    asset_list.append(grid_asset)
+    assets = tuple(dict.fromkeys(asset_list))
+
+    card_text = _model_card(
+        family=model_family,
+        repo_id=repo_id,
+        version=provenance.get("package_version", ""),
+        config=config,
+        preprocessing=_read_json(bundle_dir / "preprocessing.json"),
+        metrics=_read_json(bundle_dir / "metrics.json"),
+        provenance=provenance,
+        evaluation=None,
+        summary=_summary_metrics(metrics_summary),
+        authored_card=authored_text,
+        info=release_info,
+        grid_asset=grid_asset,
+        parameter_count=load_bundle_model(bundle_dir).parameter_count(),
+        assets=assets,
+        generated_by=generated_by,
+    )
+    readme = bundle_dir / "README.md"
+    readme.write_text(card_text)
+    checksummed = [name for name in BUNDLE_FILES if name != "checksums.sha256"] + list(assets)
+    (bundle_dir / "checksums.sha256").write_text(_checksums(bundle_dir, checksummed))
+    return readme
 
 
 def load_bundle_model(bundle_dir: Path | str):
@@ -1384,15 +1595,8 @@ def load_bundle_model(bundle_dir: Path | str):
 
 
 def bundle_family(bundle_dir: Path | str) -> str:
-    """The model family a release bundle's ``config.json`` names.
-
-    A composite bundle (several bundles scored together) has
-    ``composite.json`` instead, naming the family that scores it.
-    """
+    """The model family a release bundle's ``config.json`` names."""
     config_path = Path(bundle_dir) / "config.json"
-    composite_path = Path(bundle_dir) / COMPOSITE_FILENAME
-    if not config_path.is_file() and composite_path.is_file():
-        return release_family(_read_json(composite_path))
     if not config_path.is_file():
         raise FileNotFoundError(f"{bundle_dir} is not a release bundle; missing config.json")
     return release_family(_read_json(config_path))

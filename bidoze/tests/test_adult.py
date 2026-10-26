@@ -14,7 +14,6 @@ from arcasleep_bidoze.adult import (
     WAKE,
     adult_probabilities,
     adult_stage_divisor,
-    build_adult_bundle,
     effective_weights,
     hybrid_calls,
     stage_counts,
@@ -76,42 +75,98 @@ def test_adult_probabilities_keep_the_models_wake_and_sum_to_one() -> None:
     np.testing.assert_allclose(p.sum(axis=1), 1.0)
 
 
-def _release(directory: Path, seed: int) -> Path:
-    from arcasleep.models import MODEL_TYPE_KEY
+CONFIG = {"num_classes": 4, "score_gap": True, "d_model": 16, "n_heads": 2,
+          "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0}
+DIVISOR = {"light": 0.5, "deep": 2.0, "rem": 1.25}
+
+
+def _models(seeds: list[int]) -> list:
     from arcasleep_bidoze.model import BiDozeNetConfig, BiDozeNetModel
 
-    config = {"num_classes": 4, "score_gap": True, "d_model": 16, "n_heads": 2,
-              "n_transformer_layers": 1, "d_ff": 32, "conv_kernels": [3], "dropout": 0.0}
-    model = BiDozeNetModel(BiDozeNetConfig.from_dict(config))
-    model._ensure_built((120, 61, 2), seed=seed)
+    models = []
+    for seed in seeds:
+        model = BiDozeNetModel(BiDozeNetConfig.from_dict(CONFIG))
+        model._ensure_built((120, 61, 2), seed=seed)
+        models.append(model)
+    return models
+
+
+def _release(directory: Path, seed: int) -> Path:
+    """A single-model bundle: unprefixed weights and no ``members``."""
+    from arcasleep.models import MODEL_TYPE_KEY
+
     directory.mkdir(parents=True)
-    model.save_weights_safetensors(directory / "model.safetensors")
-    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **config}))
+    _models([seed])[0].save_weights_safetensors(directory / "model.safetensors")
+    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **CONFIG}))
     (directory / "preprocessing.json").write_text((CONFIG_DIR / "inputs.json").read_text())
     return directory
 
 
-def test_an_adult_bundle_predicts_a_recording(tmp_path: Path, monkeypatch) -> None:
-    pytest.importorskip("senpy")
-    pytest.importorskip("safetensors")
-    import arcasleep.artifacts.publish as publish
-    from arcasleep.predict import load_predictor
+def _flat_bundle(directory: Path, seeds: list[int], stage_divisor: dict | None = DIVISOR) -> Path:
+    """A flat bundle of one member per seed, with the divisor in ``config.json``."""
+    from arcasleep.artifacts.publish import _save_member_weights
+    from arcasleep.models import MODEL_TYPE_KEY
 
-    monkeypatch.setattr(publish, "verify_bundle", lambda directory: None)
-    bundle = build_adult_bundle(
-        tmp_path / "adult",
-        [_release(tmp_path / "s0", 1), _release(tmp_path / "s1", 2)],
-        [1.0, 0.8, 1.6, 0.9],
-        version="v0.0.0",
-    )
+    directory.mkdir(parents=True)
+    _save_member_weights(_models(seeds), directory / "model.safetensors")
+    config = {MODEL_TYPE_KEY: "bidoze", **CONFIG, "members": len(seeds)}
+    if stage_divisor is not None:
+        config["stage_divisor"] = stage_divisor
+    (directory / "config.json").write_text(json.dumps(config))
+    (directory / "preprocessing.json").write_text((CONFIG_DIR / "inputs.json").read_text())
+    return directory
 
-    fs, minutes = 25.0, 47
+
+def _recording(minutes: int = 47) -> np.ndarray:
+    fs = 25.0
     t = np.arange(int(fs * 60 * minutes)) / fs
     xyz = np.random.default_rng(5).normal(scale=0.05, size=(t.size, 3)) + [0.0, 0.0, 1.0]
-    result = load_predictor(bundle).predict(np.column_stack([t, xyz]))
+    return np.column_stack([t, xyz])
 
-    assert result.probabilities.shape == (minutes * 2, 4)
-    assert len(result.labels) == minutes * 2
+
+@pytest.mark.parametrize("members", [1, 3])
+def test_a_flat_bundle_scores_the_mean_of_its_members_and_decodes_with_the_divisor(
+    tmp_path: Path, members: int
+) -> None:
+    pytest.importorskip("senpy")
+    pytest.importorskip("safetensors")
+    from arcasleep.divisor import divisor_vector
+    from arcasleep.predict import Predictor
+
+    seeds = list(range(members))
+    accel = _recording()
+    result = Predictor(_flat_bundle(tmp_path / "flat", seeds)).predict(accel, ggir_sleep_filter=False)
+
+    # Each member alone, as its own single-model bundle: its 4-stage probabilities and gap head.
+    alone = [
+        Predictor(_release(tmp_path / f"s{k}", k)).predict(accel, return_gap_head=True, ggir_sleep_filter=False)
+        for k in seeds
+    ]
+    five_way = np.mean([a.probabilities * (1.0 - a.gap_head)[:, None] for a in alone], axis=0)
+    mean = five_way / five_way.sum(axis=1, keepdims=True)
+    divisor = divisor_vector(DIVISOR)
+    expected = adult_probabilities(mean, divisor)
+    calls = hybrid_calls(mean, mean, divisor)
+
+    np.testing.assert_allclose(result.probabilities, expected, rtol=0, atol=1e-4)
+    # An epoch whose two best divided stages are this close can fall either way between GPU and CPU rounding.
+    divided = np.sort(mean[:, LIGHT : REM + 1] / divisor[LIGHT : REM + 1], axis=1)
+    clear = (calls == WAKE) | (divided[:, -1] - divided[:, -2] > 1e-3)
+    names = np.asarray(result.stage_names, dtype=object)[calls]
+    assert (result.raw_labels[clear & ~result.is_gap] == names[clear & ~result.is_gap]).all()
+
+
+def test_a_bundle_without_a_divisor_labels_epochs_by_the_argmax(tmp_path: Path) -> None:
+    pytest.importorskip("senpy")
+    pytest.importorskip("safetensors")
+    from arcasleep.predict import Predictor
+
+    result = Predictor(_flat_bundle(tmp_path / "flat", [0, 1], stage_divisor=None)).predict(
+        _recording(), ggir_sleep_filter=False
+    )
+
+    keep = ~result.is_gap
+    assert (result.raw_labels[keep] == np.asarray(result.stage_names, dtype=object)[result.stages][keep]).all()
 
 
 def test_stacked_seeds_give_the_mean_of_their_probabilities(tmp_path: Path) -> None:

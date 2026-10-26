@@ -18,7 +18,7 @@ Or from Python:
 ```python
 from arcasleep.predict import Predictor, read_accelerometer
 
-predictor = Predictor("$local_dir")     # load once, reuse
+predictor = Predictor("$local_dir")  # load once, reuse
 accel = read_accelerometer("night.csv")  # (N, 4): t [s], x, y, z [g]
 result = predictor.predict(accel)
 

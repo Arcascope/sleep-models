@@ -195,37 +195,33 @@ def test_stacked_f2_seeds_give_the_mean_of_their_probabilities() -> None:
     np.testing.assert_allclose(stacked, mean, atol=1e-5)
 
 
-def _release(directory: Path, seed: int) -> Path:
-    from arcasleep.models import MODEL_TYPE_KEY
-
-    config = small_config().to_dict()
-    model = BiDozeNetModel(BiDozeNetConfig.from_dict(config))
-    model._ensure_built((120, 61, 2), seed=seed)
-    directory.mkdir(parents=True)
-    model.save_weights_safetensors(directory / "model.safetensors")
-    (directory / "config.json").write_text(json.dumps({MODEL_TYPE_KEY: "bidoze", **config}))
-    (directory / "preprocessing.json").write_text((BIDOZE / "config/inputs.json").read_text())
-    return directory
-
-
-@pytest.mark.parametrize("seeds", [1, 2])
-def test_an_adult_bundle_of_f2_seeds_predicts_a_recording(tmp_path: Path, monkeypatch, seeds: int) -> None:
+@pytest.mark.parametrize("members", [1, 2])
+def test_a_flat_bundle_of_f2_members_predicts_a_recording(tmp_path: Path, members: int) -> None:
     pytest.importorskip("senpy")
     pytest.importorskip("safetensors")
-    import arcasleep.artifacts.publish as publish
-    from arcasleep.predict import load_predictor
-    from arcasleep_bidoze.adult import build_adult_bundle
+    from arcasleep.artifacts.publish import _save_member_weights
+    from arcasleep.models import MODEL_TYPE_KEY
+    from arcasleep.predict import Predictor
 
-    monkeypatch.setattr(publish, "verify_bundle", lambda directory: None)
-    bundle = build_adult_bundle(
-        tmp_path / "adult", [_release(tmp_path / f"s{k}", k) for k in range(seeds)],
-        [1.0, 0.8, 1.6, 0.9], version="v0.0.0",
-    )
+    config = small_config().to_dict()
+    bundle = tmp_path / "adult"
+    bundle.mkdir()
+    models = []
+    for k in range(members):
+        model = BiDozeNetModel(BiDozeNetConfig.from_dict(config))
+        model._ensure_built((120, 61, 2), seed=k)
+        models.append(model)
+    _save_member_weights(models, bundle / "model.safetensors")
+    (bundle / "config.json").write_text(json.dumps({
+        MODEL_TYPE_KEY: "bidoze", **config, "members": members,
+        "stage_divisor": {"light": 0.8, "deep": 1.6, "rem": 0.9},
+    }))
+    (bundle / "preprocessing.json").write_text((BIDOZE / "config/inputs.json").read_text())
 
     fs, minutes = 25.0, 47
     t = np.arange(int(fs * 60 * minutes)) / fs
     xyz = np.random.default_rng(5).normal(scale=0.05, size=(t.size, 3)) + [0.0, 0.0, 1.0]
-    result = load_predictor(bundle).predict(np.column_stack([t, xyz]))
+    result = Predictor(bundle).predict(np.column_stack([t, xyz]))
 
     assert result.probabilities.shape == (minutes * 2, 4)
     assert len(result.labels) == minutes * 2
