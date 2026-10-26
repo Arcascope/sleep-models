@@ -5,8 +5,7 @@ wrist-worn accelerometer in adults. Running BiDoze does not require
 polysomnography (PSG). PSG can be used to measure its accuracy on your own
 cohort.
 
-Sleep/wake is the primary task. Report stage estimates as cohort means, not as
-per-night measurements.
+Sleep/wake is the primary task. Staging kappa is still within bounds often considered "good" for wrist based sleep scoring.
 
 **Not a medical device.** Do not use it to diagnose sleep disorders (including
 obstructive sleep apnea), to screen individuals, or to make clinical decisions.
@@ -42,14 +41,12 @@ Output columns:
 
 ## Limitations
 
-- **Wake specificity is lowest, and total sleep time is overestimated, in
-  adults with sleep apnea.**
-  - SleepAccel cross-validation: sleep sensitivity 95.8%, wake specificity
-    74.8%. Total sleep time is underestimated by 5.6 minutes on average.
-  - Wearanize+ cross-validation: sleep sensitivity 94.5%, wake specificity
-    82.8%. Total sleep time is underestimated by 12.1 minutes on average.
-  - SleepAccel-Clinical: sleep sensitivity 94.5%, wake specificity 67.0%.
-    Total sleep time is overestimated by 17.1 minutes on average.
+- **High sensitivity, but overestimates sleep in adults with sleep apnea.**
+  In the SleepAccel and Wearanize+ cross-validation, sleep sensitivity is
+  95.8% and 94.5% and wake specificity is 74.8% and 82.8%; total sleep
+  time is underestimated by 5.6 and 12.1 minutes on average. In adults
+  with sleep apnea (SleepAccel-Clinical), wake specificity is 67.0% and total
+  sleep time is overestimated by 17.1 minutes on average.
 - **Stage durations have larger errors than total sleep time.** On SleepAccel
   (cross-validation), the mean absolute percentage error is 3.8% for total
   sleep time, 17.9% for light sleep, 78.5% for deep sleep and 50.5% for REM
