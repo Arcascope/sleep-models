@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+from arcasleep.divisor import adult_probabilities, divisor_vector, hybrid_calls
+
 #: Stage names in readout order; the network emits ``num_classes`` of them.
 STAGE_NAMES = ("wake", "light", "deep", "rem")
 #: What :attr:`Prediction.labels` and the CSV ``stage`` column hold for an
@@ -291,7 +293,16 @@ def read_prediction_csv(path: Path | str) -> Prediction:
 
 
 class Predictor:
-    """A loaded bundle, reusable across recordings."""
+    """A loaded bundle, reusable across recordings.
+
+    A bundle with ``members`` in its ``config.json`` runs its members as one batched
+    call and scores the mean of their outputs. With a ``stage_divisor`` there, the
+    mean decides wake or sleep, and on its sleep epochs the stage is the argmax of the
+    light, deep and REM probabilities divided by the divisor (:mod:`arcasleep.divisor`).
+    """
+
+    #: ``(wake, light, deep, REM)`` stage divisor of the bundle, ``None`` for the model's own argmax.
+    divisor: np.ndarray | None = None
 
     def __init__(self, bundle_dir: Path | str):
         from arcasleep.artifacts.publish import bundle_family, load_bundle_model
@@ -310,6 +321,8 @@ class Predictor:
         ).prediction_window(self.model)
         self.stage_names = STAGE_NAMES[: self.model.config.num_classes]
         self.min_sampling_hz = float(self.processing.fs)
+        stage_divisor = json.loads((bundle_dir / "config.json").read_text()).get("stage_divisor")
+        self.divisor = None if stage_divisor is None else divisor_vector(stage_divisor)
 
     def features(
         self, accel: np.ndarray, origin: float | str | None = None
@@ -380,6 +393,13 @@ class Predictor:
         _, missing = split_gap_row(pooled)
         epoch_start_s = origin_s + EPOCH_SECONDS * np.arange(n_epochs)
         is_gap = missing >= 1.0
+        if self.divisor is None:
+            stage_raw = _label_epochs(probabilities, self.stage_names, is_gap)
+        else:
+            names = np.asarray(self.stage_names, dtype=object)
+            stage_raw = names[hybrid_calls(probabilities, probabilities, self.divisor)]
+            stage_raw[is_gap] = GAP_LABEL_NAME
+            probabilities = adult_probabilities(probabilities, self.divisor)
         return finish_prediction(
             accel,
             origin_s,
@@ -387,7 +407,7 @@ class Predictor:
             probabilities,
             self.stage_names,
             is_gap,
-            _label_epochs(probabilities, self.stage_names, is_gap),
+            stage_raw,
             gap_head=gap_head if return_gap_head else None,
             ggir_sleep_filter=ggir_sleep_filter,
             ggir_error_fails=ggir_error_fails,
@@ -456,12 +476,9 @@ def finish_prediction(
     )
 
 
-def load_predictor(bundle_dir: Path | str):
-    """A :class:`Predictor` for a bundle, or its family's own predictor for a composite bundle."""
-    from arcasleep.artifacts.publish import bundle_family
-    from arcasleep.models import get_family
-
-    return get_family(bundle_family(bundle_dir)).load_predictor(bundle_dir)
+def load_predictor(bundle_dir: Path | str) -> Predictor:
+    """A :class:`Predictor` for a bundle."""
+    return Predictor(bundle_dir)
 
 
 def predict(

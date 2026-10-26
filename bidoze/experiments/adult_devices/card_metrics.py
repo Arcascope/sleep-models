@@ -100,7 +100,7 @@ def main(run: Path, arm: str, bundle: Path, adult_root: Path, out: Path) -> None
             adult["SleepAccel"][sid] = (seeds[0][sid][0], mean, hybrid_calls(mean, mean, divisor))
 
     # SleepAccel-Clinical: the released model and the bundle's divisor.
-    spec = json.loads((bundle / "composite.json").read_text())
+    spec = json.loads((bundle / "config.json").read_text())
     divisor = np.array([1.0] + [spec["stage_divisor"][n] for n in ("light", "deep", "rem")])
     final = run / arm / "final/predictions"
     seeds = [{f.stem.split("_", 1)[1]: load_subject(f) for f in (final / f"final_seed_{s}").glob("SleepAccel-Clinical_*.csv")}

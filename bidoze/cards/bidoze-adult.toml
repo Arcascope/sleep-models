@@ -1,4 +1,4 @@
-# Release info for the adult variant: `python -m arcasleep_bidoze.release card adult <training dir> <bundle dir> --info cards/bidoze-adult.toml`
+# Release info for the adult variant: `python -m arcasleep_bidoze.release card adult <training dir> <bundle dir> --info cards/bidoze-adult.toml --seeds 0 1 2`
 repo = "arcascope/arcasleep-bidoze-adult"
 card = "bidoze-adult.md"   # authored Markdown, relative to this file
 audience = "Adults"

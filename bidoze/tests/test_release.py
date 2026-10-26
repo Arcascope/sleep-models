@@ -144,7 +144,18 @@ def _final_phase(
     return results
 
 
-def test_a_final_phase_builds_the_adult_bundle_with_one_bundle_per_seed(tmp_path: Path) -> None:
+def _members(bundle: Path) -> list[dict]:
+    return json.loads((bundle / "provenance.json").read_text())["members"]
+
+
+def _tensor_prefixes(bundle: Path) -> set[str]:
+    from safetensors import safe_open
+
+    with safe_open(str(bundle / "model.safetensors"), framework="np") as handle:
+        return {key.split("/", 1)[0] for key in handle.keys()}
+
+
+def test_a_final_phase_builds_the_flat_adult_bundle_of_its_seeds(tmp_path: Path) -> None:
     root = _feature_root(tmp_path)
     setup = tmp_path / "setup"
     prepare_adult(setup, root, "all", _config_dir(tmp_path))
@@ -153,17 +164,22 @@ def test_a_final_phase_builds_the_adult_bundle_with_one_bundle_per_seed(tmp_path
     bundle = build_release("adult", final, tmp_path / "bundle", "v0.0.0",
                            train_cache=setup / "cache")
 
-    composite = json.loads((bundle / "composite.json").read_text())
-    assert composite["seeds"] == ["seed0", "seed1"]
-    assert all(v > 0 for v in composite["stage_divisor"].values())
-    from arcasleep.predict import load_predictor
+    config = json.loads((bundle / "config.json").read_text())
+    assert config["members"] == 2
+    assert all(v > 0 for v in config["stage_divisor"].values())
+    assert [m["seed"] for m in _members(bundle)] == [0, 1]
+    assert _tensor_prefixes(bundle) == {"member0", "member1"}
+    assert not (bundle / "composite.json").exists()
+    from arcasleep.artifacts.publish import verify_bundle
+    from arcasleep.predict import Predictor
 
-    assert load_predictor(bundle) is not None
+    verify_bundle(bundle)
+    assert Predictor(bundle) is not None
 
 
-@pytest.mark.parametrize("seeds, expected", [(None, ["seed0", "seed1"]), ([1], ["seed0"])])
+@pytest.mark.parametrize("seeds, expected", [(None, [0, 1]), ([1], [1])])
 def test_an_f2_final_phase_builds_the_adult_bundle_of_all_or_chosen_seeds(
-    tmp_path: Path, seeds: list[int] | None, expected: list[str]
+    tmp_path: Path, seeds: list[int] | None, expected: list[int]
 ) -> None:
     root = _feature_root(tmp_path)
     setup = tmp_path / "setup"
@@ -173,12 +189,13 @@ def test_an_f2_final_phase_builds_the_adult_bundle_of_all_or_chosen_seeds(
     bundle = build_release("adult", final, tmp_path / "bundle", "v0.0.0",
                            train_cache=setup / "cache", seeds=seeds)
 
-    composite = json.loads((bundle / "composite.json").read_text())
-    assert composite["seeds"] == expected
-    assert json.loads((bundle / "seed0/config.json").read_text())["strands"] == 2
-    from arcasleep.predict import load_predictor
+    config = json.loads((bundle / "config.json").read_text())
+    assert [m["seed"] for m in _members(bundle)] == expected
+    assert config["members"] == len(expected)
+    assert config["strands"] == 2
+    from arcasleep.predict import Predictor
 
-    assert load_predictor(bundle) is not None
+    assert Predictor(bundle) is not None
 
 
 def _adult_run(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -198,11 +215,10 @@ def _adult_run(tmp_path: Path) -> tuple[Path, Path, Path]:
 def test_the_adult_divisor_comes_from_the_adult_training_sets(tmp_path: Path) -> None:
     training, cache, bundle = _adult_run(tmp_path)
 
-    composite = json.loads((bundle / "composite.json").read_text())
-    provenance = composite["provenance"]
+    provenance = json.loads((bundle / "provenance.json").read_text())
 
-    assert all(name.startswith(ADULT_REFERENCE_PREFIXES) for name in provenance["adult_reference"])
-    assert provenance["adult_reference_nights"] == len(SLEEPACCEL) + len(WEARANIZE)
+    assert all(name.startswith(ADULT_REFERENCE_PREFIXES) for name in provenance["stage_divisor_reference_sets"])
+    assert provenance["stage_divisor_reference_nights"] == len(SLEEPACCEL) + len(WEARANIZE)
     divisor, train, adult = phase_divisor(training / "fold0", cache)
     assert len(adult) == len(SLEEPACCEL) // 2 + len(WEARANIZE) // 2
     assert len(train) == len(REVISED) + len(adult)
@@ -230,7 +246,6 @@ def test_the_adult_card_is_scored_per_cohort_and_written_into_a_verified_bundle(
                       "SleepAccel-Clinical": len(CLINICAL)}
     assert readme == bundle / "README.md" and readme.is_file()
     verify_bundle(bundle)
-    verify_bundle(bundle / "seed0")
 
 
 def test_a_seed_the_phase_did_not_train_is_refused(tmp_path: Path) -> None:
@@ -292,7 +307,7 @@ def test_the_local_entry_point_trains_a_tiny_final_phase_and_writes_the_bundle(t
 
     assert status == 0
     bundle = tmp_path / "results/tiny/training/final/bundle"
-    assert json.loads((bundle / "composite.json").read_text())["seeds"] == ["seed0", "seed1"]
+    assert json.loads((bundle / "config.json").read_text())["members"] == 2
 
 
 def test_the_training_image_installs_the_extras_a_release_bundle_needs() -> None:

@@ -16,9 +16,9 @@ arcasleep hypnogram predictions/*.csv
 Or from Python:
 
 ```python
-from arcasleep.predict import $predictor_import, read_accelerometer
+from arcasleep.predict import Predictor, read_accelerometer
 
-predictor = $predictor_load# load once, reuse
+predictor = Predictor("$local_dir")  # load once, reuse
 accel = read_accelerometer("night.csv")  # (N, 4): t [s], x, y, z [g]
 result = predictor.predict(accel)
 

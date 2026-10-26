@@ -2243,8 +2243,14 @@ class BiDozeNetModel(CVModel):
         tensors = {name: np.ascontiguousarray(array) for name, array in zip(names, arrays)}
         save_file(tensors, str(path), metadata={"input_shape": json.dumps(list(self.input_shape))})
 
-    def load_weights_safetensors(self, path: Path, input_shape: tuple[int, ...] | None = None) -> None:
-        """Restore parameters from `safetensors`, rebuilding the module first."""
+    def load_weights_safetensors(
+        self, path: Path, input_shape: tuple[int, ...] | None = None, prefix: str = ""
+    ) -> None:
+        """Restore parameters from `safetensors`, rebuilding the module first.
+
+        With ``prefix``, only the tensors whose name starts with it are read, and the
+        prefix is removed: one file can hold several models, each under its own prefix.
+        """
         try:
             from safetensors import safe_open
         except ModuleNotFoundError as exc:  # pragma: no cover - exercised via CLI
@@ -2259,8 +2265,11 @@ class BiDozeNetModel(CVModel):
                 if "input_shape" not in metadata:
                     raise ValueError(f"{path} carries no input_shape metadata; pass input_shape=")
                 input_shape = tuple(json.loads(metadata["input_shape"]))
-            names = sorted(handle.keys())
-            arrays = [handle.get_tensor(name) for name in names]
+            keys = sorted(k for k in handle.keys() if k.startswith(prefix))
+            if not keys:
+                raise ValueError(f"{path} holds no tensor with the prefix {prefix!r}")
+            names = [k[len(prefix):] for k in keys]
+            arrays = [handle.get_tensor(k) for k in keys]
         self._ensure_built(tuple(input_shape))
         self.params = self._restore_from_manifest(names, arrays)
         self.model = {"params": self.params}

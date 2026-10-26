@@ -11,6 +11,8 @@ per-night measurements.
 **Not a medical device.** Do not use it to diagnose sleep disorders (including
 obstructive sleep apnea), to screen individuals, or to make clinical decisions.
 
+<!-- include: bidoze-adult-models.md -->
+
 ## How it scores a recording
 
 The bundle holds three networks of one architecture, trained with different
@@ -20,8 +22,8 @@ two steps:
 1. **Sleep or wake:** the epoch is wake when wake is the most probable of wake,
    light, deep and REM in the averaged output; otherwise it is sleep.
 2. **Light, deep or REM**, on sleep epochs only: the light, deep and REM
-   probabilities are each divided by a fixed stage divisor, stored in
-   `composite.json`; the largest quotient gives the stage.
+   probabilities are each divided by a fixed stage divisor, stored as
+   `stage_divisor` in `config.json`; the largest quotient gives the stage.
 
 The divisor corrects for two properties of the training: the loss weights rare
 stages up, and most training recordings are of children, who spend a larger

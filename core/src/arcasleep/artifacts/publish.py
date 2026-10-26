@@ -29,6 +29,7 @@ from typing import Any
 
 from arcasleep.artifacts.provenance import code_digest, run_provenance, sha256_file
 from arcasleep.models import (
+    MEMBER_PREFIX,
     MODEL_TYPE_KEY,
     ModelFamily,
     checkpoint_family,
@@ -38,8 +39,6 @@ from arcasleep.models import (
 
 #: Hand-edited Markdown that ships with the package (``quickstart.md``).
 TEMPLATES_DIR = Path(__file__).parent / "templates"
-#: A composite bundle's description, in place of ``config.json``.
-COMPOSITE_FILENAME = "composite.json"
 
 
 def _template_path(name: str) -> Path:
@@ -631,21 +630,14 @@ def _quickstart(
     repo_id: str,
     local_dir: str,
     stage_names: Sequence[str],
-    composite: bool = False,
 ) -> list[str]:
     """Raw accelerometer file in, per-epoch stages out: the card's main use case.
 
     The prose lives in ``templates/quickstart.md`` so it can be edited as
     Markdown; ``$family``, ``$repo_id``, ``$local_dir``, ``$columns`` and
-    ``$n_stages`` are filled from the bundle. ``$predictor_import`` and
-    ``$predictor_load`` load the bundle: ``Predictor`` reads a single release, and
-    ``load_predictor`` also reads a composite bundle.
+    ``$n_stages`` are filled from the bundle.
     """
     text = Template(_template_path("quickstart").read_text()).safe_substitute(
-        predictor_import="load_predictor" if composite else "Predictor",
-        predictor_load=(
-            f'load_predictor("{local_dir}")  ' if composite else f'Predictor("{local_dir}")     '
-        ),
         family=family,
         repo_id=repo_id,
         local_dir=local_dir,
@@ -798,7 +790,7 @@ def _model_card(
     grid_asset: str | None = None,
     parameter_count: int | None = None,
     assets: Sequence[str] = (),
-    composite: Mapping[str, Any] | None = None,
+    generated_by: str | None = None,
 ) -> str:
     """Assemble the model card: how to run it, how well it does, then run facts.
 
@@ -813,9 +805,9 @@ def _model_card(
     destination ``repo_id``, so a variant in its own repository is labelled as
     that variant.
 
-    ``composite`` is the ``composite.json`` of a composite bundle: the card then
-    describes the seed bundles and the stage divisor, loads the bundle with
-    ``load_predictor``, and lists the composite layout as its files.
+    A ``config`` with ``members`` and ``stage_divisor`` (an ensemble bundle) gets a
+    description of how the members are combined; ``parameter_count`` is the weights of
+    all members together. ``generated_by`` names the command shown in the card's footer.
     """
     reviewed = authored_card is not None
     labels = _label_map(config)
@@ -871,7 +863,7 @@ def _model_card(
     lines.append("|:---|:---|")
     lines += [f"| **{key}** | {value} |" for key, value in glance[1:]]
     lines.append("")
-    lines += _quickstart(family.name, repo_id, local_dir, stage_names, composite is not None)
+    lines += _quickstart(family.name, repo_id, local_dir, stage_names)
     lines += _performance(info, metrics, evaluation, summary, grid_asset)
 
     if reviewed:
@@ -889,10 +881,13 @@ def _model_card(
     lines += _outputs(stage_names)
 
     lines += ["## Model", ""]
-    lines += family.describe_architecture(config, parameter_count)
+    members = int(config.get("members", 1))
+    lines += family.describe_architecture(
+        config, None if parameter_count is None else parameter_count // members
+    )
     lines.append("")
-    if composite is not None:
-        lines += _describe_composite(composite)
+    if "members" in config or "stage_divisor" in config:
+        lines += _describe_members(config, parameter_count)
     lines += _describe_preprocessing(
         preprocessing, input_shape, int(config.get("frames_per_epoch", 1))
     )
@@ -905,19 +900,9 @@ def _model_card(
         "| File | Contents |",
         "|:---|:---|",
     ]
-    if composite is None:
-        for name in BUNDLE_FILES:
-            if name in _FILE_DESCRIPTIONS:
-                lines.append(f"| `{name}` | {_FILE_DESCRIPTIONS[name]} |")
-    else:
-        seeds = composite["seeds"]
-        lines += [
-            f"| `{COMPOSITE_FILENAME}` | The seed directories and the stage divisor |",
-            f"| `{seeds[0]}/` to `{seeds[-1]}/` | One release bundle per seed: weights, "
-            "`config.json`, `preprocessing.json`, `metrics.json`, `provenance.json` and "
-            "its own `checksums.sha256` |",
-            "| `checksums.sha256` | SHA-256 of every file in this release, seed directories included |",
-        ]
+    for name in BUNDLE_FILES:
+        if name in _FILE_DESCRIPTIONS:
+            lines.append(f"| `{name}` | {_FILE_DESCRIPTIONS[name]} |")
     for name in assets:
         lines.append(f"| `{name}` | Figure shown on this card |")
     lines += ["", "| Field | Value |", "|:---|:---|"]
@@ -925,12 +910,12 @@ def _model_card(
         "package_version",
         "git_commit",
         "container_image_digest",
-        *(() if composite is not None else ("seed",)),
+        "seed",
         "run_id",
         "fold",
-        *(() if composite is not None else ("epoch",)),
+        "epoch",
         "trained_on",
-        *(() if composite is not None else ("checkpoint_sha256",)),
+        "checkpoint_sha256",
         "split_manifest_sha256",
         "model_config_sha256",
         "processing_config_sha256",
@@ -938,36 +923,45 @@ def _model_card(
     ):
         if key in provenance and provenance[key] is not None:
             lines.append(f"| {key} | `{provenance[key]}` |")
+    for k, member in enumerate(provenance.get("members") or ()):
+        fields = ", ".join(f"{name} `{member[name]}`" for name in ("seed", "epoch", "checkpoint_sha256")
+                           if member.get(name) is not None)
+        lines.append(f"| {MEMBER_PREFIX}{k} | {fields} |")
     lines += [
         "",
         "Check a download with `sha256sum -c checksums.sha256`.",
         "",
         "</details>",
         "",
-        "<sub>Generated by "
-        + (
-            f"`python -m arcasleep_{family.name}.release card`"
-            if composite is not None
-            else f"`arcasleep {family.name} publish`"
-        )
-        + f" from `{provenance.get('git_commit', '?')}`.</sub>",
+        f"<sub>Generated by {generated_by or f'`arcasleep {family.name} publish`'}"
+        f" from `{provenance.get('git_commit', '?')}`.</sub>",
         "",
     ]
     return "\n".join(lines)
 
 
-def _describe_composite(composite: Mapping[str, Any]) -> list[str]:
-    """How a composite bundle's seeds are combined into one scoring."""
-    divisor = composite["stage_divisor"]
-    values = ", ".join(f"{name} {divisor[name]:.3g}" for name in divisor)
-    return [
-        f"The release is {len(composite['seeds'])} models of this architecture, one per seed "
-        "directory, each trained with a different seed. The mean of their outputs decides "
-        "wake or sleep. On the epochs called sleep, the mean light, deep and REM "
-        f"probabilities are each divided by the stage divisor ({values}) before the most "
-        "probable stage is chosen.",
-        "",
-    ]
+def _describe_members(config: Mapping[str, Any], parameter_count: int | None) -> list[str]:
+    """How an ensemble bundle's members are combined into one scoring."""
+    members = int(config.get("members", 1))
+    if members == 1:
+        lines = ["The release is one model of this architecture."]
+    else:
+        total = "" if parameter_count is None else f" ({parameter_count:,} weights in all)"
+        lines = [
+            f"The release is {members} models of this architecture, each trained with a "
+            f"different seed{total}. Their weights are in `model.safetensors` under the "
+            f"prefixes `{MEMBER_PREFIX}0/` to `{MEMBER_PREFIX}{members - 1}/`. The mean of "
+            "their outputs decides wake or sleep."
+        ]
+    divisor = config.get("stage_divisor")
+    if divisor:
+        values = ", ".join(f"{name} {divisor[name]:.3g}" for name in divisor)
+        lines.append(
+            "On the epochs called sleep, the light, deep and REM probabilities are each "
+            f"divided by the stage divisor in `config.json` ({values}) before the most "
+            "probable stage is chosen."
+        )
+    return [" ".join(lines), ""]
 
 
 def _fmt_n(value: Any) -> str:
@@ -997,25 +991,51 @@ def _is_remote_image(src: str) -> bool:
     return bool(re.match(r"^[a-z][a-z0-9+.-]*://", src)) or src.startswith(("data:", "#"))
 
 
+#: A line of an authored card that is replaced by the text of another file, whose path is
+#: relative to the card's directory: ``<!-- include: shared-section.md -->``.
+_INCLUDE = re.compile(r"^<!-- include: (?P<path>[^\n]+?) -->[ \t]*$", re.MULTILINE)
+
+
+def _expand_includes(card_text: str, card_dir: Path) -> str:
+    """Replace each include line of the authored card with the file it names."""
+
+    def read(match: re.Match[str]) -> str:
+        path = card_dir / match.group("path")
+        if not path.is_file():
+            raise FileNotFoundError(f"card include {match.group('path')!r} not found at {path}")
+        return path.read_text().strip("\n")
+
+    return _INCLUDE.sub(read, card_text)
+
+
 def _collect_assets(
     card_text: str, card_dir: Path, output_dir: Path
 ) -> tuple[str, tuple[str, ...]]:
     """Copy images the authored card references into :data:`ASSETS_DIR`.
 
+    Lines ``<!-- include: file.md -->`` are first replaced by that file's text (a
+    section shared by several cards); every image path is read relative to the card's
+    directory, included text included.
+
     A relative ``src`` is read from next to the card file, copied into the
     bundle's :data:`ASSETS_DIR`, and the link is rewritten to point there, so the
-    published card resolves on the Hub without the author's machine. A remote URL
-    (``https://``, ``data:`` or an already-bundled :data:`ASSETS_DIR` path) is left
-    alone. A relative path that does not resolve is an error: silently dropping a
-    figure the author asked for would ship a card with broken images.
+    published card resolves on the Hub without the author's machine. A ``src`` that
+    already starts with :data:`ASSETS_DIR` is copied the same way when that file exists
+    next to the card, and otherwise names a file the builder writes itself. A remote URL
+    (``https://`` or ``data:``) is left alone. A relative path that does not resolve is
+    an error: silently dropping a figure the author asked for would ship a card with
+    broken images.
     """
+    card_text = _expand_includes(card_text, card_dir)
     assets: list[str] = []
     #: destination basename -> source, to detect and disambiguate name clashes.
     used: dict[str, Path] = {}
 
     def rewrite(match: re.Match[str]) -> str:
         src = match.group("src")
-        if _is_remote_image(src) or src.startswith(f"{ASSETS_DIR}/"):
+        if _is_remote_image(src) or (
+            src.startswith(f"{ASSETS_DIR}/") and not (card_dir / src).is_file()
+        ):
             return match.group(0)
         source = (card_dir / src).resolve()
         if not source.is_file():
@@ -1260,6 +1280,9 @@ def build_release_bundle(
     repo_id: str | None = None,
     info: Path | str | None = None,
     family: str | None = None,
+    members: Sequence[Mapping[str, Any]] | None = None,
+    stage_divisor: Mapping[str, float] | None = None,
+    extra_provenance: Mapping[str, Any] | None = None,
     overwrite: bool = False,
 ) -> ReleaseBundle:
     """Build the release bundle from ``training_dir`` into ``output_dir``.
@@ -1271,6 +1294,14 @@ def build_release_bundle(
 
     ``family`` names the model family the checkpoint must belong to; the
     family is always read from the checkpoint itself.
+
+    ``members`` builds an ensemble bundle in place of the single checkpoint: one entry
+    per member with its ``checkpoint`` path and optionally its ``seed`` and ``epoch``.
+    All members' weights go in one ``model.safetensors`` under the prefixes
+    ``member0/``, ``member1/``, and so on; ``config.json`` gets ``"members": N``, and
+    ``provenance.json`` a ``members`` list of each one's seed, epoch and checkpoint
+    hash. ``stage_divisor`` (light, deep and REM, by name) goes in ``config.json``,
+    and ``extra_provenance`` is added to ``provenance.json``.
 
     ``info`` is a release-info TOML (:class:`ReleaseInfo`) describing the
     variant: its repo, audience, protocol, cohort descriptions and authored
@@ -1307,8 +1338,20 @@ def build_release_bundle(
                 child.unlink()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_path = _resolve_checkpoint(training_dir, checkpoint)
+    if members is not None and checkpoint is not None:
+        raise ValueError("pass either checkpoint or members, not both")
+    if members is not None and not members:
+        raise ValueError("an ensemble bundle needs at least one member")
+    checkpoint_paths = (
+        [_resolve_checkpoint(training_dir, m["checkpoint"]) for m in members]
+        if members is not None
+        else [_resolve_checkpoint(training_dir, checkpoint)]
+    )
+    checkpoint_path = checkpoint_paths[0]
     model_family = get_family(checkpoint_family(checkpoint_path))
+    for path in checkpoint_paths:
+        if checkpoint_family(path) != model_family.name:
+            raise ValueError(f"{path} is not a {model_family.name} checkpoint")
     if family is not None and family != model_family.name:
         raise ValueError(
             f"{checkpoint_path} is a {model_family.name} checkpoint, not {family}"
@@ -1317,12 +1360,20 @@ def build_release_bundle(
     model_config = phase_configs["model.json"]
     preprocessing = phase_configs["inputs.json"]
 
-    model = model_family.load_checkpoint(checkpoint_path, input_shape=input_shape)
+    models = [model_family.load_checkpoint(path, input_shape=input_shape) for path in checkpoint_paths]
+    model = models[0]
     resolved_shape = tuple(model.input_shape or ())
-    parameter_count = model.parameter_count()
-    model.save_weights_safetensors(output_dir / "model.safetensors")
+    parameter_count = sum(m.parameter_count() for m in models)
+    bundle_config: dict[str, Any] = {MODEL_TYPE_KEY: model_family.name, **model_config}
+    if members is None:
+        model.save_weights_safetensors(output_dir / "model.safetensors")
+    else:
+        _save_member_weights(models, output_dir / "model.safetensors")
+        bundle_config["members"] = len(models)
+    if stage_divisor is not None:
+        bundle_config["stage_divisor"] = {name: float(value) for name, value in stage_divisor.items()}
 
-    _write_json(output_dir / "config.json", {MODEL_TYPE_KEY: model_family.name, **model_config})
+    _write_json(output_dir / "config.json", bundle_config)
     _write_json(output_dir / "preprocessing.json", preprocessing)
     # metrics_effective.json is the resolved protocol the run actually scored
     # with; metrics.json is the request. Prefer the resolved one when present.
@@ -1357,9 +1408,20 @@ def build_release_bundle(
         git_commit=code_digest(),
         image_digest=None,
     )
+    if members is None:
+        provenance["checkpoint_sha256"] = sha256_file(checkpoint_path)
+    else:
+        del provenance["seed"]
+        provenance["members"] = [
+            {
+                "seed": m.get("seed"),
+                "epoch": m.get("epoch"),
+                "checkpoint_sha256": sha256_file(path),
+            }
+            for m, path in zip(members, checkpoint_paths, strict=True)
+        ]
     provenance.update(
         {
-            "checkpoint_sha256": sha256_file(checkpoint_path),
             "input_shape": list(resolved_shape),
             "run_id": identity.get("run_id"),
             "fold": identity.get("fold"),
@@ -1367,6 +1429,7 @@ def build_release_bundle(
             "trained_on": identity.get("training_dataset"),
             "training_dir": str(training_dir),
             "metrics_summary": str(metrics_summary) if metrics_summary else None,
+            **(extra_provenance or {}),
         }
     )
     _write_json(output_dir / "provenance.json", provenance)
@@ -1394,7 +1457,7 @@ def build_release_bundle(
         family=model_family,
         repo_id=repo_id,
         version=version,
-        config=model_config,
+        config=bundle_config,
         preprocessing=preprocessing,
         metrics=_read_json(output_dir / "metrics.json"),
         provenance=provenance,
@@ -1416,42 +1479,64 @@ def build_release_bundle(
     return ReleaseBundle(
         directory=output_dir,
         version=version,
-        checkpoint_sha256=provenance["checkpoint_sha256"],
+        checkpoint_sha256=provenance.get("checkpoint_sha256") or provenance["members"][0]["checkpoint_sha256"],
         input_shape=resolved_shape,
         files=BUNDLE_FILES + assets,
         card_review_status=CARD_REVIEW_PENDING if authored_text is None else "reviewed",
     )
 
 
-def write_composite_card(
+def _save_member_weights(models: Sequence[Any], path: Path) -> None:
+    """All members' weights in one safetensors file, member ``k``'s under ``member<k>/``.
+
+    Each model is exported as for a single-model bundle, so the member's tensor names
+    and the input-shape metadata are those of its own file.
+    """
+    import tempfile
+
+    from safetensors import safe_open
+    from safetensors.numpy import save_file
+
+    tensors: dict[str, Any] = {}
+    metadata: dict[str, str] | None = None
+    with tempfile.TemporaryDirectory() as tmp:
+        for k, model in enumerate(models):
+            member_path = Path(tmp) / f"member{k}.safetensors"
+            model.save_weights_safetensors(member_path)
+            with safe_open(str(member_path), framework="np") as handle:
+                member_metadata = handle.metadata() or {}
+                if metadata is not None and member_metadata != metadata:
+                    raise ValueError("every member must share one input shape")
+                metadata = member_metadata
+                for name in handle.keys():
+                    tensors[f"{MEMBER_PREFIX}{k}/{name}"] = handle.get_tensor(name)
+    save_file(tensors, str(path), metadata=metadata)
+
+
+def write_bundle_card(
     bundle_dir: Path | str,
     *,
     metrics_summary: Path | str,
     info: Path | str,
     repo_id: str | None = None,
+    grid_label: str | None = None,
+    generated_by: str | None = None,
 ) -> Path:
-    """Write ``README.md`` and ``checksums.sha256`` of a composite bundle.
+    """Write ``README.md`` and ``checksums.sha256`` of a built bundle from its scores.
 
-    The card is built as :func:`build_release_bundle` builds one: the
-    architecture, preprocessing, input requirements and provenance come from the
-    first seed's bundle, the scores from ``metrics_summary``, and the repo,
-    audience, protocol, cohorts and authored card from the release-info TOML
-    ``info``. The checksums cover ``composite.json``, the README, its images and
-    every file of the seed bundles, so :func:`verify_bundle` accepts the result.
-    Returns the README's path.
+    The card is built as :func:`build_release_bundle` builds one: the architecture,
+    preprocessing, input requirements and provenance come from the bundle's own files,
+    the scores from ``metrics_summary``, and the repo, audience, protocol, cohorts and
+    authored card from the release-info TOML ``info``. The assets are redrawn. The
+    checksums cover the fixed bundle files and the assets, so :func:`verify_bundle`
+    accepts the result. Returns the README's path.
     """
     bundle_dir = Path(bundle_dir)
-    composite_path = bundle_dir / COMPOSITE_FILENAME
-    if not composite_path.is_file():
-        raise FileNotFoundError(f"{bundle_dir} is not a composite bundle; missing {COMPOSITE_FILENAME}")
-    composite = _read_json(composite_path)
-    seed_dir = bundle_dir / composite["seeds"][0]
     release_info = load_release_info(info)
     repo_id = repo_id or release_info.repo or ""
-
-    model_family = get_family(release_family(composite))
-    config = _read_json(seed_dir / "config.json")
-    provenance = _read_json(seed_dir / "provenance.json")
+    config = _read_json(bundle_dir / "config.json")
+    provenance = _read_json(bundle_dir / "provenance.json")
+    model_family = get_family(release_family(config))
     shutil.rmtree(bundle_dir / ASSETS_DIR, ignore_errors=True)
 
     authored_text: str | None = None
@@ -1463,39 +1548,30 @@ def write_composite_card(
             release_info.card.read_text(), release_info.card.parent, bundle_dir
         )
         asset_list.extend(authored_assets)
-    grid_asset = _draw_metrics_grid(
-        _grid_table(metrics_summary), bundle_dir, label="5-fold CV + hold-out"
-    )
+    grid_asset = _draw_metrics_grid(_grid_table(metrics_summary), bundle_dir, label=grid_label)
     asset_list.append(grid_asset)
     assets = tuple(dict.fromkeys(asset_list))
 
     card_text = _model_card(
         family=model_family,
         repo_id=repo_id,
-        version=composite.get("version", ""),
+        version=provenance.get("package_version", ""),
         config=config,
-        preprocessing=_read_json(seed_dir / "preprocessing.json"),
-        metrics=_read_json(seed_dir / "metrics.json"),
+        preprocessing=_read_json(bundle_dir / "preprocessing.json"),
+        metrics=_read_json(bundle_dir / "metrics.json"),
         provenance=provenance,
         evaluation=None,
         summary=_summary_metrics(metrics_summary),
         authored_card=authored_text,
         info=release_info,
         grid_asset=grid_asset,
-        parameter_count=load_bundle_model(seed_dir).parameter_count(),
+        parameter_count=load_bundle_model(bundle_dir).parameter_count(),
         assets=assets,
-        composite=composite,
+        generated_by=generated_by,
     )
     readme = bundle_dir / "README.md"
     readme.write_text(card_text)
-
-    seed_files = [
-        path.relative_to(bundle_dir).as_posix()
-        for seed in composite["seeds"]
-        for path in sorted((bundle_dir / seed).rglob("*"))
-        if path.is_file()
-    ]
-    checksummed = [COMPOSITE_FILENAME, "README.md", *assets, *seed_files]
+    checksummed = [name for name in BUNDLE_FILES if name != "checksums.sha256"] + list(assets)
     (bundle_dir / "checksums.sha256").write_text(_checksums(bundle_dir, checksummed))
     return readme
 
@@ -1519,28 +1595,16 @@ def load_bundle_model(bundle_dir: Path | str):
 
 
 def bundle_family(bundle_dir: Path | str) -> str:
-    """The model family a release bundle's ``config.json`` names.
-
-    A composite bundle (several bundles scored together) has
-    ``composite.json`` instead, naming the family that scores it.
-    """
+    """The model family a release bundle's ``config.json`` names."""
     config_path = Path(bundle_dir) / "config.json"
-    composite_path = Path(bundle_dir) / COMPOSITE_FILENAME
-    if not config_path.is_file() and composite_path.is_file():
-        return release_family(_read_json(composite_path))
     if not config_path.is_file():
         raise FileNotFoundError(f"{bundle_dir} is not a release bundle; missing config.json")
     return release_family(_read_json(config_path))
 
 
 def verify_bundle(bundle_dir: Path | str) -> None:
-    """Check every file in ``checksums.sha256`` matches, and required files exist.
-
-    A composite bundle requires ``composite.json`` and ``README.md``; its seed
-    bundles are checksummed file by file in the composite's ``checksums.sha256``.
-    """
+    """Check every file in ``checksums.sha256`` matches, and required files exist."""
     bundle_dir = Path(bundle_dir)
-    composite_path = bundle_dir / COMPOSITE_FILENAME
     checksums = bundle_dir / "checksums.sha256"
     if not checksums.is_file():
         raise ValueError(f"{bundle_dir} has no checksums.sha256")
@@ -1550,10 +1614,9 @@ def verify_bundle(bundle_dir: Path | str) -> None:
             continue
         digest, _, name = line.partition("  ")
         expected[name] = digest
-    required = (COMPOSITE_FILENAME, "README.md") if composite_path.is_file() else BUNDLE_FILES
     missing = [
         name
-        for name in required
+        for name in BUNDLE_FILES
         if name != "checksums.sha256" and not (bundle_dir / name).is_file()
     ]
     if missing:
