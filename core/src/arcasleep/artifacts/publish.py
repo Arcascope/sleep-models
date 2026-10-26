@@ -833,7 +833,8 @@ def _model_card(
         "",
         "**Sleep stages from triaxial accelerometer recordings.**  ",
         "4-class sleep stage prediction, metric reports, and hypnograms. ",
-        "Built with a focus on sleep-wake."
+        "Built with a focus on sleep-wake.",
+        "",
     ]
 
     fs = preprocessing.get("fs")
