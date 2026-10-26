@@ -14,3 +14,4 @@ feature_cache/
 arcasleep_pseudonym.key
 
 plans/**
+.vscode/settings.json
