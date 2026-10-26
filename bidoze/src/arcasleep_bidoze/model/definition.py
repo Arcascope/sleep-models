@@ -111,6 +111,26 @@ class BiDozeNetConfig(ModelConfig):
     # from attention as a key, and its output is gap -- and every other epoch
     # gets gap probability 0. Needs `score_gap` for the 5-way output layout.
     gap_from_row: bool = False
+    # With `strands` > 0 the network is the strand-fusion architecture (F2): that many narrow
+    # bicausal BiDoze networks (conv bank `strand_width`, forward and reverse streams of half
+    # that width with `n_heads // 2` heads, `n_transformer_layers` layers, feed-forward width
+    # `strand_ffn`, gated fusion), each with its own 5-way head, whose penultimate features a
+    # fusion transformer combines: each strand's features go to `fusion_proj` dims, a strand
+    # embedding is added, the projections are concatenated and mapped to `fusion_width`, and
+    # `fusion_layers` full-attention layers (`fusion_heads` heads, feed-forward `fusion_ffn`)
+    # precede the output head. The balanced loss is the output head's plus `strand_loss_weight`
+    # times each strand head's. Needs `gap_from_row` and one frame per epoch; `d_model` and
+    # `d_ff` are not used.
+    strands: int = 0
+    strand_width: int = 112
+    strand_ffn: int = 112
+    strand_feature_dropout: float = 0.2
+    fusion_proj: int = 64
+    fusion_width: int = 128
+    fusion_layers: int = 2
+    fusion_heads: int = 4
+    fusion_ffn: int = 256
+    strand_loss_weight: float = 0.3
 
     @property
     def output_classes(self) -> int:
@@ -174,6 +194,13 @@ class BiDozeNetConfig(ModelConfig):
 
         if config.gap_from_row and not config.score_gap:
             raise ValueError("gap_from_row sets the gap output, so it needs score_gap")
+
+        if config.strands:
+            if config.strands < 1 or config.strand_width < 4 or config.strand_width % 4:
+                raise ValueError("strands needs a positive count and a strand_width divisible by four")
+            if config.num_classes != 4 or not config.gap_from_row or config.frames_per_epoch != 1:
+                raise ValueError("the strand-fusion architecture scores 4 stages with gap_from_row "
+                                 "and one frame per epoch")
 
         return config
 
@@ -1172,6 +1199,114 @@ class BiDozeNetModule(nn.Module):
         return logits
 
 
+class FusionTransformerModule(nn.Module):
+    """The strand-fusion head: per-epoch strand features to ``(B, T, num_classes)`` stage logits."""
+
+    cfg: BiDozeNetConfig
+
+    @nn.compact
+    def __call__(self, features: list[jnp.ndarray], present: jnp.ndarray, train: bool = False) -> jnp.ndarray:
+        cfg = self.cfg
+        embedding = self.param("strand_embedding", nn.initializers.normal(0.02), (cfg.strands, cfg.fusion_proj))
+        h = jnp.concatenate(
+            [
+                nn.Dense(cfg.fusion_proj, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name=f"project_{i}")(f)
+                + embedding[i]
+                for i, f in enumerate(features)
+            ],
+            axis=-1,
+        )
+        h = nn.Dense(cfg.fusion_width, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="mix")(h)
+        absent_keys = ~present[:, None, :]
+        for layer in range(cfg.fusion_layers):
+            h = TransformerBlockModule(
+                cfg.fusion_width, cfg.fusion_heads, cfg.fusion_ffn, cfg.dropout, cfg.attn_dropout,
+                name=f"layer_{layer}",
+            )(h, causal_mask=absent_keys, train=train)
+        h = nn.LayerNorm(epsilon=LAYER_NORM_EPS, name="norm")(h)
+        h = nn.Dropout(cfg.dropout, name="head_drop")(h, deterministic=not train)
+        return nn.Dense(cfg.num_classes, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name="head_logits")(h)
+
+
+class StrandFusionModule(nn.Module):
+    """The strand-fusion network (``BiDozeNetConfig.strands`` > 0): ``(B, T, 5)`` logits.
+
+    Absent epochs (gap row 1) are hidden as attention keys in every stream and the fusion
+    transformer, and every head's output is gap exactly there. With ``return_outputs`` the
+    result is a dict of the output ``logits``, the ``(strands, B, T, 5)`` ``strand_logits`` and
+    the output ``probabilities``.
+    """
+
+    cfg: BiDozeNetConfig
+
+    @nn.compact
+    def __call__(
+        self,
+        x: jnp.ndarray,
+        valid_mask: jnp.ndarray | None = None,
+        train: bool = False,
+        return_outputs: bool = False,
+    ) -> jnp.ndarray | dict[str, jnp.ndarray]:
+        cfg = self.cfg
+        present = present_from_gap_row(x)
+        mask = present.astype(x.dtype)
+        if valid_mask is not None:
+            mask = _normalize_valid_mask(x, valid_mask) * mask
+        x = bypass_learned_normalization(_flatten_timestep_features(x), valid_mask=mask)
+        length = x.shape[1]
+        local = []
+        for i in range(cfg.strands):
+            h = ConvBankModule(cfg.strand_width, cfg.conv_kernels, cfg.dropout, name=f"arm_{i}_cnn")(x, train=train)
+            # Each strand draws its own feature-dropout mask, shared over time within a row.
+            local.append(
+                nn.Dropout(cfg.strand_feature_dropout, broadcast_dims=(1,), name=f"arm_{i}_feature_drop")(
+                    h, deterministic=not train
+                )
+            )
+        d_stream = cfg.strand_width // 2
+        absent_keys = ~present[:, None, :]
+        streams = []
+        for direction, causal in (("fwd", _causal_mask(length)), ("rev", _reverse_causal_mask(length))):
+            hidden = causal[None] | absent_keys
+            states = []
+            for i, h in enumerate(local):
+                h = nn.Dense(d_stream, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name=f"arm_{i}_{direction}_in")(h)
+                for layer in range(cfg.n_transformer_layers):
+                    h = TransformerBlockModule(
+                        d_stream, cfg.n_heads // 2, cfg.strand_ffn, cfg.dropout, cfg.attn_dropout,
+                        name=f"arm_{i}_{direction}_{layer}",
+                    )(h, causal_mask=hidden, train=train)
+                states.append(h)
+            streams.append(states)
+        features, strand_logits = [], []
+        for i in range(cfg.strands):
+            h = jnp.concatenate([streams[0][i], streams[1][i]], axis=-1)
+            h = nn.Dense(cfg.strand_width, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS, name=f"arm_{i}_out")(h)
+            h = nn.LayerNorm(epsilon=LAYER_NORM_EPS, name=f"arm_{i}_out_norm")(h)
+            h = GatedFusionModule(cfg.strand_width, name=f"arm_{i}_fusion")(local[i], h)
+            h = _gelu(
+                nn.Dense(cfg.strand_width // 2, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS,
+                         name=f"arm_{i}_head_hidden")(h)
+            )
+            features.append(h)
+            h = nn.Dropout(cfg.dropout, name=f"arm_{i}_head_drop")(h, deterministic=not train)
+            logits = nn.Dense(cfg.num_classes, kernel_init=GLOROT_UNIFORM, bias_init=ZEROS,
+                              name=f"arm_{i}_head_logits")(h)
+            strand_logits.append(with_fixed_gap(logits, present))
+        logits = with_fixed_gap(FusionTransformerModule(cfg, name="fusion")(features, present, train=train), present)
+        if return_outputs:
+            return {
+                "logits": logits,
+                "strand_logits": jnp.stack(strand_logits),
+                "probabilities": jax.nn.softmax(logits, axis=-1),
+            }
+        return logits
+
+
+def build_module(config: BiDozeNetConfig) -> nn.Module:
+    return StrandFusionModule(config) if config.strands else BiDozeNetModule(config)
+
+
 class TrainState(train_state.TrainState):
     pass
 
@@ -1777,7 +1912,7 @@ class BiDozeNetModel(CVModel):
     def __init__(self, config: BiDozeNetConfig):
         super().__init__(config)
         self.config = config
-        self.module = BiDozeNetModule(config)
+        self.module = build_module(config)
         self.params: FrozenDict[str, Any] | None = None
         self.model: dict[str, Any] | None = None
         self.input_shape: tuple[int, ...] | None = None
@@ -1954,6 +2089,30 @@ class BiDozeNetModel(CVModel):
             console_kwargs={"force_terminal": False, "width": 120},
         )
 
+    def _balanced_loss(
+        self,
+        params: FrozenDict[str, Any],
+        x: jnp.ndarray,
+        mask: jnp.ndarray,
+        targets: jnp.ndarray,
+        key: jax.Array,
+        output_classes: int,
+        beta: float,
+    ) -> jnp.ndarray:
+        """The training loss of the balanced recipe: class-balanced cross-entropy on the logits;
+        for the strand-fusion architecture, plus ``strand_loss_weight`` times the same loss of
+        each strand's own head."""
+        cfg = self.config
+        rngs = {"dropout": key, "augment": key}
+        if not cfg.strands:
+            logits = self.module.apply({"params": params}, x, mask, train=True, rngs=rngs)
+            return balanced_cross_entropy(logits, targets, output_classes, beta)
+        out = self.module.apply({"params": params}, x, mask, train=True, rngs=rngs, return_outputs=True)
+        loss = balanced_cross_entropy(out["logits"], targets, output_classes, beta)
+        for strand in out["strand_logits"]:
+            loss = loss + cfg.strand_loss_weight * balanced_cross_entropy(strand, targets, output_classes, beta)
+        return loss
+
     def infer(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
         input_x = np.asarray(input_x, dtype=np.float32)
         if input_x.ndim < 3:
@@ -2006,6 +2165,8 @@ class BiDozeNetModel(CVModel):
         )
 
     def intermediates(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> list[dict[str, np.ndarray]]:
+        if self.config.strands:
+            raise NotImplementedError("the strand-fusion architecture has no intermediates")
         input_x = np.asarray(input_x, dtype=np.float32)
         if input_x.ndim < 3:
             raise ValueError(f"Expected input shape (B, T, ...), got {input_x.shape}")
@@ -3275,10 +3436,7 @@ class BiDozeNetModel(CVModel):
         @jax.jit
         def train_step(params, opt_state, xb, mb, yb, key):
             def loss_fn(p):
-                logits = module.apply(
-                    {"params": p}, xb, mb, train=True, rngs={"dropout": key, "augment": key}
-                )
-                return balanced_cross_entropy(logits, yb, output_classes, balance_beta)
+                return self._balanced_loss(p, xb, mb, yb, key, output_classes, balance_beta)
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
