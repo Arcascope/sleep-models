@@ -40,11 +40,12 @@ Output columns:
 
 ## Limitations
 
-- **Wake specificity is lower than sleep sensitivity.**
+- **Wake specificity is lowest, and total sleep time is overestimated, in
+  adults with sleep apnea.**
   - SleepAccel cross-validation: sleep sensitivity 95.5%, wake specificity
-    74.4%.
+    74.4%. Total sleep time is underestimated by 6.2 minutes on average.
   - Wearanize+ cross-validation: sleep sensitivity 94.2%, wake specificity
-    80.9%.
+    80.9%. Total sleep time is underestimated by 12.7 minutes on average.
   - SleepAccel-Clinical: sleep sensitivity 95.7%, wake specificity 62.5%.
     Total sleep time is overestimated by 24.0 minutes on average.
 - **Stage durations have larger errors than total sleep time.** On SleepAccel
