@@ -38,6 +38,8 @@ pisces = ["pisces-lite>=4.2.0"]
 # Training or predicting also needs the `train` or `inference` extra.
 bidoze = ["jax", "flax", "optax"]
 unet = ["jax", "flax", "optax"]
+# WatchTree: feature tables for the on-watch boosted-tree stager (and its LightGBM sanity fit).
+watchtree = ["numpy", "scipy", "pandas", "pyarrow", "scikit-learn", "lightgbm", "matplotlib", "arcasleep[prep]"]
 # Local inference from published releases (safetensors bundles): `predict`
 # runs the bundle's spectrogram pipeline, so it needs pisces-lite's senpy NUFFT
 # with its JAX backend (CPU is fine; add a CUDA jax for a GPU). pisces-lite also
@@ -82,7 +84,7 @@ Documentation = "https://huggingface.co/arcascope"
 # The shared code and each model family keep their own source tree; one
 # distribution installs them all.
 [tool.setuptools.packages.find]
-where = ["core/src", "bidoze/src", "unet/src"]
+where = ["core/src", "bidoze/src", "unet/src", "watchtree/src"]
 
 [tool.setuptools.package-data]
 "arcasleep.artifacts" = ["templates/*.md"]
@@ -108,7 +110,7 @@ select = ["E", "F", "I", "UP", "B"]
 # roots from the repository root, so they are otherwise treated as third-party.
 # Naming them keeps the convention -- a third-party block, a blank line, then
 # the first-party block -- under `ruff check --fix`.
-known-first-party = ["arcasleep", "arcasleep_bidoze", "arcasleep_unet"]
+known-first-party = ["arcasleep", "arcasleep_bidoze", "arcasleep_unet", "arcasleep_watchtree"]
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "bidoze/tests", "unet/tests"]
+testpaths = ["core/tests", "bidoze/tests", "unet/tests", "watchtree/tests"]
