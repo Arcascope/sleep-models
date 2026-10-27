@@ -230,3 +230,19 @@ def test_weights_scale_the_loss_and_sleep_wake_sleep_accepts_any_stage() -> None
     a = weighted_balanced_cross_entropy(logits, labels, jnp.ones((1, 8)), sw, log_probs, 4, 0.999)
     b = weighted_balanced_cross_entropy(other, labels, jnp.ones((1, 8)), sw, log_probs, 4, 0.999)
     assert np.isfinite(float(a)) and np.isfinite(float(b))
+
+
+def test_weak_sleep_with_no_stage_in_the_batch_is_weighted_by_its_own_count() -> None:
+    # A day window holds weak sleep and no PSG stage; its per-epoch weight must be the
+    # effective-number class weight of those epochs, not the weight of a class seen once.
+    epochs, beta, weight = 960, 0.999, 0.3
+    logits = jnp.zeros((1, epochs, 5))
+    log_probs = jnp.log(jnp.stack([jnp.full((1, epochs), 0.25), jnp.full((1, epochs), 0.75)], axis=-1))
+    labels = jnp.ones((1, epochs), dtype=jnp.int32)
+    sleep = jnp.ones((1, epochs), dtype=bool)
+    weights = jnp.full((1, epochs), weight)
+    loss = float(weighted_balanced_cross_entropy(logits, labels, weights, sleep, log_probs, 4, beta))
+    count = epochs * weight
+    class_weight = (1 - beta) / (1 - beta**count)
+    expected = class_weight * weight * -np.log(0.75)
+    assert loss == pytest.approx(expected, rel=1e-4)

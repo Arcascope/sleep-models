@@ -179,7 +179,9 @@ def weighted_balanced_cross_entropy(
     ``(..., 2)``, the log-probabilities of wake and of the summed sleep
     stages. A wake one counts toward the wake class and takes its class weight;
     a sleep one counts toward no stage and takes the mean class weight of the
-    sleep stages seen in the batch (1 when it holds none). The sum is
+    sleep stages seen in the batch; when the batch holds none, the effective-number
+    weight of its own weighted sleep count, so a window with no PSG stage is not
+    weighted at the scale of a class seen once. The sum is
     normalised by every epoch in the batch.
     """
     weights = weights.astype(jnp.float32)
@@ -191,10 +193,12 @@ def weighted_balanced_cross_entropy(
     counts = counts.at[0].add(jnp.where(wake, weights, 0.0).sum())
     class_weights = jnp.where(counts > 0, (1.0 - beta) / (1.0 - jnp.power(beta, counts)), 0.0)
     sleep_seen = counts[1:] > 0
+    sleep_count = jnp.where(sleep, weights, 0.0).sum()
+    own_weight = jnp.where(sleep_count > 0, (1.0 - beta) / (1.0 - jnp.power(beta, sleep_count)), 0.0)
     sleep_weight = jnp.where(
         sleep_seen.any(),
         jnp.where(sleep_seen, class_weights[1:], 0.0).sum() / jnp.maximum(sleep_seen.sum(), 1),
-        1.0,
+        own_weight,
     )
 
     log_probs = jax.nn.log_softmax(logits, axis=-1)
