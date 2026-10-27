@@ -161,6 +161,50 @@ def balanced_cross_entropy(
     return jnp.sum(weighted) / float(labels.size)
 
 
+def weighted_balanced_cross_entropy(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    weights: jnp.ndarray,
+    sleep_wake: jnp.ndarray,
+    sleep_wake_log_probs: jnp.ndarray,
+    num_classes: int,
+    beta: float,
+) -> jnp.ndarray:
+    """:func:`balanced_cross_entropy` with a loss weight and a target kind per epoch.
+
+    An epoch's ``weights`` entry scales its term and its contribution to the
+    class counts, so with every weight 1 and no sleep/wake-only epoch this is
+    :func:`balanced_cross_entropy`. A ``sleep_wake`` epoch has label 0 (wake)
+    or 1 (sleep of any stage) and is scored against ``sleep_wake_log_probs``
+    ``(..., 2)``, the log-probabilities of wake and of the summed sleep
+    stages. A wake one counts toward the wake class and takes its class weight;
+    a sleep one counts toward no stage and takes the mean class weight of the
+    sleep stages seen in the batch (1 when it holds none). The sum is
+    normalised by every epoch in the batch.
+    """
+    weights = weights.astype(jnp.float32)
+    stage = ~sleep_wake & (labels >= 0) & (labels < num_classes) & (weights > 0)
+    wake = sleep_wake & (labels == 0) & (weights > 0)
+    sleep = sleep_wake & (labels == 1) & (weights > 0)
+    safe_labels = jnp.where(stage, labels, 0)
+    counts = jnp.zeros(num_classes).at[safe_labels].add(jnp.where(stage, weights, 0.0))
+    counts = counts.at[0].add(jnp.where(wake, weights, 0.0).sum())
+    class_weights = jnp.where(counts > 0, (1.0 - beta) / (1.0 - jnp.power(beta, counts)), 0.0)
+    sleep_seen = counts[1:] > 0
+    sleep_weight = jnp.where(
+        sleep_seen.any(),
+        jnp.where(sleep_seen, class_weights[1:], 0.0).sum() / jnp.maximum(sleep_seen.sum(), 1),
+        1.0,
+    )
+
+    log_probs = jax.nn.log_softmax(logits, axis=-1)
+    stage_ce = -jnp.take_along_axis(log_probs, safe_labels[..., None], axis=-1)[..., 0]
+    stage_loss = class_weights[safe_labels] * weights * stage_ce * stage.astype(jnp.float32)
+    wake_loss = class_weights[0] * weights * -sleep_wake_log_probs[..., 0] * wake.astype(jnp.float32)
+    sleep_loss = sleep_weight * weights * -sleep_wake_log_probs[..., 1] * sleep.astype(jnp.float32)
+    return jnp.sum(stage_loss + wake_loss + sleep_loss) / float(labels.size)
+
+
 def sample_balanced_segments(
     nights: Sequence[tuple[np.ndarray, np.ndarray]],
     rng: np.random.Generator,
