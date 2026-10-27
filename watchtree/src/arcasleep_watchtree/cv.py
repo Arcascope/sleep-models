@@ -24,7 +24,7 @@ from scipy import stats
 from sklearn.metrics import cohen_kappa_score
 
 from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.costs import TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
+from arcasleep_watchtree.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
 from arcasleep_watchtree.features import (
     EPOCHS_PER_MIN,
     WINDOWS,
@@ -160,6 +160,13 @@ def ops_per_epoch(features: list[str]) -> dict[str, float]:
     for line in window_costs():
         if line.what in kept:
             total += line.ops_per_epoch
+    reach: dict[str, list[int]] = {}
+    for signal, stat, direction, minutes in WINDOWS:
+        for m in minutes:
+            if window_name(signal, stat, direction, m) in kept:
+                slot = reach.setdefault(signal, [0, 0])
+                slot[0 if direction == "b" else 1] = max(slot[0 if direction == "b" else 1], m * EPOCHS_PER_MIN)
+    ring_bytes = sum(sum(v) for v in reach.values()) * BYTES_PER_INT16
     trees = TREE_OPS_PER_EPOCH * (4 * MAX_ROUNDS) / 524
     return {
         "feature_ops": total,
@@ -168,6 +175,7 @@ def ops_per_epoch(features: list[str]) -> dict[str, float]:
         "total_ops": total + trees,
         "total_cpu_percent": 100 * (total + trees) / (WATCH_OPS_PER_S * C.EPOCH_S),
         "n_features": len(features),
+        "ring_bytes": ring_bytes,
     }
 
 
@@ -382,6 +390,8 @@ class Collector:
         print(experiment, cohort, config, f"n={len(table)}", f"k4={self.summary[-1]['kappa4_mean']:.3f}", flush=True)
 
     def write(self):
+        if not self.nights:
+            return
         pd.concat(self.nights, ignore_index=True).to_csv(self.out / "per_night.csv", index=False)
         pd.DataFrame(self.summary).to_csv(self.out / "summary.csv", index=False)
         if self.oof:
@@ -465,7 +475,45 @@ def run_all(features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]
                     pred, _ = run_folds(sel, feats, folds)
                     col.add("leak", cohort, f"{setup}/{label}", pred)
             col.write()
+    if "regions" in stages:
+        leak_regions(tables, nights["wearanize"], out)
     col.write()
+
+
+def leak_regions(tables, common, out: Path) -> None:
+    """Wearanize+ kappa by position in the PSG span, with cropped and uncropped features.
+
+    Regions are the first ``BACK_EPOCHS`` epochs, the last ``FWD_EPOCHS`` epochs and the middle
+    (the epochs that are complete-context on the cropped stream). All setups use the same folds
+    and the same nights; the fixed model is trained and scored on every scored PSG epoch.
+    """
+    folds = person_folds(sorted(select(tables["wearanize"], True).person.unique()))
+    setups = {
+        "cropped features, trained on all scored epochs": (tables["wearanize_cropped"], False),
+        "cropped features, trained on complete-context epochs": (tables["wearanize_cropped"], True),
+        "uncropped features, trained on all scored epochs": (tables["wearanize"], False),
+    }
+    rows = []
+    for name, (table, context) in setups.items():
+        sel = select(table, context)
+        sel = sel[sel.subject.isin(common)].reset_index(drop=True)
+        pred, _ = run_folds(sel, ALL, folds)
+        start = table[table.in_psg].groupby("subject").epoch.min()
+        length = table[table.in_psg].groupby("subject").size()
+        pos = pred.epoch.to_numpy() - pred.subject.map(start).to_numpy()
+        n = pred.subject.map(length).to_numpy()
+        region = np.where(pos < BACK_EPOCHS, "first 2 h", np.where(pos >= n - FWD_EPOCHS, "last 45 min", "middle"))
+        for r in ("first 2 h", "middle", "last 45 min"):
+            p = pred[region == r]
+            if len(p) == 0:
+                continue
+            rows.append({
+                "setup": name, "region": r, "n_epochs": len(p), "n_nights": p.subject.nunique(),
+                "pooled_kappa4": _kappa(p.y4, p.pred), "pooled_kappa_sw": _kappa(p.y4 > 0, p.pred > 0),
+                "wake_pred": float(np.mean(p.pred == 0)), "wake_psg": float(np.mean(p.y4 == 0)),
+            })
+        print("regions", name, flush=True)
+    pd.DataFrame(rows).to_csv(out / "leak_regions.csv", index=False)
 
 
 def main() -> None:
