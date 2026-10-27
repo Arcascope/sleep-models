@@ -360,8 +360,15 @@ class Predictor:
         ggir_sleep_filter: bool = True,
         ggir_error_fails: bool = False,
         subject_id: str | None = None,
+        window_step: int | None = None,
     ) -> Prediction:
-        """Score one recording; see :func:`predict`."""
+        """Score one recording; see :func:`predict`.
+
+        With ``window_step`` a model with a fixed context scores overlapping windows
+        that start every ``window_step`` epochs, and each epoch's logits are the
+        taper-weighted mean over the windows covering it
+        (:func:`overlapping_window_logits`). ``None`` scores consecutive windows.
+        """
         n_stages = len(self.stage_names)
         if return_gap_head and self.model.config.output_classes <= n_stages:
             raise ValueError("return_gap_head=True, but this model has no gap head")
@@ -383,12 +390,19 @@ class Predictor:
         # consecutive windows; the last one, or a whole recording scored in
         # one pass, is padded with absent epochs, as in training.
         L = self.context_epochs or -(-n_epochs // self.epoch_multiple) * self.epoch_multiple
-        chunks = [
-            pad_recording_input(inputs[s * model_fpe : (s + L) * model_fpe], L, model_fpe)
-            for s in range(0, n_epochs, L)
-        ]
-        logits = self.model.infer(np.stack(chunks))
-        logits = logits.reshape(-1, logits.shape[-1])[:n_epochs]
+        if window_step is not None:
+            if not self.context_epochs:
+                raise ValueError("window_step needs a model with a fixed context window")
+            logits = overlapping_window_logits(
+                self.model.infer, inputs, n_epochs, L, window_step, model_fpe
+            )
+        else:
+            chunks = [
+                pad_recording_input(inputs[s * model_fpe : (s + L) * model_fpe], L, model_fpe)
+                for s in range(0, n_epochs, L)
+            ]
+            logits = self.model.infer(np.stack(chunks))
+            logits = logits.reshape(-1, logits.shape[-1])[:n_epochs]
         probabilities, gap_head = _stage_and_gap_probabilities(logits, n_stages)
         _, missing = split_gap_row(pooled)
         epoch_start_s = origin_s + EPOCH_SECONDS * np.arange(n_epochs)
@@ -413,6 +427,72 @@ class Predictor:
             ggir_error_fails=ggir_error_fails,
             subject_id=subject_id,
         )
+
+
+def window_taper(window: int) -> np.ndarray:
+    """Hann-shaped weights over ``window`` epochs, ``sin^2(pi (i + 1/2) / window)``.
+
+    Largest in the middle and positive at both ends, so every epoch of a recording has
+    some weight.
+    """
+    return np.sin(np.pi * (np.arange(window) + 0.5) / window) ** 2
+
+
+def window_starts(n_epochs: int, window: int, step: int) -> list[int]:
+    """Window starts every ``step`` epochs from 0, plus a last one ending at the recording's end."""
+    if step < 1:
+        raise ValueError("window step must be at least 1 epoch")
+    starts = list(range(0, max(n_epochs - window, 0) + 1, step))
+    last = max(n_epochs - window, 0)
+    if starts[-1] != last:
+        starts.append(last)
+    return starts
+
+
+def overlapping_window_logits(
+    infer,
+    inputs: np.ndarray,
+    n_epochs: int,
+    window: int,
+    step: int,
+    frames_per_epoch: int,
+    batch_size: int = 8,
+) -> np.ndarray:
+    """Per-epoch logits ``(n_epochs, classes)`` from overlapping windows, edges weighted down.
+
+    Windows of ``window`` epochs start every ``step`` epochs
+    (:func:`window_starts`); a recording shorter than one window is padded with absent
+    epochs. Each epoch's output is the mean of the windows' logits covering it,
+    weighted by :func:`window_taper` at its position in each window, so an epoch near a
+    window's edge counts less than the same epoch near the middle of another.
+    ``infer`` maps ``(B, window[ * frames], ...)`` inputs to ``(B, window, classes)``
+    logits.
+    """
+    from arcasleep.data.batching import pad_recording_input
+
+    taper = window_taper(window)
+    starts = window_starts(n_epochs, window, step)
+    total = weight = None
+    for first in range(0, len(starts), batch_size):
+        batch = starts[first : first + batch_size]
+        chunks = [
+            pad_recording_input(
+                inputs[s * frames_per_epoch : (s + window) * frames_per_epoch],
+                window,
+                frames_per_epoch,
+            )
+            for s in batch
+        ]
+        logits = np.asarray(infer(np.stack(chunks)))
+        if total is None:
+            total = np.zeros((n_epochs, logits.shape[-1]))
+            weight = np.zeros(n_epochs)
+        for s, row in zip(batch, logits):
+            stop = min(s + window, n_epochs)
+            w = taper[: stop - s]
+            total[s:stop] += w[:, None] * row[: stop - s]
+            weight[s:stop] += w
+    return total / weight[:, None]
 
 
 def finish_prediction(
@@ -490,6 +570,7 @@ def predict(
     ggir_sleep_filter: bool = True,
     ggir_error_fails: bool = False,
     subject_id: str | None = None,
+    window_step: int | None = None,
 ) -> Prediction:
     """Per-epoch sleep stages for one recording.
 
@@ -513,6 +594,11 @@ def predict(
     is returned with the filter columns empty and a warning;
     ``ggir_error_fails=True`` re-raises instead.
 
+    ``window_step`` scores a model with a fixed context in overlapping windows
+    that start every ``window_step`` epochs, weighting each window's output by a
+    taper that counts epochs near its edges less (:meth:`Predictor.predict`);
+    the default scores consecutive windows.
+
     Loads the bundle on every call; use :class:`Predictor` for many recordings.
     """
     return load_predictor(bundle_dir).predict(
@@ -522,6 +608,7 @@ def predict(
         ggir_sleep_filter=ggir_sleep_filter,
         ggir_error_fails=ggir_error_fails,
         subject_id=subject_id,
+        window_step=window_step,
     )
 
 
