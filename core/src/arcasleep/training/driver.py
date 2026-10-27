@@ -31,7 +31,12 @@ from arcasleep.data.cache import (
 )
 from arcasleep.data.constants import GAP_LABEL
 from arcasleep.evaluation.predictions import PREDICTIONS_DIRNAME, write_scored_prediction
-from arcasleep.evaluation.staging_metrics import GAP_STAGE_INDEX, labels_for_metric_scoring
+from arcasleep.evaluation.staging_metrics import (
+    GAP_STAGE_INDEX,
+    MASKED_LABEL,
+    labels_for_metric_scoring,
+)
+from arcasleep.predict import overlapping_window_logits
 from arcasleep.training.config import RunConfig
 from arcasleep.training.folds import build_dataset_index, build_folds
 
@@ -39,6 +44,10 @@ from arcasleep.training.folds import build_dataset_index, build_folds
 RULE = "=" * 80
 #: Subdirectory of a results directory holding each fold's fit/eval split.
 FIT_EVAL_SPLITS_DIRNAME = "fit_eval_splits"
+#: Label of an epoch outside the PSG span in an uncropped cache.
+OUTSIDE_PSG_LABEL = -3
+#: A windowed model scores overlapping windows starting every window / this many epochs.
+WINDOW_STEP_DIVISOR = 8
 
 
 def softmax(logits: np.ndarray) -> np.ndarray:
@@ -60,6 +69,7 @@ def evaluate_subject(
     target_y_length: int,
     num_classes: int,
     return_context: bool = False,
+    window_step: int | None = None,
 ) -> tuple[np.ndarray, ...]:
     """Score one held-out subject into ``(y_true, y_pred_proba)``.
 
@@ -71,6 +81,12 @@ def evaluate_subject(
     and pad epochs — genuinely absent data — fold into the gap class beside
     any gap the subject already carried.
 
+    With ``window_step`` the whole recording is scored in overlapping windows of
+    ``target_x_length`` epochs that start every ``window_step`` epochs
+    (:func:`arcasleep.predict.overlapping_window_logits`), and the returned arrays
+    have one row per recording epoch. Epochs outside the PSG (label
+    :data:`OUTSIDE_PSG_LABEL`) are masked, so metrics count PSG-labelled epochs only.
+
     ``return_context`` appends the pooled/padded spectrogram and the rendered
     truth (gap at :data:`GAP_STAGE_INDEX`, not masked) so a caller can draw a
     hypnogram from the arrays that were scored, without a second infer.
@@ -80,6 +96,20 @@ def evaluate_subject(
     frames_per_epoch = model.config.frames_per_epoch
 
     X_input = recording_input(X, y.shape[0], frames_per_epoch)
+    if window_step is not None:
+        logits = overlapping_window_logits(
+            model.infer, X_input, y.shape[0], target_x_length, window_step, frames_per_epoch
+        )
+        proba = softmax(logits) if model.returns_logits() else logits
+        y_scored = np.where(y == GAP_LABEL, GAP_STAGE_INDEX, y)
+        y_scored = np.where(y_scored == OUTSIDE_PSG_LABEL, MASKED_LABEL, y_scored)
+        y_true = labels_for_metric_scoring(y_scored)
+        if return_context:
+            X_pooled = X_input
+            if frames_per_epoch > 1:
+                X_pooled = pool_frames_to_epochs(X_input[None], np.zeros((1, y.shape[0])))[0]
+            return y_true, proba, X_pooled, y_scored
+        return y_true, proba
     X_padded = pad_recording_input(X_input, target_x_length, frames_per_epoch)
     y_padded = pad_or_truncate(y, target_length=target_y_length, pad_value=GAP_LABEL, axis=0)
     y_scored = np.where(y_padded == GAP_LABEL, GAP_STAGE_INDEX, y_padded)
@@ -272,6 +302,7 @@ def _run_fold(
     )
     train_dataset_desc = "+".join(sorted({r.dataset_name for r in fold.train_subjects}))
     predictions_dir = paths.results / PREDICTIONS_DIRNAME / seed_fold_id
+    window_step = config.family.scoring_window_step(config)
     for test_ref in fold.test_subjects:
         y_true, y_pred_proba = evaluate_subject(
             model,
@@ -279,6 +310,7 @@ def _run_fold(
             target_x_length=target_x,
             target_y_length=target_y,
             num_classes=num_classes,
+            window_step=window_step,
         )
         logger.record(
             csv_path=csv_path,

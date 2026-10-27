@@ -140,3 +140,19 @@ def test_windowed_fit_is_seed_deterministic_and_trains() -> None:
     assert np.isfinite(first["train_loss"]).all()
     logits = model.infer(eval_batch.x)
     assert logits.shape == (2, WINDOW, 5)
+
+
+def test_only_a_windowed_run_scores_in_overlapping_windows() -> None:
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from arcasleep_bidoze.family import FAMILY
+    from arcasleep_bidoze.training import TrainingConfig
+
+    config_dir = Path(__file__).parents[1] / "config"
+    windowed = TrainingConfig.from_json(config_dir / "training-8h.json")
+    plain = TrainingConfig.from_json(config_dir / "training-balanced.json")
+
+    assert FAMILY.scoring_window_step(SimpleNamespace(training=windowed)) == windowed.window_epochs // 8
+    assert FAMILY.scoring_window_step(SimpleNamespace(training=plain)) is None

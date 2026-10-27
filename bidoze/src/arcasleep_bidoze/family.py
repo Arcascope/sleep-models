@@ -26,6 +26,12 @@ class BiDozeFamily(ModelFamily):
         # The model is fitted at a fixed context and always scored at it.
         return config.training.x_length, config.training.y_length
 
+    def scoring_window_step(self, config) -> int | None:
+        from arcasleep.training.driver import WINDOW_STEP_DIVISOR
+
+        training = config.training
+        return max(1, training.window_epochs // WINDOW_STEP_DIVISOR) if training.windowed else None
+
     def describe_training(self, config) -> str:
         training = config.training
         if training.recipe == "balanced":
