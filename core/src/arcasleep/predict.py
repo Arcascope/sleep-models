@@ -525,17 +525,52 @@ def predict(
     )
 
 
-def read_accelerometer(path: Path | str) -> np.ndarray:
+#: Seconds per tick of each timestamp unit :func:`read_accelerometer` accepts.
+TIME_UNITS = {"s": 1.0, "ms": 1e-3, "us": 1e-6}
+#: Unix timestamps at or above these are taken as microseconds or milliseconds;
+#: 1e11 s is the year 5138, while 1e11 ms is 1973 and 1e14 us is 1973.
+_US_THRESHOLD = 1e14
+_MS_THRESHOLD = 1e11
+
+
+def read_accelerometer(path: Path | str, time_unit: str | None = None) -> np.ndarray:
     """Read ``t, x, y, z`` columns from a comma- or whitespace-separated file.
 
     A single header row is skipped. Extra columns after the fourth are ignored.
+    The returned timestamps are in seconds. ``time_unit`` is the file's unit,
+    ``"s"``, ``"ms"`` or ``"us"``; with ``None`` it is detected:
+
+    - a first header column containing ``ms`` means milliseconds;
+    - otherwise a first timestamp ≥ 1e14 means microseconds, and ≥ 1e11
+      milliseconds, as Unix times in seconds are far below both;
+    - otherwise seconds.
     """
+    if time_unit is not None and time_unit not in TIME_UNITS:
+        raise ValueError(f"time_unit must be one of {sorted(TIME_UNITS)}; got {time_unit!r}")
     path = Path(path)
     with path.open() as handle:
         first = handle.readline()
     delimiter = "," if "," in first else None
     header = not _is_numeric_row(first, delimiter)
-    return np.loadtxt(path, delimiter=delimiter, skiprows=int(header), usecols=range(4), ndmin=2)
+    accel = np.loadtxt(
+        path, delimiter=delimiter, skiprows=int(header), usecols=range(4), ndmin=2
+    )
+    if time_unit is None:
+        time_unit = _detect_time_unit(first.split(delimiter)[0] if header else None, accel)
+    accel[:, 0] *= TIME_UNITS[time_unit]
+    return accel
+
+
+def _detect_time_unit(time_column: str | None, accel: np.ndarray) -> str:
+    """The timestamp unit from the time column's header, else the timestamps' magnitude."""
+    if time_column is not None and "ms" in time_column.strip().lower():
+        return "ms"
+    first_t = abs(float(accel[0, 0])) if accel.shape[0] else 0.0
+    if first_t >= _US_THRESHOLD:
+        return "us"
+    if first_t >= _MS_THRESHOLD:
+        return "ms"
+    return "s"
 
 
 def _is_numeric_row(line: str, delimiter: str | None) -> bool:
@@ -650,6 +685,7 @@ def predict_files(
     ggir_sleep_filter: bool = True,
     ggir_error_fails: bool = False,
     hypnogram: bool = False,
+    time_unit: str | None = None,
 ) -> list[Path]:
     """Write ``<output_dir>/<input stem>.csv`` per input, one CSV containing per-subject 
     summary metrics, and one CSV that has macro statistics for all iputs.
@@ -657,7 +693,9 @@ def predict_files(
     The summary has a row per input, in input order; the subject id
     recorded in it is the input file's stem. The macro summary pools
     their ``tst_minutes`` into a mean, standard error and deciles. With ``hypnogram``, a
-    ``<stem>.png`` hypnogram is saved beside each prediction.
+    ``<stem>.png`` hypnogram is saved beside each prediction. ``time_unit`` is
+    the inputs' timestamp unit, detected per file when ``None``; see
+    :func:`read_accelerometer`.
     """
     predictor = load_predictor(bundle_dir)
     output_dir = Path(output_dir)
@@ -665,7 +703,7 @@ def predict_files(
     summaries = []
     for path in map(Path, inputs):
         result = predictor.predict(
-            read_accelerometer(path),
+            read_accelerometer(path, time_unit),
             origin,
             return_gap_head=return_gap_head,
             ggir_sleep_filter=ggir_sleep_filter,
