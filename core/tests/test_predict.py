@@ -122,6 +122,44 @@ def test_reads_comma_or_space_separated_files_with_or_without_a_header(tmp_path,
     np.testing.assert_allclose(accel, [[0, 0.1, 0.2, 0.9], [0.1, 0.1, 0.2, 0.9]])
 
 
+@pytest.mark.parametrize(
+    ("text", "time_unit", "expected"),
+    [
+        # Milliseconds from the header, even for a clock starting at 0.
+        ("timestampMs,x,y,z\n0,0.1,0.2,0.9\n20,0.1,0.2,0.9\n", None, [0.0, 0.02]),
+        # Milliseconds and microseconds from Unix-time magnitude.
+        ("t,x,y,z\n1793022216141,0.1,0.2,0.9\n1793022216161,0.1,0.2,0.9\n", None,
+         [1793022216.141, 1793022216.161]),
+        ("1793022216141000 0.1 0.2 0.9\n1793022216161000 0.1 0.2 0.9\n", None,
+         [1793022216.141, 1793022216.161]),
+        # Unix seconds stay seconds.
+        ("t,x,y,z\n1793022216.141,0.1,0.2,0.9\n1793022216.161,0.1,0.2,0.9\n", None,
+         [1793022216.141, 1793022216.161]),
+        # An explicit unit overrides detection.
+        ("t,x,y,z\n0,0.1,0.2,0.9\n20,0.1,0.2,0.9\n", "ms", [0.0, 0.02]),
+        ("t,x,y,z\n0,0.1,0.2,0.9\n20000,0.1,0.2,0.9\n", "us", [0.0, 0.02]),
+        ("timestampMs,x,y,z\n0,0.1,0.2,0.9\n20,0.1,0.2,0.9\n", "s", [0.0, 20.0]),
+    ],
+)
+def test_reads_timestamps_in_seconds_milliseconds_or_microseconds(
+    tmp_path, text, time_unit, expected
+) -> None:
+    path = tmp_path / "night.csv"
+    path.write_text(text)
+
+    accel = read_accelerometer(path, time_unit)
+
+    np.testing.assert_allclose(accel[:, 0], expected, rtol=0, atol=1e-6)
+    np.testing.assert_allclose(accel[:, 1:], [[0.1, 0.2, 0.9]] * 2)
+
+
+def test_rejects_an_unknown_time_unit(tmp_path) -> None:
+    path = tmp_path / "night.csv"
+    path.write_text("0,0.1,0.2,0.9\n")
+    with pytest.raises(ValueError, match="time_unit"):
+        read_accelerometer(path, "min")
+
+
 def test_origin_defaults_to_the_first_sample_and_unix_snaps_to_whole_epochs() -> None:
     assert _resolve_origin(None, 1_700_000_012.5) == 1_700_000_012.5
     assert _resolve_origin("unix", 1_700_000_012.5) == 1_700_000_010.0

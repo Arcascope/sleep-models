@@ -602,6 +602,7 @@ def _predict(args: argparse.Namespace) -> int:
             ggir_sleep_filter=args.ggir_sleep_filter,
             ggir_error_fails=args.ggir_error_fails,
             hypnogram=args.hypnogram,
+            time_unit=args.time,
         )
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -954,7 +955,7 @@ def _add_family_commands(commands, family: str) -> None:
     predict.add_argument(
         "inputs",
         nargs="+",
-        help="files of t [s], x, y, z [g] columns, comma- or space-separated; globs allowed",
+        help="files of t, x, y, z [g] columns, comma- or space-separated; globs allowed",
     )
     predict.add_argument(
         "-o", "--output-dir", required=True, help="one <input stem>.csv is written here per input"
@@ -963,6 +964,13 @@ def _add_family_commands(commands, family: str) -> None:
         "--origin",
         help="where epoch 0 starts, in seconds on the input clock, or 'unix'; "
              "defaults to the first sample",
+    )
+    predict.add_argument(
+        "--time",
+        choices=("s", "ms", "us"),
+        help="unit of the t column: seconds, milliseconds or microseconds. "
+             "Without it: ms if the t header contains 'ms'; otherwise ms or us "
+             "if the first timestamp is too large for Unix seconds; otherwise s",
     )
     predict.add_argument(
         "--return-gap-head",
