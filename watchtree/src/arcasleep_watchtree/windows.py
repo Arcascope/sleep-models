@@ -27,7 +27,7 @@ def _bounds(n_epochs: int, n: int, direction: str) -> tuple[np.ndarray, np.ndarr
 
 
 def window_stat(values: np.ndarray, stat: str, direction: str, n: int) -> np.ndarray:
-    """``stat`` of ``values`` over a backward (``"b"``) or forward (``"f"``) window of ``n`` epochs."""
+    """``stat`` of ``values`` over a backward (``"b"``) or forward (``"f"``) window of epochs."""
     values = np.asarray(values, dtype=np.float64)
     n_epochs = values.size
     lo, hi = _bounds(n_epochs, n, direction)
