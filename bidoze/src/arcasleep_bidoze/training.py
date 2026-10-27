@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 
 import numpy as np
 from pisces_lite.cv import Fold, SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
-from arcasleep.data.batching import assemble_batch
+from arcasleep.data.batching import assemble_batch, recording_input
+from arcasleep.data.weak_labels import WEAK_LABEL_RULES, WeakLabelConfig, label_recording
 from arcasleep.training.balanced import Patience, split_train_eval
 from arcasleep.training.config import RunConfig, read_json, reject_unknown, require_one_of
 from arcasleep.training.folds import DatasetIndex, deblip_subjects_for_fold
+from arcasleep.training.windows import WindowMix, WindowRecording, WindowSampler
 
 DEBLIP_SCHEDULES = frozenset({"interleaved", "final"})
 CURRICULUM_LOSS_MODES = frozenset({"staged", "weighted"})
@@ -47,6 +49,18 @@ BALANCED_ONLY_KEYS = (
     "eval_fraction",
     "init_weights",
     "distill_from",
+)
+
+# Keys of the windowed mode of the balanced recipe; they change nothing unless `windowed` is true.
+WINDOW_ONLY_KEYS = (
+    "window_epochs",
+    "window_mix",
+    "windows_per_recording",
+    "weak_label_rules",
+    "weak_label_strong_weight",
+    "weak_label_weak_weight",
+    "weak_label_sleep_weight",
+    "min_sib_bout_minutes",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -98,6 +112,21 @@ class TrainingConfig:
     init_weights: str | None = None
     # A directory of teacher checkpoints (*.pisces); the fit distills their mean output.
     distill_from: str | None = None
+    # With `windowed` (balanced recipe) each epoch draws `windows_per_recording` windows of
+    # `window_epochs` epochs per training recording, at random offsets over the whole recording,
+    # in the kinds and shares of `window_mix` (see arcasleep.training.windows). The recordings
+    # come from an uncropped cache; `weak_label_rules` (names in arcasleep.data.weak_labels)
+    # label epochs outside the PSG: wake at `weak_label_strong_weight` or `weak_label_weak_weight`, sleep (any stage) at `weak_label_sleep_weight`. The
+    # model's `x_length` and `y_length` are then `window_epochs`.
+    windowed: bool = False
+    window_epochs: int = 960
+    window_mix: dict[str, float] = field(default_factory=lambda: asdict(WindowMix()))
+    windows_per_recording: int = 1
+    weak_label_rules: list[str] = field(default_factory=list)
+    weak_label_strong_weight: float = 1.0
+    weak_label_weak_weight: float = 0.3
+    weak_label_sleep_weight: float = 0.3
+    min_sib_bout_minutes: float = 20.0
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -145,6 +174,15 @@ class TrainingConfig:
         if changed:
             raise ValueError(f"training.json: the {self.recipe} recipe does not use {changed}")
 
+        if self.windowed:
+            self._validate_windowed()
+        else:
+            defaults = {f.name: f.default_factory() if f.default_factory is not MISSING else f.default
+                        for f in fields(self) if f.name in WINDOW_ONLY_KEYS}
+            changed = sorted(name for name, value in defaults.items() if getattr(self, name) != value)
+            if changed:
+                raise ValueError(f"training.json: {changed} need windowed true")
+
         require_one_of(
             self.curriculum_loss_mode, CURRICULUM_LOSS_MODES, "training.json curriculum_loss_mode"
         )
@@ -178,6 +216,37 @@ class TrainingConfig:
             raise ValueError(f"training.json: {exc}") from None
         if not 0.0 < self.eval_fraction < 1.0:
             raise ValueError("training.json: eval_fraction must be in (0, 1)")
+
+    def _validate_windowed(self) -> None:
+        if self.recipe != "balanced":
+            raise ValueError("training.json: windowed needs the balanced recipe")
+        if self.distill_from is not None:
+            raise ValueError("training.json: windowed does not combine with distill_from")
+        if self.window_epochs < 1 or self.windows_per_recording < 1:
+            raise ValueError("training.json: window_epochs and windows_per_recording must be at least 1")
+        if self.x_length != self.window_epochs or self.y_length != self.window_epochs:
+            raise ValueError("training.json: windowed needs x_length and y_length equal to window_epochs")
+        WindowMix.from_dict(self.window_mix)
+        WeakLabelConfig(*self._weak_weights())
+        unknown = sorted(set(self.weak_label_rules) - set(WEAK_LABEL_RULES))
+        if unknown:
+            raise ValueError(f"training.json: unknown weak_label_rules {unknown}")
+
+    @property
+    def window_sampling_mix(self) -> WindowMix:
+        return WindowMix.from_dict(self.window_mix)
+
+    @property
+    def weak_label_weights(self) -> WeakLabelConfig:
+        return WeakLabelConfig(*self._weak_weights())
+
+    def _weak_weights(self) -> tuple[float, float, float, float]:
+        return (
+            self.weak_label_strong_weight,
+            self.weak_label_weak_weight,
+            self.weak_label_sleep_weight,
+            self.min_sib_bout_minutes,
+        )
 
     @property
     def patience(self) -> Patience:
@@ -354,6 +423,8 @@ def _train_fold_balanced(
         )
     num_classes = config.model.num_classes
     frames_per_epoch = config.model.frames_per_epoch
+    if training.windowed:
+        return _fit_windows(config, fit_refs, eval_refs, features, fit_seed)
     X_fit, y_fit = assemble_batch(
         features, fit_refs, training.x_length, training.y_length, num_classes,
         frames_per_epoch=frames_per_epoch,
@@ -387,6 +458,84 @@ def _train_fold_balanced(
         fit_seed=fit_seed,
         soft_targets=soft_targets,
         score_start=training.init_weights is not None,
+    )
+    print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
+    return model
+
+
+def window_recordings(
+    config: RunConfig,
+    refs,
+    features: Mapping[SubjectRef, ModelIOBundle],
+    *,
+    rules: list[str],
+) -> list[WindowRecording]:
+    """Each recording of ``refs`` as a :class:`WindowRecording`, labelled by ``rules``.
+
+    The model input is built at the model's frames per epoch. A recording with no
+    supervised epoch is left out.
+    """
+    num_classes = config.model.num_classes
+    fpe = config.model.frames_per_epoch
+    recordings = []
+    for ref in refs:
+        bundle = features[ref]
+        y = bundle.y_for_n_classes(num_classes)[0]
+        anglez = getattr(bundle, "anglez_5s", None)
+        targets = label_recording(
+            y,
+            None if anglez is None else anglez[0],
+            rules,
+            config.training.weak_label_weights,
+        )
+        x = recording_input(bundle.X[0], y.shape[0], fpe).astype(np.float32)
+        if ((targets.labels >= 0) & (targets.weights > 0)).any():
+            recordings.append(WindowRecording(x, targets))
+    return recordings
+
+
+def _fit_windows(config: RunConfig, fit_refs, eval_refs, features, fit_seed: int):
+    """The windowed balanced fit: random windows of the fit recordings, early-stopped on the
+    eval recordings' PSG-centred windows scored against their PSG labels alone."""
+    from arcasleep_bidoze.model import BiDozeNetModel
+
+    training: TrainingConfig = config.training
+    fpe = config.model.frames_per_epoch
+    fit = window_recordings(config, fit_refs, features, rules=training.weak_label_rules)
+    sampler = WindowSampler(
+        fit,
+        training.window_epochs,
+        training.window_sampling_mix,
+        frames_per_epoch=fpe,
+        windows_per_recording=training.windows_per_recording,
+    )
+    evaluation = window_recordings(config, eval_refs, features, rules=[])
+    eval_batch = WindowSampler(
+        evaluation, training.window_epochs, frames_per_epoch=fpe
+    ).centered()
+    print(
+        f"  windows: {len(fit)} fit recordings x {training.windows_per_recording} "
+        f"x {training.window_epochs} epochs per epoch; {len(evaluation)} eval windows"
+    )
+
+    model = BiDozeNetModel(config.model)
+    if training.init_weights is not None:
+        _load_init_weights(model, Path(training.init_weights), sampler.input_shape)
+        print(f"  starting from the weights of {training.init_weights}")
+    history = model.fit_balanced(
+        None,
+        None,
+        eval_batch.x,
+        eval_batch.labels,
+        batch_size=training.batch_size,
+        initial_lr=training.lr,
+        weight_decay=training.weight_decay,
+        balance_beta=training.balance_beta,
+        patience=training.patience,
+        max_epochs=training.epochs,
+        fit_seed=fit_seed,
+        score_start=training.init_weights is not None,
+        windows=sampler,
     )
     print(f"  best eval kappa {history['best_eval_kappa']:.4f} at epoch {history['best_epoch']}")
     return model

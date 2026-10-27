@@ -38,7 +38,9 @@ from arcasleep.training.balanced import (
     balanced_cross_entropy,
     sample_balanced_segments,
     selection_confusion,
+    weighted_balanced_cross_entropy,
 )
+from arcasleep.training.windows import WindowSampler
 
 
 
@@ -400,6 +402,11 @@ def hierarchical_masked_focal_loss(
 
 
 CURRICULUM_STAGE_MAPS = (STAGE_1_MAP, STAGE_2_MAP, STAGE_3_MAP)
+
+
+def sleep_wake_stage_map(num_classes: int) -> dict[int, list[int]]:
+    """Wake against every sleep stage: :data:`STAGE_1_MAP` without its gap group, for any class count."""
+    return {0: [0], 1: list(range(1, num_classes))}
 
 
 def _grouped_probs_and_labels(
@@ -2098,19 +2105,38 @@ class BiDozeNetModel(CVModel):
         key: jax.Array,
         output_classes: int,
         beta: float,
+        weights: jnp.ndarray | None = None,
+        sleep_wake: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         """The training loss of the balanced recipe: class-balanced cross-entropy on the logits;
         for the strand-fusion architecture, plus ``strand_loss_weight`` times the same loss of
-        each strand's own head."""
+        each strand's own head.
+
+        With ``weights`` and ``sleep_wake`` ``(B, T)`` the loss is
+        :func:`~arcasleep.training.balanced.weighted_balanced_cross_entropy`: ``weights`` scale each
+        epoch, and a ``sleep_wake`` epoch's target is wake (0) or any sleep stage (1), scored on
+        :func:`sleep_wake_stage_map`'s grouping of the log-probabilities.
+        """
         cfg = self.config
         rngs = {"dropout": key, "augment": key}
+        if weights is None:
+            loss_fn = lambda logits: balanced_cross_entropy(logits, targets, output_classes, beta)
+        else:
+            groups = sleep_wake_stage_map(cfg.num_classes)
+
+            def loss_fn(logits):
+                log_probs = grouped_logits(jax.nn.log_softmax(logits, axis=-1), groups)
+                return weighted_balanced_cross_entropy(
+                    logits, targets, weights, sleep_wake, log_probs, output_classes, beta
+                )
+
         if not cfg.strands:
             logits = self.module.apply({"params": params}, x, mask, train=True, rngs=rngs)
-            return balanced_cross_entropy(logits, targets, output_classes, beta)
+            return loss_fn(logits)
         out = self.module.apply({"params": params}, x, mask, train=True, rngs=rngs, return_outputs=True)
-        loss = balanced_cross_entropy(out["logits"], targets, output_classes, beta)
+        loss = loss_fn(out["logits"])
         for strand in out["strand_logits"]:
-            loss = loss + cfg.strand_loss_weight * balanced_cross_entropy(strand, targets, output_classes, beta)
+            loss = loss + cfg.strand_loss_weight * loss_fn(strand)
         return loss
 
     def infer(self, input_x: np.ndarray, valid_mask: np.ndarray | None = None) -> np.ndarray:
@@ -3379,8 +3405,8 @@ class BiDozeNetModel(CVModel):
 
     def fit_balanced(
         self,
-        train_x: np.ndarray,
-        train_y: np.ndarray,
+        train_x: np.ndarray | None,
+        train_y: np.ndarray | None,
         eval_x: np.ndarray,
         eval_y: np.ndarray,
         *,
@@ -3396,6 +3422,7 @@ class BiDozeNetModel(CVModel):
         eval_batch_size: int = 4,
         soft_targets: np.ndarray | None = None,
         score_start: bool = False,
+        windows: WindowSampler | None = None,
     ) -> dict:
         """Fit with the class-balanced recipe, early-stopping on ``eval_*``'s Cohen's kappa.
 
@@ -3417,13 +3444,24 @@ class BiDozeNetModel(CVModel):
 
         With ``score_start`` the starting parameters are scored as epoch 0 and kept
         unless a later epoch has a higher eval kappa.
+
+        With ``windows`` (and ``train_x`` and ``train_y`` ``None``) each epoch draws
+        ``windows.windows_per_epoch`` windows from the sampler instead of rows. The
+        windows' labels are weak where a rule labelled an epoch outside the PSG, the
+        loss is :func:`~arcasleep.training.balanced.weighted_balanced_cross_entropy`
+        with the windows' per-epoch weights, and the model sees every epoch of the
+        window, labelled or not. ``soft_targets`` do not combine with ``windows``.
         """
         cfg = self.config
-        train_x = np.asarray(train_x, dtype=np.float32)
-        train_y = np.asarray(train_y, dtype=np.int32)
+        if windows is not None and (train_x is not None or soft_targets is not None):
+            raise ValueError("windows replace train_x and train_y and do not combine with soft_targets")
+        if windows is None:
+            train_x = np.asarray(train_x, dtype=np.float32)
+            train_y = np.asarray(train_y, dtype=np.int32)
         eval_x = np.asarray(eval_x, dtype=np.float32)
         eval_y = np.asarray(eval_y, dtype=np.int32)
-        self._ensure_built(tuple(train_x.shape[1:]), seed=fit_seed)
+        input_shape = tuple(train_x.shape[1:]) if windows is None else windows.input_shape
+        self._ensure_built(input_shape, seed=fit_seed)
         assert self.params is not None
 
         rng = np.random.default_rng(fit_seed)
@@ -3446,6 +3484,15 @@ class BiDozeNetModel(CVModel):
         def train_step(params, opt_state, xb, mb, yb, key):
             def loss_fn(p):
                 return self._balanced_loss(p, xb, mb, yb, key, output_classes, balance_beta)
+
+            loss, grads = jax.value_and_grad(loss_fn)(params)
+            updates, opt_state = tx.update(grads, opt_state, params)
+            return optax.apply_updates(params, updates), opt_state, loss
+
+        @jax.jit
+        def window_step(params, opt_state, xb, mb, yb, wb, sb, key):
+            def loss_fn(p):
+                return self._balanced_loss(p, xb, mb, yb, key, output_classes, balance_beta, wb, sb)
 
             loss, grads = jax.value_and_grad(loss_fn)(params)
             updates, opt_state = tx.update(grads, opt_state, params)
@@ -3495,8 +3542,12 @@ class BiDozeNetModel(CVModel):
             return cohen_kappa_from_confusion(cm)
 
         fpe = cfg.frames_per_epoch
-        rows = [(train_x[i], train_y[i]) for i in range(train_x.shape[0])]
-        steps_per_epoch = max(1, -(-len(rows) // batch_size))
+        if windows is None:
+            rows = [(train_x[i], train_y[i]) for i in range(train_x.shape[0])]
+            n_rows = len(rows)
+        else:
+            n_rows = windows.windows_per_epoch
+        steps_per_epoch = max(1, -(-n_rows // batch_size))
         lr = float(initial_lr)
         best_kappa = -np.inf
         best_params = None
@@ -3514,7 +3565,20 @@ class BiDozeNetModel(CVModel):
 
         for epoch in range(1, max_epochs + 1):
             epoch_start = time.time()
-            if soft_targets is not None:
+            extra: tuple = ()
+            if windows is not None:
+                drawn = windows.sample(rng, steps_per_epoch * batch_size)
+                xs, ys = drawn.x, drawn.labels
+                # The model sees every epoch of a window, labelled or not, as it does when scoring.
+                ms = (
+                    np.ones(xs.shape[:2], dtype=np.float32)
+                    if cfg.score_gap
+                    else _numpy_feature_activity_mask(xs)
+                )
+                targets = np.where(ys <= GAP_LABEL, gap_class, ys)
+                extra = (drawn.weights, drawn.sleep_wake)
+                step_fn = window_step
+            elif soft_targets is not None:
                 # Whole rows, drawn uniformly; the loss covers every epoch of a row.
                 drawn = rng.integers(train_x.shape[0], size=steps_per_epoch * batch_size)
                 xs, targets = train_x[drawn], soft_targets[drawn]
@@ -3545,6 +3609,7 @@ class BiDozeNetModel(CVModel):
                     jnp.asarray(xs[batch]),
                     jnp.asarray(ms[batch]),
                     jnp.asarray(targets[batch]),
+                    *(jnp.asarray(e[batch]) for e in extra),
                     step_key,
                 )
                 epoch_loss += float(loss)
