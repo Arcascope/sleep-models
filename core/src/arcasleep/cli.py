@@ -150,6 +150,7 @@ def _process(args: argparse.Namespace) -> int:
             min_scored_minutes=args.min_scored_minutes,
             load_workers=args.load_workers,
             write_workers=args.write_workers,
+            uncropped=args.uncropped,
         )
     return 0
 
@@ -1063,6 +1064,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="add the GGIR anglez_5s array to existing cache files without "
              "re-running the NUFFT; with --overwrite, replace one already there",
+    )
+    process.add_argument(
+        "--uncropped",
+        action="store_true",
+        help="keep each recording's whole wrist stream rather than the PSG span; "
+             "epochs outside the PSG get label -3 (use a separate cache_prefix)",
     )
     process.add_argument(
         "--overwrite", action="store_true", help="rebuild subjects already cached"
