@@ -209,7 +209,11 @@ class WindowSampler:
             start = self._propose(r, "night", rng)
             if self._has_supervision(r, start):
                 return start, "night"
-        raise ValueError("no window with a supervised epoch")
+        supervised = np.flatnonzero(np.diff(self._supervised_cumulative[r]))
+        if supervised.size == 0:
+            raise ValueError("no window with a supervised epoch")
+        anchor = int(supervised[int(rng.integers(supervised.size))])
+        return self._clip(r, anchor - int(rng.integers(self.window_epochs))), "night"
 
     def _stack(self, order: np.ndarray, drawn: Sequence[tuple[int, str]]) -> WindowBatch:
         window, fpe = self.window_epochs, self.frames_per_epoch

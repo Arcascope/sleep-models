@@ -135,6 +135,12 @@ def test_every_window_has_a_supervised_epoch_and_the_mix_is_followed() -> None:
             assert kind == "night"
 
 
+def test_a_recording_with_few_supervised_epochs_still_yields_supervised_windows() -> None:
+    s = WindowSampler([recording(5000, 2400, 2404, ())], 960, mix=WindowMix(night=0, edge=0, day=0, uniform=1), max_attempts=1)
+    batch = s.sample(np.random.default_rng(0), 30)
+    assert (((batch.labels >= 0) & (batch.weights > 0)).sum(axis=1) > 0).all()
+
+
 def test_day_windows_fall_back_to_night_without_weak_labels() -> None:
     s = sampler(mix=WindowMix(night=0, edge=0, day=1, uniform=0))
     batch = s.sample(np.random.default_rng(0), 6)
