@@ -22,7 +22,15 @@ import numpy as np
 import pandas as pd
 
 from arcasleep.data.constants import MIN_SCORED_MINUTES
-from arcasleep_watchtree.cohorts import DATA_ROOT, COHORTS, Night, four_class, load_night, subject_ids
+from arcasleep_watchtree.cohorts import (
+    COHORTS,
+    DATA_ROOT,
+    Night,
+    four_class,
+    load_night,
+    person_ids,
+    subject_ids,
+)
 from arcasleep_watchtree.constants import EPOCH_S
 from arcasleep_watchtree.features import compute_features
 from arcasleep_watchtree.uncropped import OUTSIDE_PSG, load_night_uncropped, sync_table
@@ -30,10 +38,11 @@ from arcasleep_watchtree.uncropped import OUTSIDE_PSG, load_night_uncropped, syn
 _STATE: dict = {}
 
 
-def night_table(night: Night) -> pd.DataFrame:
+def night_table(night: Night, person: str) -> pd.DataFrame:
     table = compute_features(night.acc25, night.valid25, night.hr_t, night.hr_bpm)
     table.insert(0, "in_psg", night.labels != OUTSIDE_PSG)
     table.insert(0, "y4", four_class(night.labels).astype(np.int8))
+    table.insert(0, "person", person)
     table.insert(0, "subject", night.subject)
     table.insert(0, "cohort", night.cohort)
     return table
@@ -53,8 +62,8 @@ def _init(cohort_name: str, uncropped: bool = False) -> None:
         _STATE["sync"] = sync_table(DATA_ROOT / RAW_ROOT)
 
 
-def _build_one(args: tuple[str, str]) -> tuple[str, pd.DataFrame | str]:
-    subject, reported = args
+def _build_one(args: tuple[str, str, str]) -> tuple[str, pd.DataFrame | str]:
+    subject, reported, person = args
     try:
         if _STATE["uncropped"]:
             converted = DATA_ROOT / _STATE["cohort"].directory
@@ -66,7 +75,7 @@ def _build_one(args: tuple[str, str]) -> tuple[str, pd.DataFrame | str]:
     minutes = np.count_nonzero(night.labels >= 0) * EPOCH_S / 60.0
     if minutes < MIN_SCORED_MINUTES:
         return "short", "under minimum scored minutes"
-    return "ok", night_table(night)
+    return "ok", night_table(night, person)
 
 
 def build_cohort(
@@ -75,13 +84,14 @@ def build_cohort(
     cohort = COHORTS[cohort_name]
     ids, reported = subject_ids(cohort)
     ids = ids[:limit] if limit else ids
+    people = person_ids(cohort, ids)
     out.mkdir(parents=True, exist_ok=True)
     tables, reasons = [], {"failed": {}, "short": 0}
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(
         workers, mp_context=context, initializer=_init, initargs=(cohort_name, uncropped)
     ) as pool:
-        for status, payload in pool.map(_build_one, [(s, reported[s]) for s in ids]):
+        for status, payload in pool.map(_build_one, [(s, reported[s], people[s]) for s in ids]):
             if status == "ok":
                 tables.append(payload)
             elif status == "short":

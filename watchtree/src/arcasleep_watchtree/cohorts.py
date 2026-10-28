@@ -25,7 +25,7 @@ from pisces_lite.datasets import align_trim, load_subject, mask_data
 from pisces_lite.datasets.constants import PSG_COL, TIMESTAMP_COL
 
 from arcasleep.data.prepare import load_dataset
-from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key
+from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key, pseudonym
 from arcasleep.processing import clean_accelerometer_rows
 from arcasleep_watchtree.preprocess import to_25hz
 
@@ -167,6 +167,27 @@ def subject_ids(cohort: Cohort) -> tuple[list[str], dict[str, str]]:
     directory = DATA_ROOT / cohort.directory
     ids = [s for s in load_dataset(directory).ids if cohort.select(s)]
     return ids, cache_ids(load_pseudonym_key(directory), ids)
+
+
+def participant_of(cohort: str, subject: str) -> str:
+    """The participant a source night id belongs to: all of one person's nights share this."""
+    if cohort.startswith("weaver"):
+        return subject.split("_")[0]
+    match = re.fullmatch(r"(sub\d+)_s\d+", subject)
+    return match[1] if match else subject
+
+
+def person_ids(cohort: Cohort, ids: list[str]) -> dict[str, str]:
+    """Each source night id's participant id, pseudonymized with the dataset key if it has one.
+
+    The participant is taken from the source id before hashing, so a keyed dataset's nights of
+    one person still share a participant id.
+    """
+    key = load_pseudonym_key(DATA_ROOT / cohort.directory)
+    people = {s: participant_of(cohort.name, s) for s in ids}
+    if key is None:
+        return people
+    return {s: pseudonym(key, p) for s, p in people.items()}
 
 
 def load_night(cohort: Cohort, subject: str, reported: str | None = None, data_set=None) -> Night:

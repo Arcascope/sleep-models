@@ -47,22 +47,41 @@ def bidoze_nights(run: Path, oof: pd.DataFrame, features_dir: Path) -> tuple[pd.
     calls = calls.merge(ctx_keys, on=["subject", "epoch_stream"], how="left")
     calls["ctx"] = calls.ctx.fillna(False).astype(bool)
 
+    parts = {
+        (experiment, config): oof[
+            (oof.experiment == experiment) & (oof.config == config) & (oof.cohort == "wearanize")
+        ]
+        for experiment in ("cv_within", "loco")
+        for config in ("with_hr", "no_hr")
+    }
+    # Paired metrics use only the epochs that BiDoze and every WatchTree configuration all scored.
+    keys = calls.loc[calls.ctx, ["subject", "epoch_stream"]].rename(columns={"epoch_stream": "epoch"})
+    for part in parts.values():
+        keys = keys.merge(part[["subject", "epoch"]], on=["subject", "epoch"])
+    shared = keys.assign(shared=True)
+    calls = calls.merge(
+        shared.rename(columns={"epoch": "epoch_stream"}), on=["subject", "epoch_stream"], how="left"
+    )
+    calls["shared"] = calls.shared.fillna(False).astype(bool)
+    matched = calls[calls.shared]
+    call_y4 = matched.set_index(["subject", "epoch_stream"]).y4.sort_index()
+    for part in parts.values():
+        part_y4 = part.merge(shared, on=["subject", "epoch"]).set_index(["subject", "epoch"]).y4
+        if not part_y4.sort_index().to_numpy().tolist() == call_y4.to_numpy().tolist():
+            raise ValueError("BiDoze and WatchTree disagree on the reference stage of shared epochs")
+
     def night_table(frame: pd.DataFrame, config: str) -> pd.DataFrame:
         table = cv.per_night(frame.assign(pred=frame.call))
         table.insert(0, "config", config)
         return table
 
     all_span = night_table(calls, "bidoze_all_span")
-    ctx_only = night_table(calls[calls.ctx], "bidoze_ctx")
+    ctx_only = night_table(matched, "bidoze_ctx")
     rows = [all_span, ctx_only]
-    pred_frames = {}
-    for experiment in ("cv_within", "loco"):
-        for config in ("with_hr", "no_hr"):
-            part = oof[(oof.experiment == experiment) & (oof.config == config) & (oof.cohort == "wearanize")]
-            table = cv.per_night(part)
-            table.insert(0, "config", f"watchtree_{experiment}_{config}")
-            rows.append(table)
-            pred_frames[(experiment, config)] = part
+    for (experiment, config), part in parts.items():
+        table = cv.per_night(part.merge(shared, on=["subject", "epoch"]).drop(columns="shared"))
+        table.insert(0, "config", f"watchtree_{experiment}_{config}")
+        rows.append(table)
     nights = pd.concat(rows, ignore_index=True)
     return nights, calls
 

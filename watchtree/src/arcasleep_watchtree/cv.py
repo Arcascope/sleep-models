@@ -24,6 +24,7 @@ from scipy import stats
 from sklearn.metrics import cohen_kappa_score
 
 from arcasleep_watchtree import constants as C
+from arcasleep_watchtree.cohorts import participant_of
 from arcasleep_watchtree.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
 from arcasleep_watchtree.features import (
     EPOCHS_PER_MIN,
@@ -58,10 +59,8 @@ WINDOWED = [window_name(s, st, d, m) for s, st, d, ms in WINDOWS for m in ms]
 
 
 def person_of(cohort: str, subject: str) -> str:
-    if cohort.startswith("weaver"):
-        return subject.split("_")[0]
-    match = re.fullmatch(r"(sub\d+)_s\d+", subject)
-    return match[1] if match else subject
+    """The participant of a source night id; feature tables carry their own ``person`` column."""
+    return participant_of(cohort, subject)
 
 
 def load_tables(features_dir: Path, uncropped_dir: Path) -> dict[str, pd.DataFrame]:
@@ -79,7 +78,8 @@ def load_tables(features_dir: Path, uncropped_dir: Path) -> dict[str, pd.DataFra
         table["ctx"] = (table.epoch.to_numpy() >= BACK_EPOCHS) & (
             table.epoch.to_numpy() + FWD_EPOCHS <= n_rows - 1
         )
-        table["person"] = [person_of(cohort, s) for s in table.subject]
+        if "person" not in table:
+            table["person"] = [person_of(cohort, s) for s in table.subject]
         table["cohort"] = cohort
         table["scored"] = table.y4.to_numpy() >= 0
         table["row_epoch"] = table.epoch.to_numpy()
