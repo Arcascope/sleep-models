@@ -373,6 +373,7 @@ def score_cohort(
     )
 
     model = config.family.load_checkpoint(checkpoint, input_shape=input_shape)
+    window_step = config.family.scoring_window_step(config)
     scored_subjects: list[ScoredSubject] = []
     truncated: list[str] = []
     hypnograms: Dict[str, str] = {}
@@ -381,7 +382,7 @@ def score_cohort(
     for ref, bundle in subjects.items():
         name = f"{ref.dataset_name}/{ref.subject_id}"
         epochs = int(bundle.y.shape[1])
-        if epochs > x_length:
+        if window_step is None and epochs > x_length:
             truncated.append(name)
             warnings.warn(
                 f"{name}: {epochs} epochs exceeds the model's {x_length}-epoch "
@@ -396,6 +397,7 @@ def score_cohort(
             target_y_length=y_length,
             num_classes=num_classes,
             return_context=renderer is not None,
+            window_step=window_step,
         )
         if renderer is not None:
             y_true, y_pred_proba, inputs, labels = scored
@@ -409,7 +411,7 @@ def score_cohort(
         if ggir_sib_filter:
             try:
                 y_pred_proba, sib_demoted[name] = apply_sib_filter(
-                    y_pred_proba, bundle.anglez_5s[0], min(epochs, x_length)
+                    y_pred_proba, bundle.anglez_5s[0], epochs if window_step is not None else min(epochs, x_length)
                 )
             except Exception as exc:
                 raise ValueError(
