@@ -2,7 +2,8 @@
 
 One row per 30-s epoch. A feature at epoch ``k`` uses data up to ``FORWARD_MAX_MIN`` minutes
 after the end of epoch ``k`` and nothing later; the watch scores epoch ``k`` once that much has
-been recorded. No feature depends on the position of the epoch in the recording.
+been recorded. ``inputs`` may set the reach of the features with the keys of ``REACH``. No
+feature depends on the position of the epoch in the recording.
 
 ``INPUTS`` lists the columns. ``at_time`` names values of the epoch alone; every other key of
 ``features`` is a per-epoch signal whose ``b_spans`` and ``f_spans`` map a statistic to window
@@ -90,6 +91,28 @@ FORWARD_MAX_MIN = 45
 #: Epochs of scoring delay on the watch: epoch ``k`` is scored when epoch ``k + DELAY`` has ended.
 DELAY = FORWARD_MAX_MIN * EPOCHS_PER_MIN
 
+#: Keys of ``inputs`` that set the reach of the features, and their defaults. ``back_min`` is the
+#: recording a training epoch needs before it, ``baseline_blocks`` the blocks of the low baseline,
+#: ``tsb_cap_min`` the cap of ``tsb_min`` and ``forward_max_min`` the longest forward window and
+#: the scoring delay.
+REACH = {
+    "back_min": 120,
+    "baseline_blocks": BASELINE_BLOCKS,
+    "tsb_cap_min": TSB_CAP_MIN,
+    "forward_max_min": FORWARD_MAX_MIN,
+}
+
+
+def reach(inputs: dict, key: str) -> int:
+    """The value of the ``REACH`` key ``key`` in ``inputs``."""
+    return int(inputs.get(key, REACH[key]))
+
+
+def delay(inputs: dict) -> int:
+    """Epochs of scoring delay of ``inputs``."""
+    return reach(inputs, "forward_max_min") * EPOCHS_PER_MIN
+
+
 INPUTS = {
     "type": "tree",
     "features": {
@@ -157,9 +180,10 @@ def windows(inputs: dict) -> list[dict]:
                 if stat not in STATS:
                     raise ValueError(f"{signal} {key}: unknown statistic {stat!r}")
                 for m in minutes:
-                    if direction == "f" and m > FORWARD_MAX_MIN:
+                    if direction == "f" and m > reach(inputs, "forward_max_min"):
                         raise ValueError(
-                            f"{signal}: forward windows reach at most {FORWARD_MAX_MIN} minutes"
+                            f"{signal}: forward windows reach at most "
+                            f"{reach(inputs, 'forward_max_min')} minutes"
                         )
                     name = f"{signal}_{stat}_{direction}{m}"
                     epochs = m * EPOCHS_PER_MIN
@@ -313,8 +337,8 @@ def epoch_heart_rate(
     return mean, std, count
 
 
-def low_baseline(x: np.ndarray) -> np.ndarray:
-    """Mean of the lowest 3 of the last 12 completed 10-min block means of ``x``.
+def low_baseline(x: np.ndarray, n_blocks: int = BASELINE_BLOCKS) -> np.ndarray:
+    """Mean of the lowest 3 of the last ``n_blocks`` (12) completed 10-min block means of ``x``.
 
     NaN epochs are skipped.
 
@@ -331,7 +355,7 @@ def low_baseline(x: np.ndarray) -> np.ndarray:
             partial_sum += x[k]
             partial_count += 1
         if blocks:
-            base[k] = float(np.mean(sorted(blocks[-BASELINE_BLOCKS:])[:BASELINE_LOWEST]))
+            base[k] = float(np.mean(sorted(blocks[-n_blocks:])[:BASELINE_LOWEST]))
         elif partial_count:
             base[k] = partial_sum / partial_count
         if (k + 1) % BLOCK_EPOCHS == 0:
@@ -341,11 +365,14 @@ def low_baseline(x: np.ndarray) -> np.ndarray:
     return base
 
 
-def bout_timing(act: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def bout_timing(
+    act: np.ndarray, tsb_cap_min: int = TSB_CAP_MIN, ahead_epochs: int = DELAY
+) -> tuple[np.ndarray, np.ndarray]:
     """Minutes since the last bout epoch and minutes until the next.
 
-    The first is capped at ``TSB_CAP_MIN``, the second at the forward reach. With no bout so far
-    the first is the cap, so it does not count time from the start of the recording.
+    The first is capped at ``tsb_cap_min``, the second at the forward reach ``ahead_epochs``.
+    With no bout so far the first is the cap, so it does not count time from the start of the
+    recording.
     """
     since = np.empty(act.size)
     until = np.empty(act.size)
@@ -353,9 +380,9 @@ def bout_timing(act: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     for k in range(act.size):
         if act[k] == 1:
             last = k
-        since[k] = min((k - last) / EPOCHS_PER_MIN, TSB_CAP_MIN)
-        ahead = np.flatnonzero(act[k + 1 : k + 1 + DELAY] == 1)
-        until[k] = ahead[0] + 1 if ahead.size else DELAY
+        since[k] = min((k - last) / EPOCHS_PER_MIN, tsb_cap_min)
+        ahead = np.flatnonzero(act[k + 1 : k + 1 + ahead_epochs] == 1)
+        until[k] = ahead[0] + 1 if ahead.size else ahead_epochs
     return since, until / EPOCHS_PER_MIN
 
 
@@ -411,11 +438,16 @@ def compute_features(
     present = sig.pop("present")
     n_epochs = present.size
     hr, hr_std, hr_n = epoch_heart_rate(hr_t, hr_bpm, n_epochs)
-    base = low_baseline(hr)
+    blocks = reach(inputs, "baseline_blocks")
+    base = low_baseline(hr, blocks)
     act = np.where(
-        present, (sig["jerk"] >= BOUT_RATIO * low_baseline(sig["jerk"])).astype(float), np.nan
+        present,
+        (sig["jerk"] >= BOUT_RATIO * low_baseline(sig["jerk"], blocks)).astype(float),
+        np.nan,
     )
-    since, until = bout_timing(np.nan_to_num(act, nan=0.0))
+    since, until = bout_timing(
+        np.nan_to_num(act, nan=0.0), reach(inputs, "tsb_cap_min"), delay(inputs)
+    )
     series = {
         **sig, "act": act, "daz": np.abs(np.diff(sig["angle"], prepend=sig["angle"][:1])),
         "hr": hr, "hr_rel": hr - base,

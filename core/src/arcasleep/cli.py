@@ -1031,7 +1031,7 @@ def _tree_train(args: argparse.Namespace) -> int:
     held = table.cohort.isin(args.test_cohort).to_numpy()
     model, oof = tree.train(definition, table[~held].reset_index(drop=True))
     tree.save(model, args.output)
-    scored = tree.trainable(table[~held].reset_index(drop=True)) & (oof >= 0)
+    scored = tree.trainable(table[~held].reset_index(drop=True), definition["inputs"]) & (oof >= 0)
     y = table[~held].y4.to_numpy()
     print(
         f"{model['rounds']} rounds; "
@@ -1039,7 +1039,7 @@ def _tree_train(args: argparse.Namespace) -> int:
     )
     if held.any():
         test = table[held].reset_index(drop=True)
-        keep = tree.trainable(test)
+        keep = tree.trainable(test, definition["inputs"])
         stages = tree.predict(model, test[keep])
         print(f"held-out {args.test_cohort}: kappa {cohen_kappa_score(test.y4[keep], stages):.3f}")
     return 0
