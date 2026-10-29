@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from arcasleep_watchtree.features import constants as C
+from arcasleep_tree.features import constants as C
 
 INPUTS_TYPE = "watchtree"
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pisces_lite.datasets.data_set_object import DataSetObject
 
-from arcasleep_watchtree.loaders import aauwss, foundry, sleepaccel, wearanize, weaver
+from arcasleep_tree.loaders import aauwss, foundry, sleepaccel, wearanize, weaver
 
 #: Dataset directory name -> the module that reads it.
 LOADERS = {

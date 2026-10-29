@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from arcasleep_watchtree.loaders.common import accel_frame, heart_rate_frame
+from arcasleep_tree.loaders.common import accel_frame, heart_rate_frame
 
 ACC_FILE = "ACC.csv"
 HR_FILE = "HR.csv"

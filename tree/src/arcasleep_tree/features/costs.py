@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from arcasleep_watchtree.features import constants as C
-from arcasleep_watchtree.features.config import FeatureConfig
-from arcasleep_watchtree.features.table import stream_costs, window_costs
+from arcasleep_tree.features import constants as C
+from arcasleep_tree.features.config import FeatureConfig
+from arcasleep_tree.features.table import stream_costs, window_costs
 
 WATCH_OPS_PER_S = 23_640
 #: Trees: 524 8-bit depth-6 trees take 0.18 s per prediction.

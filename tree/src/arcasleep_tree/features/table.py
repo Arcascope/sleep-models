@@ -14,12 +14,12 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from arcasleep_watchtree.features import constants as C
-from arcasleep_watchtree.features.baseline import low_baseline
-from arcasleep_watchtree.features.config import FeatureConfig
-from arcasleep_watchtree.features.heartrate import epoch_heart_rate
-from arcasleep_watchtree.features.preprocess import epoch_signals
-from arcasleep_watchtree.features.windows import window_stat
+from arcasleep_tree.features import constants as C
+from arcasleep_tree.features.baseline import low_baseline
+from arcasleep_tree.features.config import FeatureConfig
+from arcasleep_tree.features.heartrate import epoch_heart_rate
+from arcasleep_tree.features.preprocess import epoch_signals
+from arcasleep_tree.features.windows import window_stat
 
 EPOCHS_PER_MIN = 60 // C.EPOCH_S
 EPOCH_COL = "epoch"
@@ -87,7 +87,7 @@ def compute_features(
 
     breath: dict[str, np.ndarray] = {}
     if _uses_breathing(config):
-        from arcasleep_watchtree.features.breathing import breathing_features
+        from arcasleep_tree.features.breathing import breathing_features
 
         breath = breathing_features(sig.breath_input, sig.breath_still)
         breath[f"{BREATH_PREFIX}_valid"] = np.where(

@@ -34,13 +34,13 @@ from pisces_lite.datasets.constants import PSG_COL, PSG_MASK, TIMESTAMP_COL
 
 from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key, pseudonym
 from arcasleep.processing import clean_accelerometer_rows
-from arcasleep_watchtree import loaders
-from arcasleep_watchtree.data.uncropped import OUTSIDE_PSG, align_uncropped
-from arcasleep_watchtree.features.config import FeatureConfig
-from arcasleep_watchtree.features.constants import EPOCH_S
-from arcasleep_watchtree.features.preprocess import to_25hz
-from arcasleep_watchtree.features.table import compute_features
-from arcasleep_watchtree.loaders.common import ACCELEROMETER, HEARTRATE, HR_COL, PSG
+from arcasleep_tree import loaders
+from arcasleep_tree.data.uncropped import OUTSIDE_PSG, align_uncropped
+from arcasleep_tree.features.config import FeatureConfig
+from arcasleep_tree.features.constants import EPOCH_S
+from arcasleep_tree.features.preprocess import to_25hz
+from arcasleep_tree.features.table import compute_features
+from arcasleep_tree.loaders.common import ACCELEROMETER, HEARTRATE, HR_COL, PSG
 
 #: Separates a recording id's participant from the rest (``sub005_s1``, ``c1_garmin_n1``).
 PARTICIPANT_SEPARATOR = "_"

@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from arcasleep_watchtree import cv
-from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec
+from arcasleep_tree import cv
+from arcasleep_tree.model.definition import CONFIG_DIR, TreeSpec
 
 BLUE, ORANGE, GREEN = "#2a78d6", "#eb6834", "#1baf7a"
 COHORT_LABEL = {

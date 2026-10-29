@@ -22,7 +22,7 @@ from math import gcd
 import numpy as np
 from scipy.signal import lfilter, lfiltic, resample_poly, sosfilt, sosfilt_zi
 
-from arcasleep_watchtree.features import constants as C
+from arcasleep_tree.features import constants as C
 
 
 def _grid_values(t: np.ndarray, xyz: np.ndarray, grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

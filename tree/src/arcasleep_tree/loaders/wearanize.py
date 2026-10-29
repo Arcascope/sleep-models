@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 from pisces_lite.datasets.data_set_object import DataSetObject
 
-from arcasleep_watchtree.loaders import empatica
-from arcasleep_watchtree.loaders.common import EPOCH_S, data_set, map_codes, psg_frame, sheet_records
+from arcasleep_tree.loaders import empatica
+from arcasleep_tree.loaders.common import EPOCH_S, data_set, map_codes, psg_frame, sheet_records
 
 NAME = "wearanize"
 RELEASE_DIR = "Wearanize+_OA_raw_v1.1"

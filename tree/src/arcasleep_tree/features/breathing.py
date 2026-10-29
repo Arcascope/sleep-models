@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from arcasleep_watchtree.features import constants as C
+from arcasleep_tree.features import constants as C
 
 NAMES = ("breath_bpm", "breath_peak_share", "breath_entropy", "breath_log_power")
 

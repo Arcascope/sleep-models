@@ -32,9 +32,9 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.signal import butter, sosfilt_zi
 
-from arcasleep_watchtree.features import constants as C
-from arcasleep_watchtree.features.config import FeatureConfig
-from arcasleep_watchtree.watch.spec import DELAY, NA, SIGNALS, spec
+from arcasleep_tree.features import constants as C
+from arcasleep_tree.features.config import FeatureConfig
+from arcasleep_tree.watch.spec import DELAY, NA, SIGNALS, spec
 
 SPE = C.SAMPLES_PER_EPOCH  # 750
 Q = 24  # coefficient bits
@@ -137,7 +137,7 @@ class Model:
 
     @staticmethod
     def load(model_json: dict, trees_bin: bytes) -> "Model":
-        from arcasleep_watchtree.watch.export import unpack
+        from arcasleep_tree.watch.export import unpack
 
         n = model_json["n_trees"]
         feat, thr, leaf = unpack(trees_bin, n)

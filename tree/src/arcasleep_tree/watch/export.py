@@ -27,9 +27,9 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from arcasleep_watchtree import cv
-from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec, WatchTree
-from arcasleep_watchtree.watch.spec import FEATURES, NA, SCALE
+from arcasleep_tree import cv
+from arcasleep_tree.model.definition import CONFIG_DIR, TreeSpec, WatchTree
+from arcasleep_tree.watch.spec import FEATURES, NA, SCALE
 
 DEPTH = 6
 SPLITS = 63
