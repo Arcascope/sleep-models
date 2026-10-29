@@ -27,6 +27,7 @@ from arcasleep_watchtree import cv
 from arcasleep_watchtree import export as ex
 from arcasleep_watchtree.cohorts import COHORTS, DATA_ROOT, load_night, subject_ids
 from arcasleep_watchtree.constants import SAMPLES_PER_EPOCH
+from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec
 from arcasleep_watchtree.fixed import Engine
 from arcasleep_watchtree.portspec import FEATURES, NA, SCALE
 
@@ -212,7 +213,7 @@ def compare(out: Path, features_dir: Path) -> None:
     print(json.dumps(summary, indent=1))
 
 
-def costs(out: Path) -> None:
+def costs(out: Path, max_rounds: int) -> None:
     """Heap, CPU and ops of the stager with the numbers measured on the Instinct 3 (mlbench, treebench)."""
     from arcasleep_watchtree.cv import ops_per_epoch
     from arcasleep_watchtree.fixed import Engine
@@ -231,7 +232,7 @@ def costs(out: Path) -> None:
         "window_state_and_misc": (windows * 3 + 87 + 72 + 200) * per_number + 256 * per_byte,
     }
     heap["total_static"] = sum(heap.values())
-    ops = ops_per_epoch(FEATURES)
+    ops = ops_per_epoch(FEATURES, max_rounds)
     tree_s = n_trees / 1886.0  # 4-bit-threshold trees per second, treebench on the watch
     summary = {
         "n_trees": n_trees,
@@ -259,9 +260,10 @@ def main() -> None:
     parser.add_argument("--features", type=Path)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--workers", type=int, default=12)
+    parser.add_argument("--training-config", type=Path, default=CONFIG_DIR / "training.json")
     args = parser.parse_args()
     if args.step == "costs":
-        costs(args.out)
+        costs(args.out, TreeSpec.load(training_config=args.training_config).max_rounds)
     elif args.step == "reference":
         reference(args.out, args.limit, args.workers)
     else:

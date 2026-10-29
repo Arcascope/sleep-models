@@ -3,18 +3,42 @@
 Each boosting round adds four trees, one per class (0 wake, 1 light, 2 deep, 3 REM); an epoch's
 stage is the class with the highest summed score. Trees are at most depth 6 with up to 64
 leaves, the complete trees that :mod:`~arcasleep_watchtree.export` writes for the watch.
+
+The LightGBM parameters are in ``config/model.json``. The rounds and early stopping are in
+``config/training.json``: ``max_rounds``, ``validation_share`` (the share of training persons
+held out for early stopping) and ``early_stopping_rounds``.
 """
 
 from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-MAX_ROUNDS = 130
-#: Share of the training persons held out for early stopping.
-VALIDATION_SHARE = 0.15
-EARLY_STOPPING_ROUNDS = 20
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+
+
+@dataclass(frozen=True)
+class TreeSpec:
+    """LightGBM parameters (``model.json``) and the training settings (``training.json``)."""
+
+    params: dict
+    max_rounds: int
+    validation_share: float
+    early_stopping_rounds: int
+
+    @classmethod
+    def load(
+        cls,
+        model_config: Path = CONFIG_DIR / "model.json",
+        training_config: Path = CONFIG_DIR / "training.json",
+    ) -> TreeSpec:
+        params = json.loads(Path(model_config).read_text())
+        return cls(params, **json.loads(Path(training_config).read_text()))
 
 
 class WatchTree:
@@ -23,7 +47,8 @@ class WatchTree:
     ``max_bin`` is the number of histogram bins per feature; the watch export uses 15.
     """
 
-    def __init__(self, features: list[str], max_bin: int = 255, seed: int = 0):
+    def __init__(self, spec: TreeSpec, features: list[str], max_bin: int = 255, seed: int = 0):
+        self.spec = spec
         self.features = features
         self.max_bin = max_bin
         self.seed = seed
@@ -36,22 +61,22 @@ class WatchTree:
         return lgb.Dataset(x, y, feature_name=self.features, params=params, **kwargs)
 
     def _params(self) -> dict:
-        return {**PARAMS, "max_bin": self.max_bin, "seed": self.seed}
+        return {**self.spec.params, "max_bin": self.max_bin, "seed": self.seed}
 
     def fit(self, train: pd.DataFrame) -> WatchTree:
-        """Train up to ``MAX_ROUNDS`` rounds, early stopping on ``VALIDATION_SHARE`` of persons."""
+        """Train up to ``max_rounds`` rounds, early stopping on ``validation_share`` of persons."""
         persons = sorted(train.person.unique())
         rng = np.random.default_rng(self.seed)
-        n_val = max(1, int(round(VALIDATION_SHARE * len(persons))))
+        n_val = max(1, int(round(self.spec.validation_share * len(persons))))
         is_val = train.person.isin(set(rng.choice(persons, size=n_val, replace=False))).to_numpy()
         dtrain = self._dataset(train[~is_val])
         dval = self._dataset(train[is_val], reference=dtrain)
         self.booster = lgb.train(
             self._params(),
             dtrain,
-            MAX_ROUNDS,
+            self.spec.max_rounds,
             valid_sets=[dval],
-            callbacks=[lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=False)],
+            callbacks=[lgb.early_stopping(self.spec.early_stopping_rounds, verbose=False)],
         )
         return self
 

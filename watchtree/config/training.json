@@ -1,0 +1,5 @@
+{
+    "max_rounds": 130,
+    "validation_share": 0.15,
+    "early_stopping_rounds": 20
+}

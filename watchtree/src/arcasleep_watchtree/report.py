@@ -16,6 +16,7 @@ import pandas as pd
 from scipy import stats
 
 from arcasleep_watchtree import cv
+from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec
 
 BLUE, ORANGE, GREEN = "#2a78d6", "#eb6834", "#1baf7a"
 COHORT_LABEL = {
@@ -157,12 +158,12 @@ def quant_table(per_night: pd.DataFrame, summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def ablation_table(summary: pd.DataFrame) -> pd.DataFrame:
+def ablation_table(summary: pd.DataFrame, max_rounds: int) -> pd.DataFrame:
     sets = cv.groups()
     rows = []
     for config in ("with_hr", "no_forward", "no_hr", "no_breathing", "windows_le15"):
         s = summary[(summary.experiment == "cv_within") & (summary.cohort == "wearanize") & (summary.config == config)].iloc[0]
-        ops = cv.ops_per_epoch(sets[config])
+        ops = cv.ops_per_epoch(sets[config], max_rounds)
         rows.append({
             "features dropped": {"with_hr": "none", "no_forward": "forward windows and tnb_min", "no_hr": "heart rate (all hr_*)",
                                  "no_breathing": "breathing (all breath_*)",
@@ -251,7 +252,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", required=True, type=Path)
     parser.add_argument("--features", type=Path, default=None)
+    parser.add_argument("--training-config", type=Path, default=CONFIG_DIR / "training.json")
     args = parser.parse_args()
+    max_rounds = TreeSpec.load(training_config=args.training_config).max_rounds
     run = args.run
     per_night = pd.read_csv(run / "per_night.csv")
     summary = pd.read_csv(run / "summary.csv")
@@ -301,7 +304,7 @@ def main() -> None:
         "loco": md_table(cv_table(summary, "loco", ["with_hr", "no_hr", "with_hr_no_sibling", "no_hr_no_sibling"])),
         "bidoze": md_table(comp.assign(**{c: comp[c].map(lambda v: fmt(v, 4)) for c in ("mean_a", "mean_b", "mean_diff", "median_diff", "wilcoxon_p")})),
         "quant": md_table(quant_table(per_night, summary)),
-        "ablation": md_table(ablation_table(summary)),
+        "ablation": md_table(ablation_table(summary, max_rounds)),
         "regions": md_table(pd.read_csv(run / "leak_regions.csv").assign(
             **{c: lambda d, c=c: d[c].map(lambda v: f"{v:.3f}") for c in ("pooled_kappa4", "pooled_kappa_sw", "wake_pred", "wake_psg")})),
     }

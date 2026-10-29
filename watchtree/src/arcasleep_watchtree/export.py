@@ -1,11 +1,12 @@
 """Train the final WatchTree model and export it as complete depth-6 trees for the watch.
 
     python -m arcasleep_watchtree.export --features results/features-2026-10-27 \\
-        --uncropped results/cv-2026-10-27/features --out results/port-2026-10-27
+        --uncropped results/cv-2026-10-27/features --out results/port-2026-10-27 \\
+        --model-config config/model.json --training-config config/training.json
 
 * Training set: complete-context scored epochs of all five cohorts, 87 features (no breathing),
-  ``max_bin`` 15, the LightGBM settings of :mod:`~arcasleep_watchtree.cv`. The number of rounds is
-  the median of the best iterations of five person-wise folds (early stopping as in the CV).
+  ``max_bin`` 15, the settings of ``--model-config`` and ``--training-config``. The number of
+  rounds is the median of the best iterations of five person-wise folds (early stopping as in the CV).
 * Export (layout of ``TreeBench.mc`` in the Garmin repo): per tree 63 feature bytes (bit 7 set when
   a missing value goes left) | 63 4-bit thresholds, low nibble first | 64 leaf bytes (int8 + 128).
   Trees come in rounds of four, class 0 to 3. A branch that ends early is padded with splits that
@@ -27,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from arcasleep_watchtree import cv
+from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec, WatchTree
 from arcasleep_watchtree.portspec import FEATURES, NA, SCALE
 
 DEPTH = 6
@@ -45,13 +47,6 @@ def pooled_table(features_dir: Path, uncropped_dir: Path) -> pd.DataFrame:
         t = t[t.subject.isin(cv.kept_nights(t))]
         parts.append(cv.select(t, True))
     return pd.concat(parts, ignore_index=True)
-
-
-def fit_fixed(train: pd.DataFrame, rounds: int, features: list[str]) -> lgb.Booster:
-    x = train[features].to_numpy(np.float32)
-    params = {**cv.PARAMS, "max_bin": N_BINS}
-    data = lgb.Dataset(x, train.y4.to_numpy(), feature_name=features, params={"max_bin": N_BINS})
-    return lgb.train(params, data, rounds)
 
 
 # ------------------------------------------------------------------------------ edges and trees
@@ -214,7 +209,10 @@ def main() -> None:
     parser.add_argument("--features", required=True, type=Path)
     parser.add_argument("--uncropped", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--model-config", type=Path, default=CONFIG_DIR / "model.json")
+    parser.add_argument("--training-config", type=Path, default=CONFIG_DIR / "training.json")
     args = parser.parse_args()
+    spec = TreeSpec.load(args.model_config, args.training_config)
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
     (out / "folds").mkdir(exist_ok=True)
@@ -231,7 +229,8 @@ def main() -> None:
     oof = {k: np.full(len(table), -1) for k in ("float", "export")}
     for k in range(5):
         test = fold == k
-        booster = cv.fit(table[~test], FEATURES, N_BINS, 0)
+        model = WatchTree(spec, FEATURES, N_BINS, 0).fit(table[~test])
+        booster = model.booster
         best.append(booster.best_iteration)
         booster.save_model(str(out / "folds" / f"fold{k}.txt"), num_iteration=booster.best_iteration)
         x = table.loc[test, FEATURES].to_numpy(np.float32)
@@ -252,7 +251,8 @@ def main() -> None:
     print("rounds", rounds, kappas, flush=True)
 
     # Final model on everything.
-    booster = fit_fixed(table, rounds, FEATURES)
+    final = WatchTree(spec, FEATURES, N_BINS).fit_rounds(table, rounds)
+    booster = final.booster
     booster.save_model(str(out / "final_float.txt"))
     trees, real, edges = build_trees(booster, FEATURES)
     scale = leaf_scale(trees)

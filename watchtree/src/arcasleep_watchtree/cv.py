@@ -1,7 +1,8 @@
 """Cross-validation, leave-one-cohort-out, leak probes, quantisation and ablations.
 
     python -m arcasleep_watchtree.cv --features results/features-2026-10-27 \\
-        --uncropped results/cv-2026-10-27/features --out results/cv-2026-10-27
+        --uncropped results/cv-2026-10-27/features --out results/cv-2026-10-27 \\
+        --model-config config/model.json --training-config config/training.json
 
 Complete-context epochs: the forward window of ``FORWARD_MAX_MIN`` minutes lies fully inside the
 recorded stream and at least ``BACK_EPOCHS`` epochs (2 h) of stream precede the epoch, so every
@@ -17,7 +18,6 @@ import argparse
 import re
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -26,6 +26,7 @@ from sklearn.metrics import cohen_kappa_score
 from arcasleep_watchtree import constants as C
 from arcasleep_watchtree.cohorts import participant_of
 from arcasleep_watchtree.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
+from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec, WatchTree
 from arcasleep_watchtree.features import (
     EPOCHS_PER_MIN,
     WINDOWS,
@@ -39,18 +40,6 @@ COHORT_ORDER = ["wearanize", "aauwss", "sleepaccel", "weaver_garmin", "weaver_fi
 FWD_EPOCHS = C.FORWARD_MAX_MIN * EPOCHS_PER_MIN
 BACK_EPOCHS = 120 * EPOCHS_PER_MIN
 MIN_NIGHT_EPOCHS = 120
-MAX_ROUNDS = 130
-PARAMS = {
-    "objective": "multiclass",
-    "num_class": 4,
-    "max_depth": 6,
-    "num_leaves": 64,
-    "learning_rate": 0.1,
-    "feature_fraction": 0.8,
-    "verbose": -1,
-    "seed": 0,
-    "num_threads": 24,
-}
 ALL = feature_names()
 WINDOWED = [window_name(s, st, d, m) for s, st, d, ms in WINDOWS for m in ms]
 
@@ -137,8 +126,8 @@ def groups() -> dict[str, list[str]]:
     }
 
 
-def ops_per_epoch(features: list[str]) -> dict[str, float]:
-    """On-watch ops per 30-s epoch for a feature set; trees are added at the 520-tree cap."""
+def ops_per_epoch(features: list[str], max_rounds: int) -> dict[str, float]:
+    """On-watch ops per 30-s epoch for a feature set; trees are added at ``4 * max_rounds``."""
     kept = set(features)
     has = lambda prefix: any(f.startswith(prefix) for f in kept)  # noqa: E731
     total = 0.0
@@ -167,7 +156,7 @@ def ops_per_epoch(features: list[str]) -> dict[str, float]:
                 slot = reach.setdefault(signal, [0, 0])
                 slot[0 if direction == "b" else 1] = max(slot[0 if direction == "b" else 1], m * EPOCHS_PER_MIN)
     ring_bytes = sum(sum(v) for v in reach.values()) * BYTES_PER_INT16
-    trees = TREE_OPS_PER_EPOCH * (4 * MAX_ROUNDS) / 524
+    trees = TREE_OPS_PER_EPOCH * (4 * max_rounds) / 524
     return {
         "feature_ops": total,
         "feature_cpu_percent": 100 * total / (WATCH_OPS_PER_S * C.EPOCH_S),
@@ -182,37 +171,10 @@ def ops_per_epoch(features: list[str]) -> dict[str, float]:
 # -------------------------------------------------------------------------------- fitting
 
 
-def fit(train: pd.DataFrame, features: list[str], max_bin: int = 255, seed: int = 0):
-    """LightGBM on ``train``; early stopping on a held-out 15% of the training persons."""
-    persons = sorted(train.person.unique())
-    rng = np.random.default_rng(seed)
-    n_val = max(1, int(round(0.15 * len(persons))))
-    val_persons = set(rng.choice(persons, size=n_val, replace=False))
-    is_val = train.person.isin(val_persons).to_numpy()
-    x = train[features].to_numpy(np.float32)
-    y = train.y4.to_numpy()
-    params = {**PARAMS, "max_bin": max_bin, "seed": seed}
-    dtrain = lgb.Dataset(x[~is_val], y[~is_val], feature_name=features, params={"max_bin": max_bin})
-    dval = lgb.Dataset(x[is_val], y[is_val], reference=dtrain)
-    booster = lgb.train(
-        params,
-        dtrain,
-        MAX_ROUNDS,
-        valid_sets=[dval],
-        callbacks=[lgb.early_stopping(20, verbose=False)],
-    )
-    return booster
-
-
-def predict(booster, table: pd.DataFrame, features: list[str]) -> np.ndarray:
-    x = table[features].to_numpy(np.float32)
-    return booster.predict(x, num_iteration=booster.best_iteration).argmax(axis=1)
-
-
 def quantise_leaves(booster) -> float:
     """Round every leaf value to int8 with one scale for the whole model; returns the scale.
 
-    Trees past ``best_iteration`` are left alone and not used by :func:`predict`.
+    Trees past ``best_iteration`` are left alone and not used by :meth:`WatchTree.predict`.
     """
     values = []
     per_tree = _leaf_counts(booster)
@@ -232,6 +194,7 @@ def _leaf_counts(booster) -> list[int]:
 
 
 def run_folds(
+    spec: TreeSpec,
     table: pd.DataFrame,
     features: list[str],
     folds: dict[str, int],
@@ -247,15 +210,15 @@ def run_folds(
         test = fold == k
         if not test.any() or test.all():
             continue
-        booster = fit(table[~test], features, max_bin, seed)
-        pred[test] = predict(booster, table[test], features)
-        rounds.append(booster.best_iteration)
+        model = WatchTree(spec, features, max_bin, seed).fit(table[~test])
+        pred[test] = model.predict(table[test])
+        rounds.append(model.best_iteration)
     out = table[["cohort", "subject", "person", "epoch", "y4"]].copy()
     out["pred"] = pred
     return out, {"mean_rounds": float(np.mean(rounds))}
 
 
-def run_both(table, features, folds, max_bin=255, seed=0):
+def run_both(spec, table, features, folds, max_bin=255, seed=0):
     """Float and int8-leaf predictions from the same fitted models."""
     fold = table.person.map(folds).to_numpy()
     plain = np.full(len(table), -1)
@@ -265,26 +228,26 @@ def run_both(table, features, folds, max_bin=255, seed=0):
         test = fold == k
         if not test.any() or test.all():
             continue
-        booster = fit(table[~test], features, max_bin, seed)
-        plain[test] = predict(booster, table[test], features)
-        quantise_leaves(booster)
-        quant[test] = predict(booster, table[test], features)
-        rounds.append(booster.best_iteration)
+        model = WatchTree(spec, features, max_bin, seed).fit(table[~test])
+        plain[test] = model.predict(table[test])
+        quantise_leaves(model.booster)
+        quant[test] = model.predict(table[test])
+        rounds.append(model.best_iteration)
     base = table[["cohort", "subject", "person", "epoch", "y4"]]
     return base.assign(pred=plain), base.assign(pred=quant), float(np.mean(rounds))
 
 
-def run_loco(tables, held_out, features, *, exclude=(), seed=0):
+def run_loco(spec, tables, held_out, features, *, exclude=(), seed=0):
     """Train on every other cohort's complete-context epochs; predict the held-out cohort."""
     train = pd.concat(
         [select(tables[c], True) for c in COHORT_ORDER if c != held_out and c not in exclude],
         ignore_index=True,
     )
     test = select(tables[held_out], True)
-    booster = fit(train, features, 255, seed)
+    model = WatchTree(spec, features, 255, seed).fit(train)
     out = test[["cohort", "subject", "person", "epoch", "y4"]].copy()
-    out["pred"] = predict(booster, test, features)
-    return out, float(booster.best_iteration)
+    out["pred"] = model.predict(test)
+    return out, float(model.best_iteration)
 
 
 # -------------------------------------------------------------------------------- metrics
@@ -418,7 +381,9 @@ def counts_table(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_all(features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]) -> None:
+def run_all(
+    spec: TreeSpec, features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]
+) -> None:
     out.mkdir(parents=True, exist_ok=True)
     tables = load_tables(features_dir, uncropped_dir)
     counts_table(tables).to_csv(out / "counts.csv", index=False)
@@ -433,14 +398,14 @@ def run_all(features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]
             table = select(tables[cohort], True)
             folds = person_folds(sorted(table.person.unique()))
             for bins in (255, 15):
-                plain, quant, rounds = run_both(table, ALL, folds, max_bin=bins)
+                plain, quant, rounds = run_both(spec, table, ALL, folds, max_bin=bins)
                 suffix = "" if bins == 255 else "_bin15"
                 col.add("cv_within", cohort, f"with_hr{suffix}", plain, keep_oof=bins == 255, rounds=rounds)
                 col.add("cv_within", cohort, f"with_hr{suffix}_int8", quant, rounds=rounds)
             for config in ("no_hr",) + (
                 ("no_forward", "no_breathing", "windows_le15") if cohort == "wearanize" else ()
             ):
-                pred, info = run_folds(table, sets[config], folds)
+                pred, info = run_folds(spec, table, sets[config], folds)
                 col.add("cv_within", cohort, config, pred, keep_oof=config == "no_hr", rounds=info["mean_rounds"])
             col.write()
 
@@ -453,7 +418,7 @@ def run_all(features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]
                 variants["_no_sibling"] = (sibling,)
             for tag, exclude in variants.items():
                 for config in ("with_hr", "no_hr"):
-                    pred, rounds = run_loco(ctx_tables, held, sets[config], exclude=exclude)
+                    pred, rounds = run_loco(spec, ctx_tables, held, sets[config], exclude=exclude)
                     col.add("loco", held, config + tag, pred, keep_oof=held == "wearanize", rounds=rounds)
             col.write()
 
@@ -472,15 +437,15 @@ def run_all(features_dir: Path, uncropped_dir: Path, out: Path, stages: set[str]
                 sel = sel[sel.subject.isin(common) & sel.person.isin(folds)].reset_index(drop=True)
                 for label, feats in (("model", ALL), ("probe_nan", probe_features("nan")),
                                      ("probe_coverage", probe_features("cov"))):
-                    pred, _ = run_folds(sel, feats, folds)
+                    pred, _ = run_folds(spec, sel, feats, folds)
                     col.add("leak", cohort, f"{setup}/{label}", pred)
             col.write()
     if "regions" in stages:
-        leak_regions(tables, nights["wearanize"], out)
+        leak_regions(spec, tables, nights["wearanize"], out)
     col.write()
 
 
-def leak_regions(tables, common, out: Path) -> None:
+def leak_regions(spec, tables, common, out: Path) -> None:
     """Wearanize+ kappa by position in the PSG span, with cropped and uncropped features.
 
     Regions are the first ``BACK_EPOCHS`` epochs, the last ``FWD_EPOCHS`` epochs and the middle
@@ -497,7 +462,7 @@ def leak_regions(tables, common, out: Path) -> None:
     for name, (table, context) in setups.items():
         sel = select(table, context)
         sel = sel[sel.subject.isin(common)].reset_index(drop=True)
-        pred, _ = run_folds(sel, ALL, folds)
+        pred, _ = run_folds(spec, sel, ALL, folds)
         start = table[table.in_psg].groupby("subject").epoch.min()
         length = table[table.in_psg].groupby("subject").size()
         pos = pred.epoch.to_numpy() - pred.subject.map(start).to_numpy()
@@ -522,8 +487,11 @@ def main() -> None:
     parser.add_argument("--uncropped", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--stages", default="cv,loco,leak")
+    parser.add_argument("--model-config", type=Path, default=CONFIG_DIR / "model.json")
+    parser.add_argument("--training-config", type=Path, default=CONFIG_DIR / "training.json")
     args = parser.parse_args()
-    run_all(args.features, args.uncropped, args.out, set(args.stages.split(",")))
+    spec = TreeSpec.load(args.model_config, args.training_config)
+    run_all(spec, args.features, args.uncropped, args.out, set(args.stages.split(",")))
 
 
 if __name__ == "__main__":
