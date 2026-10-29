@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from arcasleep.data.constants import MIN_SCORED_MINUTES
-from arcasleep_watchtree.data.cohorts import (
+from arcasleep_watchtree.data.loaders import (
     COHORTS,
     DATA_ROOT,
     Night,

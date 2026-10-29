@@ -23,7 +23,7 @@ import pandas as pd
 from scipy import stats
 from sklearn.metrics import cohen_kappa_score
 
-from arcasleep_watchtree.data.cohorts import participant_of
+from arcasleep_watchtree.data.loaders import participant_of
 from arcasleep_watchtree.features import constants as C
 from arcasleep_watchtree.features.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
 from arcasleep_watchtree.features.table import (

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from arcasleep_watchtree import cv
-from arcasleep_watchtree.data.cohorts import COHORTS, DATA_ROOT, load_night, subject_ids
+from arcasleep_watchtree.data.loaders import COHORTS, DATA_ROOT, load_night, subject_ids
 from arcasleep_watchtree.features.constants import SAMPLES_PER_EPOCH
 from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec
 from arcasleep_watchtree.watch import export as ex
