@@ -1,6 +1,6 @@
 """On-watch cost of the features: ops per epoch by family, CPU share and ring-buffer memory.
 
-    python -m arcasleep_watchtree.costs
+    python -m arcasleep_watchtree.features.costs
 
 An op is one multiply-add, add or compare; the Instinct 3 runs 23,640 multiply-adds per second
 at 100% CPU (int8 ``ByteArray`` dot product), so the CPU share is ops per epoch over
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.features import EPOCHS_PER_MIN, WINDOWS, stream_costs, window_costs
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.table import EPOCHS_PER_MIN, WINDOWS, stream_costs, window_costs
 
 WATCH_OPS_PER_S = 23_640
 #: Trees: 524 8-bit depth-6 trees take 0.18 s per prediction.

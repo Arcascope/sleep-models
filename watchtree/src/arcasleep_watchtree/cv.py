@@ -23,11 +23,10 @@ import pandas as pd
 from scipy import stats
 from sklearn.metrics import cohen_kappa_score
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.cohorts import participant_of
-from arcasleep_watchtree.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
-from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec, WatchTree
-from arcasleep_watchtree.features import (
+from arcasleep_watchtree.data.cohorts import participant_of
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.costs import BYTES_PER_INT16, TREE_OPS_PER_EPOCH, WATCH_OPS_PER_S
+from arcasleep_watchtree.features.table import (
     EPOCHS_PER_MIN,
     WINDOWS,
     feature_names,
@@ -35,6 +34,7 @@ from arcasleep_watchtree.features import (
     window_costs,
     window_name,
 )
+from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec, WatchTree
 
 COHORT_ORDER = ["wearanize", "aauwss", "sleepaccel", "weaver_garmin", "weaver_fitbit"]
 FWD_EPOCHS = C.FORWARD_MAX_MIN * EPOCHS_PER_MIN

@@ -4,14 +4,14 @@ Each axis of the high-passed 2.5 Hz stream (75 samples per epoch) goes through a
 recursion at 16 frequencies, 0.1 to 0.6 Hz in steps of 1/30 Hz. The three axes' powers add. The
 peak bin, refined by a parabola through its neighbours, gives the rate; the share of the band's
 power in the peak and the spectral entropy say how regular it is. Only epochs that are still
-(:data:`~arcasleep_watchtree.constants.BREATH_STILL_DEG`) get values; the others are NaN.
+(:data:`~arcasleep_watchtree.features.constants.BREATH_STILL_DEG`) get values; the others are NaN.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from arcasleep_watchtree import constants as C
+from arcasleep_watchtree.features import constants as C
 
 NAMES = ("breath_bpm", "breath_peak_share", "breath_entropy", "breath_log_power")
 

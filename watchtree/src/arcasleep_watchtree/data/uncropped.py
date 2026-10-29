@@ -23,8 +23,8 @@ from pisces_lite.datasets import align_trim, mask_data
 from pisces_lite.datasets.constants import PSG_COL, TIMESTAMP_COL, X_COL, Y_COL, Z_COL
 
 from arcasleep.processing import clean_accelerometer_rows
-from arcasleep_watchtree.cohorts import DATA_ROOT, Night, wearanize_hr
-from arcasleep_watchtree.preprocess import to_25hz
+from arcasleep_watchtree.data.cohorts import DATA_ROOT, Night, wearanize_hr
+from arcasleep_watchtree.features.preprocess import to_25hz
 
 OUTSIDE_PSG = -3
 PSG_DT = 30

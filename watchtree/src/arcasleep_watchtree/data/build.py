@@ -9,11 +9,11 @@ the .npz format we use to cache preprocessed tensors for BiDoze and UNet models.
 
 To use this CLI command:
 
-    python -m arcasleep_watchtree.build --cohort wearanize --out results/features-2026-10-27
+    python -m arcasleep_watchtree.data.build --cohort wearanize --out results/features-2026-10-27
 
 Each row is one 30-s epoch of one night: ``subject``, ``cohort``, ``epoch``, ``y4`` (0 wake,
 1 light, 2 deep, 3 REM, -1 not scored) and the features of
-:func:`~arcasleep_watchtree.features.feature_names`. Nights with under
+:func:`~arcasleep_watchtree.features.table.feature_names`. Nights with under
 :data:`~arcasleep.data.constants.MIN_SCORED_MINUTES` of staged PSG are left out, as in the
 BiDoze cache.
 """
@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from arcasleep.data.constants import MIN_SCORED_MINUTES
-from arcasleep_watchtree.cohorts import (
+from arcasleep_watchtree.data.cohorts import (
     COHORTS,
     DATA_ROOT,
     Night,
@@ -40,9 +40,9 @@ from arcasleep_watchtree.cohorts import (
     person_ids,
     subject_ids,
 )
-from arcasleep_watchtree.constants import EPOCH_S
-from arcasleep_watchtree.features import compute_features
-from arcasleep_watchtree.uncropped import OUTSIDE_PSG, load_night_uncropped, sync_table
+from arcasleep_watchtree.data.uncropped import OUTSIDE_PSG, load_night_uncropped, sync_table
+from arcasleep_watchtree.features.constants import EPOCH_S
+from arcasleep_watchtree.features.table import compute_features
 
 _STATE: dict = {}
 
@@ -66,7 +66,7 @@ def _init(cohort_name: str, uncropped: bool = False) -> None:
     _STATE["data_set"] = load_dataset(DATA_ROOT / cohort.directory)
     _STATE["uncropped"] = uncropped
     if uncropped:
-        from arcasleep_watchtree.uncropped import RAW_ROOT
+        from arcasleep_watchtree.data.uncropped import RAW_ROOT
 
         _STATE["sync"] = sync_table(DATA_ROOT / RAW_ROOT)
 

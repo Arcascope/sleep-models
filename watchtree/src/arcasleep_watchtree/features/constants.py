@@ -37,7 +37,7 @@ HP_A = 1.0 / (1.0 + 2.0 * np.pi * 0.04 / FS_2)
 #: Movement.
 JERK_SECOND = FS
 #: An epoch is a high-activity bout when its mean jerk is at least this multiple of the night's
-#: jerk floor (see :func:`~arcasleep_watchtree.baseline.low_baseline`).
+#: jerk floor (see :func:`~arcasleep_watchtree.features.baseline.low_baseline`).
 BOUT_RATIO = 3.0
 #: Angle: mean of each 5-s block of the 5 Hz stream, in degrees; a change under this is "still".
 ANGLE_BLOCK_SAMPLES = 25

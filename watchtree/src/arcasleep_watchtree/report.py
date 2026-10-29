@@ -16,7 +16,7 @@ import pandas as pd
 from scipy import stats
 
 from arcasleep_watchtree import cv
-from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec
+from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec
 
 BLUE, ORANGE, GREEN = "#2a78d6", "#eb6834", "#1baf7a"
 COHORT_LABEL = {
@@ -251,7 +251,9 @@ def figure(per_night: pd.DataFrame, bidoze: pd.DataFrame, path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--run", required=True, type=Path)
-    parser.add_argument("--features", type=Path, default=None)
+    parser.add_argument(
+        "--features", type=Path, default=None, help="features directory (default: <run>/features)"
+    )
     parser.add_argument("--training-config", type=Path, default=CONFIG_DIR / "training.json")
     args = parser.parse_args()
     max_rounds = TreeSpec.load(training_config=args.training_config).max_rounds
@@ -261,7 +263,7 @@ def main() -> None:
     per_night = per_night[per_night.experiment != "bidoze"]
     summary = summary[summary.experiment != "bidoze"]
     oof = pd.read_parquet(run / "oof_predictions.parquet")
-    nights, _ = bidoze_nights(run, oof, run / "features")
+    nights, _ = bidoze_nights(run, oof, args.features or run / "features")
 
     comparisons = []
     for metric in ("kappa4", "kappa_sw"):

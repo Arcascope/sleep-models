@@ -15,12 +15,12 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.baseline import low_baseline
-from arcasleep_watchtree.breathing import breathing_features
-from arcasleep_watchtree.heartrate import epoch_heart_rate
-from arcasleep_watchtree.preprocess import epoch_signals
-from arcasleep_watchtree.windows import window_stat
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.baseline import low_baseline
+from arcasleep_watchtree.features.breathing import breathing_features
+from arcasleep_watchtree.features.heartrate import epoch_heart_rate
+from arcasleep_watchtree.features.preprocess import epoch_signals
+from arcasleep_watchtree.features.windows import window_stat
 
 EPOCHS_PER_MIN = 60 // C.EPOCH_S
 

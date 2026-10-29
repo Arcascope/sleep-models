@@ -2,7 +2,7 @@
 
 Each boosting round adds four trees, one per class (0 wake, 1 light, 2 deep, 3 REM); an epoch's
 stage is the class with the highest summed score. Trees are at most depth 6 with up to 64
-leaves, the complete trees that :mod:`~arcasleep_watchtree.export` writes for the watch.
+leaves, the complete trees that :mod:`~arcasleep_watchtree.watch.export` writes for the watch.
 
 The LightGBM parameters are in ``config/model.json``. The rounds and early stopping are in
 ``config/training.json``: ``max_rounds``, ``validation_share`` (the share of training persons
@@ -19,7 +19,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from arcasleep_watchtree import constants as C
+from arcasleep_watchtree.features import constants as C
 
 
 def low_baseline(hr: np.ndarray) -> np.ndarray:

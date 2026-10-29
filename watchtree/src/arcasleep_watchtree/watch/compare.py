@@ -1,13 +1,13 @@
 """Run the fixed-point reference on Weaver Garmin nights and compare it with the float features.
 
-    python -m arcasleep_watchtree.port_run reference --out results/port-2026-10-27 [--limit N]
-    python -m arcasleep_watchtree.port_run compare   --out results/port-2026-10-27 \\
+    python -m arcasleep_watchtree.watch.compare reference --out results/port-2026-10-27 [--limit N]
+    python -m arcasleep_watchtree.watch.compare compare   --out results/port-2026-10-27 \\
         --features results/features-2026-10-27
 
 ``reference`` replays each night's 25 Hz stream (rounded to integer milli-g, one heart-rate
-reading per second) through :class:`~arcasleep_watchtree.fixed.Engine` and saves its feature
+reading per second) through :class:`~arcasleep_watchtree.watch.fixed.Engine` and saves its feature
 integers of every epoch that reached its 45-min delay. ``compare`` measures agreement with
-``features.py`` and the 4-stage kappa change on out-of-fold models.
+:mod:`~arcasleep_watchtree.features.table` and the 4-stage kappa change on out-of-fold models.
 """
 
 from __future__ import annotations
@@ -24,12 +24,12 @@ import numpy as np
 import pandas as pd
 
 from arcasleep_watchtree import cv
-from arcasleep_watchtree import export as ex
-from arcasleep_watchtree.cohorts import COHORTS, DATA_ROOT, load_night, subject_ids
-from arcasleep_watchtree.constants import SAMPLES_PER_EPOCH
-from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec
-from arcasleep_watchtree.fixed import Engine
-from arcasleep_watchtree.portspec import FEATURES, NA, SCALE
+from arcasleep_watchtree.data.cohorts import COHORTS, DATA_ROOT, load_night, subject_ids
+from arcasleep_watchtree.features.constants import SAMPLES_PER_EPOCH
+from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec
+from arcasleep_watchtree.watch import export as ex
+from arcasleep_watchtree.watch.fixed import Engine
+from arcasleep_watchtree.watch.spec import FEATURES, NA, SCALE
 
 _STATE: dict = {}
 COHORT = "weaver_garmin"
@@ -216,8 +216,8 @@ def compare(out: Path, features_dir: Path) -> None:
 def costs(out: Path, max_rounds: int) -> None:
     """Heap, CPU and ops of the stager with the numbers measured on the Instinct 3 (mlbench, treebench)."""
     from arcasleep_watchtree.cv import ops_per_epoch
-    from arcasleep_watchtree.fixed import Engine
-    from arcasleep_watchtree.costs import WATCH_OPS_PER_S
+    from arcasleep_watchtree.features.costs import WATCH_OPS_PER_S
+    from arcasleep_watchtree.watch.fixed import Engine
 
     model = json.loads((out / "model.json").read_text())
     n_trees = model["n_trees"]

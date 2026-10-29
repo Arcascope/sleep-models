@@ -3,11 +3,14 @@
 #
 #   scripts/harness.sh [--dry-run] [phase ...]
 #
-# Phases are features, cv and export, all of them by default, in the order given. Each run
-# writes to results/<run id>/:
+# Phases are features, cv, export and comparison, run in the order given. The default is
+# features, cv and export. Each run writes to results/<run id>/:
 #   features/   one parquet per cohort, plus the uncropped Wearanize+ table
 #   cv/         per-night and summary tables of every CV experiment (arcasleep_watchtree.cv)
-#   export/     the final model and trees.bin for the watch (arcasleep_watchtree.export)
+#   export/     the final model and trees.bin for the watch (arcasleep_watchtree.watch.export)
+#   cv/bidoze_epochs.parquet
+#               per-epoch calls of the out-of-fold adult BiDoze models on Wearanize+, which
+#               arcasleep_watchtree.report compares with WatchTree (arcasleep_watchtree.comparison_calls)
 #   config/     copies of the model and training configs the run used
 #
 #   WATCHTREE_RUN_ID           run directory name (default watchtree-training)
@@ -18,6 +21,9 @@
 #                              the features phase is then skipped
 #   WATCHTREE_CV_STAGES        stages of the cv phase (default cv,loco,leak)
 #   WATCHTREE_WORKERS          processes for the features phase (default 6)
+#   WATCHTREE_BIDOZE_TRAINING  training/ of the BiDoze run the comparison phase scores with
+#                              (default ../bidoze/results/adult-f2-2026-10-23/training)
+#   WATCHTREE_FEATURE_CACHE    the BiDoze feature cache root (default ../feature_cache)
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -31,6 +37,8 @@ TRAINING_CONFIG="${WATCHTREE_TRAINING_CONFIG:-config/training.json}"
 FEATURES_DIR="${WATCHTREE_FEATURES_DIR:-$RUN_DIR/features}"
 CV_STAGES="${WATCHTREE_CV_STAGES:-cv,loco,leak}"
 WORKERS="${WATCHTREE_WORKERS:-6}"
+BIDOZE_TRAINING="${WATCHTREE_BIDOZE_TRAINING:-$REPO_ROOT/../bidoze/results/adult-f2-2026-10-23/training}"
+FEATURE_CACHE="${WATCHTREE_FEATURE_CACHE:-$REPO_ROOT/../feature_cache}"
 COHORTS=(wearanize aauwss sleepaccel weaver_garmin weaver_fitbit)
 
 usage() {
@@ -44,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1 ;;
         -*) usage ;;
-        features | cv | export) PHASES+=("$1") ;;
+        features | cv | export | comparison) PHASES+=("$1") ;;
         *) usage ;;
     esac
     shift
@@ -69,10 +77,10 @@ run_phase() {
     case "$1" in
         features)
             for cohort in "${COHORTS[@]}"; do
-                run python -m arcasleep_watchtree.build --cohort "$cohort" --out "$FEATURES_DIR" \
+                run python -m arcasleep_watchtree.data.build --cohort "$cohort" --out "$FEATURES_DIR" \
                     --workers "$WORKERS"
             done
-            run python -m arcasleep_watchtree.build --cohort wearanize --uncropped --out "$FEATURES_DIR" \
+            run python -m arcasleep_watchtree.data.build --cohort wearanize --uncropped --out "$FEATURES_DIR" \
                 --workers "$WORKERS"
             ;;
         cv)
@@ -80,8 +88,12 @@ run_phase() {
                 --out "$RUN_DIR/cv" --stages "$CV_STAGES" "${CONFIG_ARGS[@]}"
             ;;
         export)
-            run python -m arcasleep_watchtree.export --features "$FEATURES_DIR" --uncropped "$FEATURES_DIR" \
+            run python -m arcasleep_watchtree.watch.export --features "$FEATURES_DIR" --uncropped "$FEATURES_DIR" \
                 --out "$RUN_DIR/export" "${CONFIG_ARGS[@]}"
+            ;;
+        comparison)
+            run python -m arcasleep_watchtree.comparison_calls --training "$BIDOZE_TRAINING" \
+                --cache-root "$FEATURE_CACHE" --out "$RUN_DIR/cv/bidoze_epochs.parquet"
             ;;
     esac
 }

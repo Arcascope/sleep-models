@@ -1,6 +1,6 @@
 """Train the final WatchTree model and export it as complete depth-6 trees for the watch.
 
-    python -m arcasleep_watchtree.export --features results/features-2026-10-27 \\
+    python -m arcasleep_watchtree.watch.export --features results/features-2026-10-27 \\
         --uncropped results/cv-2026-10-27/features --out results/port-2026-10-27 \\
         --model-config config/model.json --training-config config/training.json
 
@@ -12,7 +12,7 @@
   Trees come in rounds of four, class 0 to 3. A branch that ends early is padded with splits that
   always go left and leaves that repeat the value.
 * A threshold is a bin index of the feature. Bins are counted from the feature's edges, integers
-  in the units of :mod:`~arcasleep_watchtree.portspec`: ``bin(F) = #{edges < F}``; a split goes
+  in the units of :mod:`~arcasleep_watchtree.watch.spec`: ``bin(F) = #{edges < F}``; a split goes
   left when ``bin <= threshold``. A missing value has bin 15 for splits that send it right and
   bin 0 for splits that send it left (the feature byte's bit 7 selects which).
 """
@@ -28,8 +28,8 @@ import numpy as np
 import pandas as pd
 
 from arcasleep_watchtree import cv
-from arcasleep_watchtree.definition import CONFIG_DIR, TreeSpec, WatchTree
-from arcasleep_watchtree.portspec import FEATURES, NA, SCALE
+from arcasleep_watchtree.model.definition import CONFIG_DIR, TreeSpec, WatchTree
+from arcasleep_watchtree.watch.spec import FEATURES, NA, SCALE
 
 DEPTH = 6
 SPLITS = 63

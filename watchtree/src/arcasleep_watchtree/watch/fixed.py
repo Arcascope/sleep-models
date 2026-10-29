@@ -5,7 +5,7 @@ reading (integer bpm or none) once a second. :class:`Engine` consumes them with 
 and fixed ring buffers only; ``Number`` in the comments is a 32-bit Monkey C integer (checked with
 :func:`n32` where a product or sum could leave the range), ``Long`` a 64-bit one.
 
-Differences from :mod:`~arcasleep_watchtree.features` (the float reference used for training):
+Differences from :mod:`~arcasleep_watchtree.features.table` (the float reference used for training):
 
 * input: integer milli-g and integer bpm, not resampled float g (the cohorts are resampled
   offline; the watch gets 25 Hz natively);
@@ -21,7 +21,7 @@ Differences from :mod:`~arcasleep_watchtree.features` (the float reference used 
 * low baseline: block means rounded to integers;
 * heart rate: the epoch is the one the batch's first sample is in; one reading per batch.
 
-Integer units of every feature are in :mod:`~arcasleep_watchtree.portspec`.
+Integer units of every feature are in :mod:`~arcasleep_watchtree.watch.spec`.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.signal import butter, sosfilt_zi
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.portspec import DELAY, NA, SIGNALS, spec
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.watch.spec import DELAY, NA, SIGNALS, spec
 
 SPE = C.SAMPLES_PER_EPOCH  # 750
 Q = 24  # coefficient bits
@@ -136,7 +136,7 @@ class Model:
 
     @staticmethod
     def load(model_json: dict, trees_bin: bytes) -> "Model":
-        from arcasleep_watchtree.export import unpack
+        from arcasleep_watchtree.watch.export import unpack
 
         n = model_json["n_trees"]
         feat, thr, leaf = unpack(trees_bin, n)

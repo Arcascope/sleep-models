@@ -27,9 +27,9 @@ from pisces_lite.datasets.constants import PSG_COL, TIMESTAMP_COL
 from arcasleep.data.prepare import load_dataset
 from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key, pseudonym
 from arcasleep.processing import clean_accelerometer_rows
-from arcasleep_watchtree.preprocess import to_25hz
+from arcasleep_watchtree.features.preprocess import to_25hz
 
-DATA_ROOT = Path(os.environ.get("WATCHTREE_DATA_ROOT", "/media/eric/Extreme SSD/pisces2-data"))
+DATA_ROOT = Path(os.environ.get("WATCHTREE_DATA_ROOT"))
 E4_COUNTS_PER_G = 64.0
 
 HeartRate = tuple[np.ndarray, np.ndarray]

@@ -5,7 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from arcasleep_watchtree import cohorts, report
+from arcasleep_watchtree import report
+from arcasleep_watchtree.data import cohorts
 
 
 def test_keyed_dataset_keeps_one_participant_id_across_nights(tmp_path, monkeypatch):

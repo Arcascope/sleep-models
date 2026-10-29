@@ -25,8 +25,8 @@ hr_valid   1/1024              1 when the epoch has a heart-rate sample
 
 from __future__ import annotations
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.features import CURRENT, EPOCHS_PER_MIN, WINDOWS, window_name
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.table import CURRENT, EPOCHS_PER_MIN, WINDOWS, window_name
 
 #: Marks an epoch or window with no value.
 NA = -(2**31)

@@ -6,11 +6,12 @@ import numpy as np
 import pytest
 from scipy.signal import sosfilt
 
-from arcasleep_watchtree import constants as C
-from arcasleep_watchtree.baseline import low_baseline
-from arcasleep_watchtree.breathing import goertzel_power
-from arcasleep_watchtree.cohorts import four_class
-from arcasleep_watchtree.features import (
+from arcasleep_watchtree.data.cohorts import four_class
+from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.baseline import low_baseline
+from arcasleep_watchtree.features.breathing import goertzel_power
+from arcasleep_watchtree.features.preprocess import biquads, nominal_rate, to_25hz
+from arcasleep_watchtree.features.table import (
     EPOCHS_PER_MIN,
     bout_timing,
     compute_features,
@@ -18,8 +19,7 @@ from arcasleep_watchtree.features import (
     stream_costs,
     window_costs,
 )
-from arcasleep_watchtree.preprocess import biquads, nominal_rate, to_25hz
-from arcasleep_watchtree.windows import RingWindow, window_stat
+from arcasleep_watchtree.features.windows import RingWindow, window_stat
 
 FORWARD_EPOCHS = C.FORWARD_MAX_MIN * EPOCHS_PER_MIN
 
