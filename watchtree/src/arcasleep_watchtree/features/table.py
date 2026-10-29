@@ -1,11 +1,10 @@
-"""The WatchTree feature table: definitions, per-epoch computation and on-watch cost.
+"""The WatchTree feature table: per-epoch computation of the columns ``inputs.json`` lists, and their on-watch cost.
 
 One row per 30-s epoch. A feature at epoch ``k`` uses data up to ``FORWARD_MAX_MIN`` minutes
 after the end of epoch ``k`` and nothing later; the stager scores epoch ``k`` once that much
 has been recorded. No feature depends on the position of the epoch in the recording.
 
-Names are ``<signal>[_<stat>_<b|f><minutes>]``: ``b`` is a backward window that ends at the
-epoch, ``f`` a forward window that starts after it.
+Which columns are computed, and in what order, is a :class:`~arcasleep_watchtree.features.config.FeatureConfig`.
 """
 
 from __future__ import annotations
@@ -17,76 +16,20 @@ import pandas as pd
 
 from arcasleep_watchtree.features import constants as C
 from arcasleep_watchtree.features.baseline import low_baseline
-from arcasleep_watchtree.features.breathing import breathing_features
+from arcasleep_watchtree.features.config import FeatureConfig
 from arcasleep_watchtree.features.heartrate import epoch_heart_rate
 from arcasleep_watchtree.features.preprocess import epoch_signals
 from arcasleep_watchtree.features.windows import window_stat
 
 EPOCHS_PER_MIN = 60 // C.EPOCH_S
-
-#: (signal, stat, direction, minutes): the windowed features, in column order.
-WINDOWS: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
-    ("jerk", "mean", "b", (1, 5, 15, 30, 60, 120)),
-    ("jerk", "max", "b", (5, 30, 120)),
-    ("jerk", "mean", "f", (5, 15, 45)),
-    ("jerk", "max", "f", (5, 15, 45)),
-    ("lfm", "mean", "b", (5, 15, 60)),
-    ("lfm", "max", "b", (15,)),
-    ("lfm", "mean", "f", (5, 15, 45)),
-    ("act", "mean", "b", (5, 15, 60, 120)),
-    ("act", "mean", "f", (5, 15, 45)),
-    ("angle", "std", "b", (15, 60)),
-    ("angle", "std", "f", (15, 45)),
-    ("angle_step", "mean", "b", (5, 15, 30, 60, 120)),
-    ("angle_step", "max", "b", (15, 60)),
-    ("angle_step", "mean", "f", (5, 15, 45)),
-    ("angle_step", "max", "f", (15, 45)),
-    ("daz", "mean", "b", (15, 60)),
-    ("daz", "mean", "f", (15, 45)),
-    ("sib", "mean", "b", (5, 15, 60)),
-    ("sib", "mean", "f", (15,)),
-    ("hr", "mean", "b", (5, 15, 30, 60)),
-    ("hr", "std", "b", (5, 15, 60)),
-    ("hr", "mean", "f", (5, 15, 45)),
-    ("hr", "std", "f", (15, 45)),
-    ("hr_rel", "mean", "b", (5, 15, 60)),
-    ("hr_rel", "mean", "f", (15, 45)),
-    ("hr_valid", "mean", "b", (15,)),
-    ("hr_valid", "mean", "f", (15,)),
-    ("breath_bpm", "mean", "b", (5, 15)),
-    ("breath_bpm", "std", "b", (15,)),
-    ("breath_bpm", "mean", "f", (15,)),
-    ("breath_bpm", "std", "f", (15,)),
-    ("breath_peak_share", "mean", "b", (5, 15)),
-    ("breath_peak_share", "mean", "f", (15,)),
-    ("breath_valid", "mean", "b", (15,)),
-    ("breath_valid", "mean", "f", (15,)),
-)
-
-#: Features of the epoch alone (no window), in column order.
-CURRENT = (
-    "jerk", "jerk_peak", "lfm", "angle", "angle_step", "daz", "sib",
-    "hr", "hr_std", "hr_n", "hr_missing", "hr_base", "hr_rel",
-    "breath_bpm", "breath_peak_share", "breath_entropy", "breath_log_power", "breath_valid",
-    "tsb_min", "tnb_min",
-)  # fmt: skip
+EPOCH_COL = "epoch"
+BREATH_PREFIX = "breath"
 
 #: Ops per epoch to update one window of each statistic: add the new epoch, drop the oldest,
 #: keep the count, and divide (std adds the sum of squares and a square root). A maximum scans
 #: the window.
 COST_MEAN = 6
 COST_STD = 14
-
-
-def window_name(signal: str, stat: str, direction: str, minutes: int) -> str:
-    return f"{signal}_{stat}_{direction}{minutes}"
-
-
-def feature_names() -> list[str]:
-    names = list(CURRENT)
-    for signal, stat, direction, minutes in WINDOWS:
-        names += [window_name(signal, stat, direction, m) for m in minutes]
-    return names
 
 
 def bout_timing(act: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -110,10 +53,18 @@ def bout_timing(act: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return since, until / EPOCHS_PER_MIN
 
 
+def _uses_breathing(config: FeatureConfig) -> bool:
+    return any(name.startswith(BREATH_PREFIX) for name in (*config.at_time, *config.signals))
+
+
 def compute_features(
-    acc25: np.ndarray, valid25: np.ndarray, hr_t: np.ndarray, hr_bpm: np.ndarray
+    acc25: np.ndarray,
+    valid25: np.ndarray,
+    hr_t: np.ndarray,
+    hr_bpm: np.ndarray,
+    config: FeatureConfig,
 ) -> pd.DataFrame:
-    """The feature table of one night.
+    """The feature table of one night: ``epoch`` and the columns of ``config``, in its order.
 
     ``acc25`` is ``(n_epochs * 750, 3)`` in g on the 25 Hz grid, ``valid25`` marks the samples
     that are not inside a gap, and ``hr_t`` (seconds from the start of epoch 0) and ``hr_bpm``
@@ -127,8 +78,6 @@ def compute_features(
     hr_valid = np.where(present, (hr_n > 0).astype(float), np.nan)
     base = low_baseline(hr)
     hr_rel = hr - base
-    breath = breathing_features(sig.breath_input, sig.breath_still)
-    breath_valid = np.where(present, np.isfinite(breath["breath_bpm"]).astype(float), np.nan)
     act = np.where(
         present, (sig.jerk >= C.BOUT_RATIO * low_baseline(sig.jerk)).astype(float), np.nan
     )
@@ -136,27 +85,31 @@ def compute_features(
     daz = np.abs(np.diff(angle, prepend=angle[:1]))
     since, until = bout_timing(np.nan_to_num(act, nan=0.0))
 
+    breath: dict[str, np.ndarray] = {}
+    if _uses_breathing(config):
+        from arcasleep_watchtree.features.breathing import breathing_features
+
+        breath = breathing_features(sig.breath_input, sig.breath_still)
+        breath[f"{BREATH_PREFIX}_valid"] = np.where(
+            present, np.isfinite(breath[f"{BREATH_PREFIX}_bpm"]).astype(float), np.nan
+        )
+
     series = {
         "jerk": sig.jerk, "jerk_peak": sig.jerk_peak, "lfm": sig.lfm, "act": act,
         "angle": angle, "angle_step": sig.angle_step, "daz": daz, "sib": sig.still_fraction,
-        "hr": hr, "hr_rel": hr_rel, "hr_valid": hr_valid, **breath, "breath_valid": breath_valid,
+        "hr": hr, "hr_rel": hr_rel, "hr_valid": hr_valid, **breath,
     }  # fmt: skip
-    columns: dict[str, np.ndarray] = {
-        "jerk": sig.jerk, "jerk_peak": sig.jerk_peak, "lfm": sig.lfm, "angle": angle,
-        "angle_step": sig.angle_step, "daz": daz, "sib": sig.still_fraction,
-        "hr": hr, "hr_std": hr_std, "hr_n": hr_n.astype(float),
-        "hr_missing": (hr_n == 0).astype(float), "hr_base": base, "hr_rel": hr_rel,
-        **breath, "breath_valid": breath_valid, "tsb_min": since, "tnb_min": until,
+    at_time = {
+        **series, "hr_std": hr_std, "hr_n": hr_n.astype(float),
+        "hr_missing": (hr_n == 0).astype(float), "hr_base": base,
+        "tsb_min": since, "tnb_min": until,
     }  # fmt: skip
-    for signal, stat, direction, minutes in WINDOWS:
-        for m in minutes:
-            n = m * EPOCHS_PER_MIN
-            columns[window_name(signal, stat, direction, m)] = window_stat(
-                series[signal], stat, direction, n
-            )
-    table = pd.DataFrame({name: columns[name] for name in feature_names()})
-    table.insert(0, "epoch", np.arange(n_epochs))
-    return table.astype({name: np.float32 for name in feature_names()})
+    columns = {name: at_time[name] for name in config.at_time}
+    for w in config.windows:
+        columns[w.name] = window_stat(series[w.signal], w.stat, w.direction, w.epochs)
+    table = pd.DataFrame(columns).astype(np.float32)
+    table.insert(0, EPOCH_COL, np.arange(n_epochs))
+    return table
 
 
 @dataclass(frozen=True)
@@ -220,11 +173,9 @@ def stream_costs() -> list[CostLine]:
     ]
 
 
-def window_costs() -> list[CostLine]:
+def window_costs(config: FeatureConfig) -> list[CostLine]:
     lines = []
-    for signal, stat, direction, minutes in WINDOWS:
-        for m in minutes:
-            n = m * EPOCHS_PER_MIN
-            ops = n + 1 if stat == "max" else COST_STD if stat == "std" else COST_MEAN
-            lines.append(CostLine("windows", window_name(signal, stat, direction, m), ops))
+    for w in config.windows:
+        ops = w.epochs + 1 if w.stat == "max" else COST_STD if w.stat == "std" else COST_MEAN
+        lines.append(CostLine("windows", w.name, ops))
     return lines

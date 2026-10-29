@@ -1,6 +1,6 @@
-"""The 87 on-watch features, their integer units and the numbers the Monkey C app shares.
+"""The on-watch features of an ``inputs.json``, their integer units and the numbers the Monkey C app shares.
 
-Breathing features are dropped. Every feature is an integer on the watch; ``SCALE[name]`` is how
+The watch has no breathing features. Every feature is an integer on the watch; ``SCALE[name]`` is how
 many integer units one original unit (g, degree, bpm, minute, fraction) is. A model's bin edges
 are the thresholds of its trees converted to these integers, so the watch only compares integers.
 
@@ -26,7 +26,8 @@ hr_valid   1/1024              1 when the epoch has a heart-rate sample
 from __future__ import annotations
 
 from arcasleep_watchtree.features import constants as C
-from arcasleep_watchtree.features.table import CURRENT, EPOCHS_PER_MIN, WINDOWS, window_name
+from arcasleep_watchtree.features.config import FeatureConfig
+from arcasleep_watchtree.features.table import BREATH_PREFIX, EPOCHS_PER_MIN
 
 #: Marks an epoch or window with no value.
 NA = -(2**31)
@@ -53,28 +54,29 @@ SIGNALS = (
 STATS = ("mean", "max", "std")
 
 
-def spec() -> list[dict]:
-    """One dict per feature: name, kind (``cur`` or ``win``), signal, stat, direction, epochs, scale."""
+def spec(config: FeatureConfig) -> list[dict]:
+    """One dict per feature of ``config``: name, kind (``cur`` or ``win``), signal, stat, direction, epochs, scale.
+
+    The watch has no breathing path, so a breathing feature is refused.
+    """
+    breathing = [n for n in config.names if n.startswith(BREATH_PREFIX)]
+    if breathing:
+        raise ValueError(f"the watch does not compute breathing features: {breathing}")
     rows = []
-    for name in CURRENT:
-        if name.startswith("breath"):
-            continue
+    for name in config.at_time:
         signal = {"tsb_min": "tsb", "tnb_min": "tnb", "hr_missing": "hr_n"}.get(name, name)
         rows.append(dict(name=name, kind="cur", signal=signal, stat="", dir="", n=0,
                          scale=CURRENT_SCALE[name]))  # fmt: skip
-    for signal, stat, direction, minutes in WINDOWS:
-        if signal.startswith("breath"):
-            continue
-        for m in minutes:
-            scale = SIGNAL_SCALE[signal] * (STD_EXTRA if stat == "std" else 1)
-            rows.append(dict(name=window_name(signal, stat, direction, m), kind="win", signal=signal,
-                             stat=stat, dir=direction, n=m * EPOCHS_PER_MIN, scale=scale))  # fmt: skip
+    for w in config.windows:
+        scale = SIGNAL_SCALE[w.signal] * (STD_EXTRA if w.stat == "std" else 1)
+        rows.append(dict(name=w.name, kind="win", signal=w.signal, stat=w.stat, dir=w.direction,
+                         n=w.epochs, scale=scale))  # fmt: skip
     return rows
 
 
-FEATURES = [r["name"] for r in spec()]
-SCALE = {r["name"]: r["scale"] for r in spec()}
-assert len(FEATURES) == 87
+def scales(config: FeatureConfig) -> dict[str, int]:
+    """Integer units per original unit of each feature of ``config``."""
+    return {r["name"]: r["scale"] for r in spec(config)}
 
 #: Epochs of scoring delay: epoch ``k`` is scored when epoch ``k + DELAY`` has ended.
 DELAY = C.FORWARD_MAX_MIN * EPOCHS_PER_MIN

@@ -33,6 +33,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt_zi
 
 from arcasleep_watchtree.features import constants as C
+from arcasleep_watchtree.features.config import FeatureConfig
 from arcasleep_watchtree.watch.spec import DELAY, NA, SIGNALS, spec
 
 SPE = C.SAMPLES_PER_EPOCH  # 750
@@ -171,9 +172,9 @@ class Model:
 class Engine:
     """The whole on-watch pipeline. Feed samples; read :attr:`out` (one dict per scored epoch)."""
 
-    def __init__(self, model: Model | None = None) -> None:
+    def __init__(self, config: FeatureConfig, model: Model | None = None) -> None:
         self.model = model
-        self.rows = spec()
+        self.rows = spec(config)
         self.names = [r["name"] for r in self.rows]
         # Rings: windowed signals keep back + forward reach + 2 epochs; others 96.
         reach: dict[str, list[int]] = {}

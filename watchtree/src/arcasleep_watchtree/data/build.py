@@ -81,9 +81,9 @@ def recording_table(data_set, subject: str, config: FeatureConfig) -> tuple[pd.D
     acc25, valid25 = to_25hz(rows[:, 0], rows[:, 1:4], t0, labels.size)
     hr = hr.dropna()
     table = compute_features(
-        acc25, valid25, hr[TIMESTAMP_COL].to_numpy(float) - t0, hr[HR_COL].to_numpy(float)
+        acc25, valid25, hr[TIMESTAMP_COL].to_numpy(float) - t0, hr[HR_COL].to_numpy(float), config
     )
-    return table[["epoch", *config.names]], labels
+    return table, labels
 
 
 def _init(data_dir: str, config_path: str) -> None:
