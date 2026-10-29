@@ -1,7 +1,37 @@
 {
     "type": "watchtree",
-    "features": [
-
+    "features": {
+        "at_time": ["jerk", "jerk_peak", "lfm", "angle", "angle_step", "daz", "sib",
+        "hr"],
+        "b_spans": [5, 15, 30, 45, 60, 120],
+        "b_features": ["jerk_mean", "jerk_max"],
+        "f_spans": [5, 15, 45],
+        "f_features": ""
+    }[
+        , "hr_std", "hr_n", "hr_missing", "hr_base", "hr_rel",
+        "tsb_min", "tnb_min",
+        "jerk_mean_b1", "jerk_mean_b5", "jerk_mean_b15", "jerk_mean_b30", "jerk_mean_b60", "jerk_mean_b120",
+        "jerk_max_b5", "jerk_max_b30", "jerk_max_b120",
+        "jerk_mean_f5", "jerk_mean_f15", "jerk_mean_f45",
+        "jerk_max_f5", "jerk_max_f15", "jerk_max_f45",
+        "lfm_mean_b5", "lfm_mean_b15", "lfm_mean_b60",
+        "lfm_max_b15",
+        "lfm_mean_f5", "lfm_mean_f15", "lfm_mean_f45",
+        "act_mean_b5", "act_mean_b15", "act_mean_b60", "act_mean_b120",
+        "act_mean_f5", "act_mean_f15", "act_mean_f45",
+        "angle_std_b15", "angle_std_b60", "angle_std_f15", "angle_std_f45",
+        "angle_step_mean_b5", "angle_step_mean_b15", "angle_step_mean_b30", "angle_step_mean_b60", "angle_step_mean_b120",
+        "angle_step_max_b15", "angle_step_max_b60",
+        "angle_step_mean_f5", "angle_step_mean_f15", "angle_step_mean_f45",
+        "angle_step_max_f15", "angle_step_max_f45",
+        "daz_mean_b15", "daz_mean_b60", "daz_mean_f15", "daz_mean_f45",
+        "sib_mean_b5", "sib_mean_b15", "sib_mean_b60", "sib_mean_f15",
+        "hr_mean_b5", "hr_mean_b15", "hr_mean_b30", "hr_mean_b60",
+        "hr_std_b5", "hr_std_b15", "hr_std_b60",
+        "hr_mean_f5", "hr_mean_f15", "hr_mean_f45",
+        "hr_std_f15", "hr_std_f45",
+        "hr_rel_mean_b5", "hr_rel_mean_b15", "hr_rel_mean_b60", "hr_rel_mean_f15", "hr_rel_mean_f45",
+        "hr_valid_mean_b15", "hr_valid_mean_f15"
     ],
     "resample": false,
     "uncropped": true
