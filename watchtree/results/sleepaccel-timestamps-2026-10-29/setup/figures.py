@@ -45,18 +45,20 @@ ax.set_title(f"Pooled Δt, {n} SleepAccel nights, {allp.size:,} steps with Δt >
 ax.set_xlim(1e-3, 10); fig.savefig(FIG / "1_pooled_dt_hist.png", dpi=150); plt.close(fig)
 
 # 2 per night
-b2 = np.logspace(-3, 0, 121)
+XMAX = 0.12; b2 = np.arange(0, XMAX + 5e-4, 1e-3)  # linear 1 ms bins on one shared 0–120 ms axis
 cols = 6; rows = int(np.ceil(n / cols))
-fig, axs = plt.subplots(rows, cols, figsize=(16, 2.35 * rows), sharex=True, layout="constrained")
+fig, axs = plt.subplots(rows, cols, figsize=(16, 2.35 * rows), sharex=True, sharey=True, layout="constrained")
 for ax in axs.ravel(): ax.set_visible(False)
 for i, ax in zip(range(1, n + 1), axs.ravel()):
     ax.set_visible(True); d = D[i]; m = np.median(d); s = S.iloc[i - 1]
-    ax.hist(d[(d > 0) & (d <= 1)], bins=b2, color=BLUE if FOLD[i] else MUTED, lw=0); ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(1e-3, 1)
-    ax.axvline(m, color=ORANGE, lw=0.8)
+    ax.hist(d[(d > 0) & (d <= XMAX)] * 1e3, bins=b2 * 1e3, color=BLUE if FOLD[i] else MUTED, lw=0); ax.set_yscale("log"); ax.set_xlim(0, XMAX * 1e3)
+    ax.set_xticks(range(0, 121, 20)); ax.set_xticks(range(0, 121, 10), minor=True); ax.grid(True, axis="x", which="both", color=MUTED, lw=0.4, alpha=0.5); ax.set_axisbelow(True)
+    ax.axvline(m * 1e3, color=ORANGE, lw=0.8)
     ax.set_title(f"Night {i}{'' if FOLD[i] else ' (not in test folds)'}\nmedian {m*1e3:.1f} ms, {1/m:.1f} Hz, off {s.share_off_median_gt1pct:.1%}", fontsize=8.5, loc="left")
     ax.tick_params(labelsize=8)
-for ax in axs[-1]: ax.set_xlabel("Δt (s)", fontsize=9)
-fig.suptitle("Δt histogram per night (log counts; orange = median; 'off' = share of steps > 1% from the median; grey = not in BiDoze test folds 0–4)", x=0.01, ha="left", fontsize=10, color=INK2)
+for ax in axs.ravel(): ax.tick_params(labelbottom=True)
+for ax in axs[-1]: ax.set_xlabel("Δt (ms)", fontsize=9)
+fig.suptitle("Δt histogram per night, same axes on every panel (1 ms bins, 0–120 ms; log counts; orange = median; 'off' = share of steps > 1% from the median; grey = not in BiDoze test folds 0–4)", x=0.01, ha="left", fontsize=10, color=INK2)
 fig.savefig(FIG / "2_dt_hist_per_night.png", dpi=150); plt.close(fig)
 
 # 3 nominal vs effective
