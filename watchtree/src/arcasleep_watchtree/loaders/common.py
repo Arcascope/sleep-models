@@ -4,7 +4,8 @@ A loader reads one original dataset download into a pisces-lite ``DataSetObject`
 features, each a frame per id:
 
 - ``accelerometer``: ``timestamp, x, y, z`` in g, on the recorded timestamps;
-- ``psg``: ``timestamp, psg``, one row per 30-s epoch, codes 0 wake, 1-3 N1-N3, 5 REM, -1 not scored;
+- ``psg``: ``timestamp, psg``, one row per 30-s epoch, in pisces-lite's 5-class codes (0 wake,
+  1-4 N1-N4, 5 REM, ``PSG_MASK`` not scored);
 - ``heartrate``: ``timestamp, heart_rate`` in bpm; empty when the recording has none.
 
 All three are on one clock per recording.
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pisces_lite.datasets.constants import PSG_COL, TIMESTAMP_COL, X_COL, Y_COL, Z_COL
+from pisces_lite.datasets.constants import PSG_COL, PSG_MASK, TIMESTAMP_COL, X_COL, Y_COL, Z_COL
 from pisces_lite.datasets.data_set_object import DataSetObject
 
 ACCELEROMETER = "accelerometer"
@@ -28,7 +29,6 @@ PSG = "psg"
 HEARTRATE = "heartrate"
 HR_COL = "heart_rate"
 EPOCH_S = 30.0
-NOT_SCORED = -1
 
 ACCEL_COLUMNS = [TIMESTAMP_COL, X_COL, Y_COL, Z_COL]
 PSG_COLUMNS = [TIMESTAMP_COL, PSG_COL]
@@ -60,7 +60,7 @@ def no_heart_rate(_id: str = "") -> pd.DataFrame:
 
 def map_codes(raw: Iterable, mapping: dict) -> np.ndarray:
     """``raw`` stage values as WatchTree codes; values not in ``mapping`` are not scored."""
-    return np.array([mapping.get(v, NOT_SCORED) for v in raw], dtype=int)
+    return np.array([mapping.get(v, PSG_MASK) for v in raw], dtype=int)
 
 
 def read_hr_out(path: Path) -> pd.DataFrame:

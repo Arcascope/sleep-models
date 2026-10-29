@@ -51,6 +51,9 @@ def _manifest_s3(args: argparse.Namespace) -> int:
 
 
 DEFAULT_FEATURE_CACHE_DIR = "feature_cache"
+INPUTS_TYPE_KEY = "type"
+#: inputs.json ``type`` -> the module whose ``process`` builds that family's feature table.
+INPUTS_PROCESSORS = {"watchtree": "arcasleep_watchtree.data.build"}
 
 
 def _resolve_run_id(results: Path) -> str:
@@ -108,10 +111,34 @@ def _train(args: argparse.Namespace) -> int:
     return 0
 
 
+def _process_with(module_name: str, args: argparse.Namespace) -> int:
+    """Build each dataset with ``module_name``'s ``process``, for an inputs.json type it owns."""
+    import importlib
+
+    from arcasleep.data.prepare import _worker_count
+
+    module = importlib.import_module(module_name)
+    out = args.output_dir or os.environ.get("FEATURE_CACHE_DIR", DEFAULT_FEATURE_CACHE_DIR)
+    for dataset_dir in args.data_dir:
+        module.process(
+            args.processing_config,
+            dataset_dir,
+            out,
+            min_scored_minutes=args.min_scored_minutes,
+            workers=_worker_count(args.load_workers),
+            overwrite=args.overwrite,
+        )
+    return 0
+
+
 def _process(args: argparse.Namespace) -> int:
     from arcasleep.data.cache import resolve_feature_cache_dir
     from arcasleep.data.prepare import process_dataset
-    from arcasleep.training.config import load_inputs
+    from arcasleep.training.config import load_inputs, read_json
+
+    inputs_type = str(read_json(args.processing_config).get(INPUTS_TYPE_KEY, "")).lower()
+    if inputs_type in INPUTS_PROCESSORS:
+        return _process_with(INPUTS_PROCESSORS[inputs_type], args)
 
     try:
         processing_config, cache_prefix = load_inputs(args.processing_config)

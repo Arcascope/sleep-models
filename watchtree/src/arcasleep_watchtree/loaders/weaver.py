@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
+from pisces_lite.datasets.constants import PSG_MAPPING_WEAVER
 from pisces_lite.datasets.data_set_object import DataSetObject
 
 from arcasleep_watchtree.loaders.common import (
@@ -33,8 +34,6 @@ PSG = "psg"
 STAGE = "stg"
 PSG_FIELDS = (TIME, "epoch", "bp", STAGE)
 NIGHT_PREFIX = "n"
-#: ``L`` (lights on) and any other value are not scored.
-STAGES = {"W": 0, "N1": 1, "N2": 2, "N3": 3, "N4": 4, "R": 5}
 
 
 def night_id(child: str, device: str, night: str) -> str:
@@ -70,7 +69,7 @@ def read_psg(path: Path) -> pd.DataFrame:
     wanted = [columns[f"{PSG}{TIME}"], columns[f"{PSG}{STAGE}"]]
     frame = pd.read_csv(path, usecols=wanted, dtype={wanted[1]: str})[wanted]
     frame = frame.dropna(subset=[wanted[0]]).drop_duplicates(subset=[wanted[0]])
-    return psg_frame(frame[wanted[0]].to_numpy(), map_codes(frame[wanted[1]], STAGES))
+    return psg_frame(frame[wanted[0]].to_numpy(), map_codes(frame[wanted[1]], PSG_MAPPING_WEAVER))
 
 
 def load(root: Path) -> DataSetObject:
