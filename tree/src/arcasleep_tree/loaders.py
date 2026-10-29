@@ -32,7 +32,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pisces_lite.datasets import align_trim, mask_data
+from pisces_lite.datasets import align_trim, mask_data, psg_map
+from pisces_lite.datasets.config import DataSetConfig
 from pisces_lite.datasets.constants import (
     PSG_COL,
     PSG_MAPPING_WEAVER,
@@ -249,29 +250,52 @@ def sleepaccel(root: Path) -> DataSetObject:
 
 
 def foundry(root: Path) -> DataSetObject:
-    """Foundry.
+    """Foundry: ``cleaned_<feature>/<id>_<feature>.csv`` files and the units of ``data_set.json``.
 
-    Heart rate is the first two columns (time, bpm) of the ``cleaned_heartrate/`` file; a
-    recording without one has none.
+    Ids contain dots (``...-09.00--...``), so they are read from the file names here. Timestamps
+    are scaled to seconds, the accelerometer divided by ``gravity_divisor``, and labels mapped by
+    the dataset's PSG mapping. Heart rate is the first two columns (time, bpm) of the
+    ``cleaned_heartrate/`` file; a recording without one has none.
     """
-    files = cleaned_files(root)
-    name = getattr(files.config, "name", None) or root.name
+    config = DataSetConfig.from_json(root / "data_set.json")
 
-    def heartrate(id_: str) -> pd.DataFrame:
-        if id_ not in files.get_feature_files(HEARTRATE):
-            return no_heart_rate()
-        frame = files.get_feature_data(HEARTRATE, id_).iloc[:, : len(HR_COLUMNS)]
-        frame.columns = HR_COLUMNS
+    def path(feature: str, id_: str) -> Path:
+        return root / f"cleaned_{feature}" / f"{id_}_{feature}.csv"
+
+    def read(feature: str, id_: str, columns: list[str]) -> pd.DataFrame:
+        frame = pd.read_csv(path(feature, id_)).iloc[:, : len(columns)]
+        frame.columns = columns
+        unit = (config.timestamp.unit_by_feature or {}).get(feature, config.timestamp.unit)
+        frame[TIMESTAMP_COL] = frame[TIMESTAMP_COL] / {"s": 1.0, "ms": 1e3, "us": 1e6}[unit]
         return frame
 
+    def accelerometer(id_: str) -> pd.DataFrame:
+        frame = read(ACCELEROMETER, id_, ACCEL_COLUMNS)
+        frame[[X_COL, Y_COL, Z_COL]] /= config.accel.gravity_divisor
+        return frame
+
+    def psg(id_: str) -> pd.DataFrame:
+        frame = read(PSG, id_, PSG_COLUMNS)
+        mapping = config.effective_psg_mapping
+        return psg_map(frame, mapping) if mapping is not None else frame
+
+    def heartrate(id_: str) -> pd.DataFrame:
+        if not path(HEARTRATE, id_).exists():
+            return no_heart_rate()
+        return read(HEARTRATE, id_, HR_COLUMNS)
+
+    suffix = f"_{ACCELEROMETER}.csv"
+    ids = [
+        f.name.removesuffix(suffix)
+        for f in (root / f"cleaned_{ACCELEROMETER}").glob(f"*{suffix}")
+        if path(PSG, f.name.removesuffix(suffix)).exists()
+    ]
     return data_set(
-        name,
+        config.name or root.name,
         root,
-        files.ids,
-        accelerometer=renamed(
-            lambda id_: files.get_feature_data(ACCELEROMETER, id_), ACCEL_COLUMNS
-        ),
-        psg=renamed(lambda id_: files.get_feature_data(PSG, id_), PSG_COLUMNS),
+        ids,
+        accelerometer=accelerometer,
+        psg=psg,
         heartrate=heartrate,
     )
 
