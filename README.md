@@ -6,8 +6,8 @@ Arcascope's open source, open weights sleep models.
 
 One Python distribution, `arcasleep`, carries the shared data handling, training,
 evaluation and release tooling (`core/`, the `arcasleep` import package) and
-every model family (`bidoze/` and `unet/`, the `arcasleep_bidoze` and
-`arcasleep_unet` import packages). Model
+every model family (`bidoze/`, `unet/` and `tree/`, the `arcasleep_bidoze`,
+`arcasleep_unet` and `arcasleep_tree` import packages). Model
 weights are released on the Hugging Face Hub, one repository per model variant.
 
 ## Install
@@ -20,6 +20,7 @@ pip install arcasleep                           # CLI + manifest tools, no heavy
 pip install "arcasleep[bidoze,inference,hub]"   # run a released BiDoze model
 pip install "arcasleep[unet,train]"             # training stack (adds optax, matplotlib)
 pip install "arcasleep[prep]"                   # build the feature cache
+pip install "arcasleep[tree]"                   # build tables for, train and export the watch trees
 pip install "arcasleep[aws]"                    # S3 manifests and result upload
 pip install "arcasleep[publish]"                # build a release bundle
 pip install "arcasleep[all]"                    # installs all extras
@@ -49,7 +50,16 @@ arcasleep bidoze publish   # build a safetensors release bundle, optionally uplo
 arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
 
 arcasleep unet train | evaluate | publish | predict
+
+arcasleep tree process     # raw dataset directories -> one feature parquet per dataset
+arcasleep tree train       # train a model on feature parquet files; writes arcasleep_tree.json
+arcasleep tree predict     # per-epoch stages for feature parquet files, as CSV
+arcasleep tree publish     # write the model as arcasleep_tree.safetensors
+arcasleep tree monkey-c    # write the model into a Garmin Connect IQ app
 ```
+
+The tree family does not use the shared feature cache: `arcasleep tree process`
+reads the raw datasets itself and writes its own parquet tables.
 
 ### Tab completion
 
@@ -91,6 +101,18 @@ Wake/Light/Deep/REM predictions, plus a 5th head for identifying gaps in acceler
 
 1. **Architecture:** the temporal U-Net described in Olsen et al., "A flexible deep learning architecture for temporal sleep stage classification using accelerometry and photoplethysmography," IEEE TBME 2022 ([doi:10.1109/TBME.2022.3187945](https://doi.org/10.1109/TBME.2022.3187945)), over raw 2-s spectrogram frames.
 2. Trained with the paper's procedure: class-balanced segment sampling and loss, early stopping on held-out subjects.
+
+## Tree
+
+The model lives in [`tree/`](tree/). 
+TODO: update with HuggingFace repo.
+
+Wake/Light/Deep/REM predictions per 30-s epoch from wrist accelerometer and heart rate, small enough to run on a Garmin Instinct.
+
+1. **Architecture:** gradient-boosted trees (LightGBM), depth 6, one tree per stage per boosting round, on 87 per-epoch features: movement, wrist angle and heart rate, and their means, maxima and standard deviations over windows of 1 minute to 2 hours.
+2. Each epoch uses up to 2 hours of recording before it and 45 minutes after it, so on the watch an epoch is scored 45 minutes after it ends. (Variants will be released with shorter context windows)
+3. The saved model is a `arcasleep_tree.json` file of integer trees and bin edges. `arcasleep tree predict` runs these integer trees, so its stages are the ones the watch gives for the same features. The same file is published as `arcasleep_tree.safetensors` and exported as Monkey C resources for the watch app.
+4. Accelerometer recordings from other devices are resampled to the Instinct's 25 Hz before the features are computed.
 
 ## Releasing the package
 
