@@ -1,6 +1,6 @@
 # Tree restart on `instinct-tree-features`
 
-Edit directly in `sleep-models/` (`git switch instinct-tree-features`), with no worktree. Use `~/venvs/arcasleep`.
+Edit directly in `sleep-models/` on the `tree` branch. DO NOT `git switch instinct-tree-features`, and NO worktree. Use `~/venvs/arcasleep`.
 
 ## Files
 - `arcasleep_tree/loaders.py`: try-1 cohort loaders; `build(data_dir, out)` → features parquet.
