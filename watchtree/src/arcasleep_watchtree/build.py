@@ -1,4 +1,13 @@
-"""Build one feature table (parquet) per cohort.
+"""Build one feature table per cohort.  
+
+We use parque for the cached tables format because it allows for:
+* typed, mixed type tables
+* loading a subset of columns without reading the rest
+* compressing repeated data, like the subject ID repeated each row.
+* LightGBM to train directly on the loaded tables. This contrasts with
+the .npz format we use to cache preprocessed tensors for BiDoze and UNet models.
+
+To use this CLI command:
 
     python -m arcasleep_watchtree.build --cohort wearanize --out results/features-2026-10-27
 
