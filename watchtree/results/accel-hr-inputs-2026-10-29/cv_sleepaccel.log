@@ -1,0 +1,200 @@
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/numpy/lib/_function_base_impl.py:3037: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/numpy/lib/_function_base_impl.py:3038: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/pandas/core/nanops.py:1673: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/numpy/lib/_function_base_impl.py:3037: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/numpy/lib/_function_base_impl.py:3038: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[None, :]
+/home/eric/venvs/arcasleep/lib/python3.14/site-packages/pandas/core/nanops.py:1673: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+sleepaccel nights 27 participants 27 {0: 6, 1: 6, 2: 6, 3: 4, 4: 5}
+selection
+   arm  fold  train_nights  test_nights  lam_selected  train_mae_l0p5  train_mae_l1p0  train_mae_l2p0
+0    A     0            21            6           1.0           3.010           2.606           3.106
+1    A     1            21            6           1.0           3.823           3.059           3.526
+2    A     2            21            6           1.0           3.716           2.909           3.364
+3    A     3            23            4           1.0           2.898           2.579           2.773
+4    A     4            22            5           1.0           3.665           2.942           3.321
+5    B     0            21            6           2.0           7.015           6.960           6.782
+6    B     1            21            6           0.5           8.285           8.426           8.693
+7    B     2            21            6           2.0           6.400           6.425           6.324
+8    B     3            23            4           0.5           7.292           7.368           7.424
+9    B     4            22            5           1.0           7.156           7.144           7.362
+10   C     0            21            6           0.5         115.870         116.229         116.364
+11   C     1            21            6           0.5         115.440         115.557         115.734
+12   C     2            21            6           0.5         114.798         115.171         115.365
+13   C     3            23            4           0.5         114.904         115.243         115.419
+14   C     4            22            5           0.5         116.105         116.389         116.479
+15   D     0            21            6           0.5          56.389          56.818          61.110
+16   D     1            21            6           1.0          50.722          50.188          53.051
+17   D     2            21            6           0.5          49.332          49.513          52.948
+18   D     3            23            4           1.0          47.927          47.858          50.801
+19   D     4            22            5           0.5          56.886          57.677          60.212
+20   E     0            21            6           1.0          11.592          10.107          11.178
+21   E     1            21            6           2.0          11.523          11.354          11.279
+22   E     2            21            6           2.0          12.247          11.593          11.485
+23   E     3            23            4           2.0           7.473           6.269           6.057
+24   E     4            22            5           2.0          12.371          10.914           9.831
+pooled
+      arm           subset      n  nights  participants      mae  within5     bias   mae_lo   mae_hi  diff_mae  diff_lo  diff_hi
+0    A_l1        all_sleep  20835      27            27    2.814    0.885   -1.297    2.189    3.575       NaN      NaN      NaN
+1    A_l1  stillest_decile   2408      13            13    2.050    0.929   -0.398    1.497    2.567       NaN      NaN      NaN
+2   A_sel        all_sleep  20835      27            27    2.814    0.885   -1.297    2.189    3.593       NaN      NaN      NaN
+3   A_sel  stillest_decile   2408      13            13    2.050    0.929   -0.398    1.497    2.556       NaN      NaN      NaN
+4    B_l1        all_sleep  20835      27            27    7.257    0.691   -6.789    5.018   10.028     4.442    2.189    7.214
+5    B_l1  stillest_decile   2408      13            13    3.573    0.838   -3.179    2.496    5.536     1.523    0.419    3.726
+6   B_sel        all_sleep  20835      27            27    7.680    0.672   -7.151    5.234   10.610     4.866    2.302    7.711
+7   B_sel  stillest_decile   2408      13            13    3.651    0.834   -3.310    2.514    5.794     1.601    0.335    4.101
+8    C_l1        all_sleep  20835      27            27  115.709    0.000  115.709  112.627  118.739   112.895  109.929  115.793
+9    C_l1  stillest_decile   2408      13            13  119.114    0.000  119.114  112.851  122.936   117.064  111.200  120.449
+10  C_sel        all_sleep  20835      27            27  115.413    0.000  115.413  112.334  118.445   112.599  109.678  115.481
+11  C_sel  stillest_decile   2408      13            13  118.860    0.000  118.860  112.726  122.864   116.811  111.124  120.375
+12   D_l1        all_sleep  20954      27            27   52.336    0.361   49.030   35.172   69.403    49.385   32.557   66.165
+13   D_l1  stillest_decile   2440      13            13   39.742    0.330   31.927   12.015   76.656    37.614   10.181   74.182
+14  D_sel        all_sleep  20954      27            27   52.963    0.363   49.860   35.935   70.034    49.999   33.411   66.649
+15  D_sel  stillest_decile   2440      13            13   39.964    0.328   32.407   12.262   76.160    37.706   10.237   73.700
+16   E_l1        all_sleep  20954      27            27    9.965    0.579    1.789    4.412   19.048     6.886    2.038   14.872
+17   E_l1  stillest_decile   2440      13            13    5.587    0.589   -4.393    1.893    9.650     3.518   -0.013    7.772
+18  E_sel        all_sleep  20954      27            27   10.778    0.578    2.656    4.538   20.275     7.705    2.206   16.049
+19  E_sel  stillest_decile   2440      13            13    5.933    0.588   -4.175    2.171    9.674     3.869    0.414    7.752
+per_fold
+      arm           subset  fold     n  nights  participants      mae  within5     bias
+0    A_l1        all_sleep     0  5013       6             6    3.472    0.840   -1.691
+1    A_l1        all_sleep     1  5154       6             6    2.068    0.926   -0.601
+2    A_l1        all_sleep     2  4277       6             6    2.446    0.897   -1.528
+3    A_l1        all_sleep     3  2592       4             4    4.472    0.840   -1.461
+4    A_l1        all_sleep     4  3799       5             5    2.241    0.906   -1.350
+5    A_l1  stillest_decile     0   237       1             1    1.864    0.932    0.417
+6    A_l1  stillest_decile     1  1713       5             5    2.208    0.921   -0.525
+7    A_l1  stillest_decile     2   114       3             3    1.656    0.921   -0.255
+8    A_l1  stillest_decile     3    44       1             1    1.036    1.000   -0.831
+9    A_l1  stillest_decile     4   300       3             3    1.588    0.963   -0.306
+10  A_sel        all_sleep     0  5013       6             6    3.472    0.840   -1.691
+11  A_sel        all_sleep     1  5154       6             6    2.068    0.926   -0.601
+12  A_sel        all_sleep     2  4277       6             6    2.446    0.897   -1.528
+13  A_sel        all_sleep     3  2592       4             4    4.472    0.840   -1.461
+14  A_sel        all_sleep     4  3799       5             5    2.241    0.906   -1.350
+15  A_sel  stillest_decile     0   237       1             1    1.864    0.932    0.417
+16  A_sel  stillest_decile     1  1713       5             5    2.208    0.921   -0.525
+17  A_sel  stillest_decile     2   114       3             3    1.656    0.921   -0.255
+18  A_sel  stillest_decile     3    44       1             1    1.036    1.000   -0.831
+19  A_sel  stillest_decile     4   300       3             3    1.588    0.963   -0.306
+20   B_l1        all_sleep     0  5013       6             6    8.193    0.649   -7.753
+21   B_l1        all_sleep     1  5154       6             6    3.700    0.831   -3.282
+22   B_l1        all_sleep     2  4277       6             6   10.476    0.608   -9.864
+23   B_l1        all_sleep     3  2592       4             4    6.469    0.682   -6.118
+24   B_l1        all_sleep     4  3799       5             5    7.759    0.657   -7.269
+25   B_l1  stillest_decile     0   237       1             1    7.498    0.603   -7.359
+26   B_l1  stillest_decile     1  1713       5             5    2.774    0.887   -2.441
+27   B_l1  stillest_decile     2   114       3             3   11.298    0.360  -10.834
+28   B_l1  stillest_decile     3    44       1             1    1.165    1.000   -1.035
+29   B_l1  stillest_decile     4   300       3             3    2.453    0.900   -1.499
+30  B_sel        all_sleep     0  5013       6             6    8.975    0.612   -8.358
+31  B_sel        all_sleep     1  5154       6             6    3.985    0.819   -3.654
+32  B_sel        all_sleep     2  4277       6             6   11.125    0.578  -10.464
+33  B_sel        all_sleep     3  2592       4             4    6.720    0.677   -6.133
+34  B_sel        all_sleep     4  3799       5             5    7.759    0.657   -7.269
+35  B_sel  stillest_decile     0   237       1             1    7.775    0.540   -7.372
+36  B_sel  stillest_decile     1  1713       5             5    2.829    0.890   -2.614
+37  B_sel  stillest_decile     2   114       3             3   11.544    0.360  -10.992
+38  B_sel  stillest_decile     3    44       1             1    1.142    1.000   -1.012
+39  B_sel  stillest_decile     4   300       3             3    2.453    0.900   -1.499
+40   C_l1        all_sleep     0  5013       6             6  114.069    0.000  114.069
+41   C_l1        all_sleep     1  5154       6             6  116.172    0.000  116.172
+42   C_l1        all_sleep     2  4277       6             6  117.793    0.000  117.793
+43   C_l1        all_sleep     3  2592       4             4  118.994    0.000  118.994
+44   C_l1        all_sleep     4  3799       5             5  112.660    0.000  112.660
+45   C_l1  stillest_decile     0   237       1             1  111.536    0.000  111.536
+46   C_l1  stillest_decile     1  1713       5             5  121.831    0.000  121.831
+47   C_l1  stillest_decile     2   114       3             3  117.131    0.000  117.131
+48   C_l1  stillest_decile     3    44       1             1  118.556    0.000  118.556
+49   C_l1  stillest_decile     4   300       3             3  110.421    0.000  110.421
+50  C_sel        all_sleep     0  5013       6             6  113.968    0.000  113.968
+51  C_sel        all_sleep     1  5154       6             6  115.329    0.000  115.329
+52  C_sel        all_sleep     2  4277       6             6  117.793    0.000  117.793
+53  C_sel        all_sleep     3  2592       4             4  118.994    0.000  118.994
+54  C_sel        all_sleep     4  3799       5             5  112.310    0.000  112.310
+55  C_sel  stillest_decile     0   237       1             1  111.536    0.000  111.536
+56  C_sel  stillest_decile     1  1713       5             5  121.520    0.000  121.520
+57  C_sel  stillest_decile     2   114       3             3  117.131    0.000  117.131
+58  C_sel  stillest_decile     3    44       1             1  118.556    0.000  118.556
+59  C_sel  stillest_decile     4   300       3             3  110.161    0.000  110.161
+60   D_l1        all_sleep     0  5047       6             6   38.211    0.449   33.454
+61   D_l1        all_sleep     1  5154       6             6   58.921    0.247   54.158
+62   D_l1        all_sleep     2  4298       6             6   63.278    0.356   62.474
+63   D_l1        all_sleep     3  2655       4             4   83.198    0.224   82.879
+64   D_l1        all_sleep     4  3800       5             5   28.226    0.499   23.907
+65   D_l1  stillest_decile     0   253       1             1   14.659    0.067   -6.374
+66   D_l1  stillest_decile     1  1713       5             5   47.317    0.270   39.735
+67   D_l1  stillest_decile     2   130       3             3   45.951    0.462   44.400
+68   D_l1  stillest_decile     3    44       1             1   28.412    0.773   26.397
+69   D_l1  stillest_decile     4   300       3             3   16.609    0.770   15.054
+70  D_sel        all_sleep     0  5047       6             6   38.885    0.447   34.302
+71  D_sel        all_sleep     1  5154       6             6   58.921    0.247   54.158
+72  D_sel        all_sleep     2  4298       6             6   63.179    0.352   62.498
+73  D_sel        all_sleep     3  2655       4             4   83.198    0.224   82.879
+74  D_sel        all_sleep     4  3800       5             5   30.897    0.519   27.330
+75  D_sel  stillest_decile     0   253       1             1   18.700    0.000   -0.473
+76  D_sel  stillest_decile     1  1713       5             5   47.317    0.270   39.735
+77  D_sel  stillest_decile     2   130       3             3   42.859    0.485   41.370
+78  D_sel  stillest_decile     3    44       1             1   28.412    0.773   26.397
+79  D_sel  stillest_decile     4   300       3             3   16.353    0.800   15.287
+80   E_l1        all_sleep     0  5047       6             6    9.515    0.581    0.153
+81   E_l1        all_sleep     1  5154       6             6    5.705    0.529   -4.472
+82   E_l1        all_sleep     2  4298       6             6    3.655    0.738   -2.304
+83   E_l1        all_sleep     3  2655       4             4   35.435    0.395   29.560
+84   E_l1        all_sleep     4  3800       5             5    5.680    0.594   -2.321
+85   E_l1  stillest_decile     0   253       1             1   12.572    0.004  -12.572
+86   E_l1  stillest_decile     1  1713       5             5    5.620    0.588   -4.280
+87   E_l1  stillest_decile     2   130       3             3    1.761    0.908    0.016
+88   E_l1  stillest_decile     3    44       1             1    1.149    1.000   -0.967
+89   E_l1  stillest_decile     4   300       3             3    1.816    0.887   -0.556
+90  E_sel        all_sleep     0  5047       6             6    9.515    0.581    0.153
+91  E_sel        all_sleep     1  5154       6             6    5.529    0.544   -4.453
+92  E_sel        all_sleep     2  4298       6             6    3.583    0.729   -2.438
+93  E_sel        all_sleep     3  2655       4             4   36.104    0.386   29.660
+94  E_sel        all_sleep     4  3800       5             5   10.016    0.582    2.517
+95  E_sel  stillest_decile     0   253       1             1   12.572    0.004  -12.572
+96  E_sel  stillest_decile     1  1713       5             5    5.958    0.588   -3.887
+97  E_sel  stillest_decile     2   130       3             3    1.881    0.931   -0.084
+98  E_sel  stillest_decile     3    44       1             1    1.263    1.000   -0.944
+99  E_sel  stillest_decile     4   300       3             3    2.630    0.870   -0.989
+blocks
+     arm  blocks  nights  within_night_r
+0   A_l1    2021      27           0.543
+1  A_sel    2021      27           0.543
+2   B_l1    2021      27           0.182
+3  B_sel    2021      27           0.197
+4   C_l1    2021      27           0.033
+5  C_sel    2021      27           0.019
+6   D_l1    2031      27          -0.077
+7  D_sel    2031      27          -0.073
+8   E_l1    2031      27           0.212
+9  E_sel    2031      27           0.166
+night_level
+     arm  nights  pearson_r  spearman_r
+0   A_l1      27      0.992       0.996
+1  A_sel      27      0.992       0.996
+2   B_l1      27      0.369       0.437
+3  B_sel      27      0.350       0.416
+4   C_l1      27        NaN         NaN
+5  C_sel      27        NaN         NaN
+6   D_l1      27     -0.625      -0.487
+7  D_sel      27     -0.629      -0.489
+8   E_l1      27     -0.019       0.557
+9  E_sel      27     -0.020       0.561
+peaks
+     arm  windows  share_peak_ge150  share_peak_within3
+0   A_l1    20835             0.084               0.642
+1  A_sel    20835             0.084               0.642
+2   B_l1    20835             0.041               0.507
+3  B_sel    20835             0.041               0.507
+4   C_l1    20835             0.940               0.016
+5  C_sel    20835             0.940               0.016
+6   D_l1    20954             0.268               0.311
+7  D_sel    20954             0.268               0.311
+8   E_l1    20954             0.116               0.416
+9  E_sel    20954             0.116               0.416
