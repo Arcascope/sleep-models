@@ -52,9 +52,9 @@ arcasleep bidoze predict   # per-epoch stages for raw accelerometer files
 arcasleep unet train | evaluate | publish | predict
 
 arcasleep tree process     # raw dataset directories -> one feature parquet per dataset
-arcasleep tree train       # train a model on feature parquet files; writes model.json
+arcasleep tree train       # train a model on feature parquet files; writes arcasleep_tree.json
 arcasleep tree predict     # per-epoch stages for feature parquet files, as CSV
-arcasleep tree publish     # write the model as model.safetensors
+arcasleep tree publish     # write the model as arcasleep_tree.safetensors
 arcasleep tree monkey-c    # write the model into a Garmin Connect IQ app
 ```
 

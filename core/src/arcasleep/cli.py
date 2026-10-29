@@ -1060,7 +1060,7 @@ def _tree_publish(args: argparse.Namespace) -> int:
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    tree.save(tree.load(args.model), out / "model.safetensors")
+    tree.save(tree.load(args.model), out / "arcasleep_tree.safetensors")
     return 0
 
 
@@ -1090,7 +1090,12 @@ def _add_tree_commands(commands) -> None:
         "train", help="train a model (5 person-wise folds, then the final model)"
     )
     train.add_argument("tables", nargs="+", help="feature parquet files or directories of them")
-    train.add_argument("-o", "--output", required=True, help="model file, .json or .safetensors")
+    train.add_argument(
+        "-o",
+        "--output",
+        default="arcasleep_tree.json",
+        help="model file, .json or .safetensors (default: arcasleep_tree.json)",
+    )
     train.add_argument("--definition", help="JSON file replacing the default tree definition")
     train.add_argument("--test-cohort", nargs="*", default=[], help="cohorts left out and scored")
     train.set_defaults(handler=_tree_train)
@@ -1101,7 +1106,7 @@ def _add_tree_commands(commands) -> None:
     predict.add_argument("-o", "--output", required=True, help="CSV: cohort, subject, epoch, stage")
     predict.set_defaults(handler=_tree_predict)
 
-    publish = sub.add_parser("publish", help="write the model as model.safetensors")
+    publish = sub.add_parser("publish", help="write the model as arcasleep_tree.safetensors")
     publish.add_argument("model")
     publish.add_argument("-o", "--output-dir", required=True)
     publish.set_defaults(handler=_tree_publish)

@@ -1,6 +1,6 @@
 """The tree model: training, prediction, and its file formats.
 
-A model is a dict, the content of ``model.json``:
+A model is a dict, the content of ``arcasleep_tree.json``:
 
 * ``inputs``, ``features``, ``scale``: the feature set, its column order and the integer units per
   original unit of each feature (:func:`arcasleep_tree.features.scales`);
@@ -360,7 +360,7 @@ def save(model: dict, path: Path | str) -> None:
 def load(path: Path | str) -> dict:
     """A model from ``.json`` or ``.safetensors``.
 
-    A ``model.json`` without ``trees`` reads them from the ``trees.bin`` beside it.
+    A JSON file without ``trees`` (the older export) reads them from the ``trees.bin`` beside it.
     """
     path = Path(path)
     if path.suffix == ".safetensors":
