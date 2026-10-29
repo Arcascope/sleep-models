@@ -1,0 +1,31 @@
+representative,night,tau_s,sigma_ms,windows_used,median_effective_pairs
+most regular,29,0.333,2,200,0.0
+most regular,29,0.333,5,200,0.0
+most regular,29,0.333,10,200,0.2
+most regular,29,0.333,20,200,12.0
+most regular,29,0.333,50,200,156.6
+most regular,29,1.0,2,200,263.8
+most regular,29,1.0,5,200,284.9
+most regular,29,1.0,10,200,288.7
+most regular,29,1.0,20,200,289.7
+most regular,29,1.0,50,200,369.0
+median,25,0.333,2,200,5.1
+median,25,0.333,5,200,598.2
+median,25,0.333,10,200,1840.1
+median,25,0.333,20,200,3630.1
+median,25,0.333,50,200,7360.0
+median,25,1.0,2,200,1334.5
+median,25,1.0,5,200,1428.6
+median,25,1.0,10,200,1839.6
+median,25,1.0,20,200,3628.2
+median,25,1.0,50,200,9069.3
+least regular,3,0.333,2,200,654.2
+least regular,3,0.333,5,200,1666.2
+least regular,3,0.333,10,200,3086.1
+least regular,3,0.333,20,200,5952.3
+least regular,3,0.333,50,200,11891.8
+least regular,3,1.0,2,200,65.2
+least regular,3,1.0,5,200,1250.4
+least regular,3,1.0,10,200,3006.4
+least regular,3,1.0,20,200,6019.9
+least regular,3,1.0,50,200,15050.8
