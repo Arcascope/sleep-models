@@ -2,7 +2,8 @@
 
 One row per 30-s epoch. A feature at epoch ``k`` uses data up to ``FORWARD_MAX_MIN`` minutes
 after the end of epoch ``k`` and nothing later; the watch scores epoch ``k`` once that much has
-been recorded. ``inputs`` may set the reach of the features with the keys of ``REACH``. No feature depends on the position of the epoch in the recording.
+been recorded. ``inputs`` may set the reach of the features with the keys of ``REACH``. No
+feature depends on the position of the epoch in the recording.
 
 ``INPUTS`` lists the columns. ``at_time`` names values of the epoch alone; every other key of
 ``features`` is a per-epoch signal whose ``b_spans`` and ``f_spans`` map a statistic to window

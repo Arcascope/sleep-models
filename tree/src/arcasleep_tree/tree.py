@@ -413,6 +413,13 @@ def to_monkey_c(model: dict, app_dir: Path | str) -> None:
     the arctangent table).
     """
     app_dir = Path(app_dir)
+    for key in ("baseline_blocks", "tsb_cap_min"):
+        if features.reach(model["inputs"], key) != features.REACH[key]:
+            raise ValueError(
+                f"{key} is {features.reach(model['inputs'], key)}; stagerlive/Stager.mc hard-codes "
+                f"{features.REACH['baseline_blocks']} baseline blocks and a "
+                f"{features.REACH['tsb_cap_min']} min time-since-bout cap"
+            )
     n_trees = model["n_trees"]
     assert n_trees % N_CLASS == 0 and TREES_PER_CHUNK % N_CLASS == 0
     blob = _pack(model)
