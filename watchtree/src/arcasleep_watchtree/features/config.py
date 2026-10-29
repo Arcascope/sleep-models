@@ -76,43 +76,44 @@ class FeatureConfig:
 
     @classmethod
     def from_json(cls, path: Path | str) -> FeatureConfig:
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        return cls.from_dict(json.loads(Path(path).read_text()), source=str(path))
 
     @classmethod
-    def from_dict(cls, data: dict) -> FeatureConfig:
-        _check_keys(data, EXPECTED_KEYS, DEFAULT_NAME)
+    def from_dict(cls, data: dict, source: str = DEFAULT_NAME) -> FeatureConfig:
+        """``source`` names where ``data`` came from, in error messages."""
+        _check_keys(data, EXPECTED_KEYS, source)
         if data["type"] != INPUTS_TYPE:
-            raise ValueError(f"{DEFAULT_NAME}: type must be {INPUTS_TYPE!r}, got {data['type']!r}")
+            raise ValueError(f"{source}: type must be {INPUTS_TYPE!r}, got {data['type']!r}")
         features = dict(data["features"])
         at_time = tuple(features.pop("at_time", ()))
         unknown = sorted(set(at_time) - AT_TIME)
         if unknown:
-            raise ValueError(f"{DEFAULT_NAME}: unknown at_time features {unknown}")
+            raise ValueError(f"{source}: unknown at_time features {unknown}")
         windows = []
         for signal, spans in features.items():
             if signal not in SIGNALS:
-                raise ValueError(f"{DEFAULT_NAME}: unknown signal {signal!r}")
-            _check_keys(spans, set(), f"{DEFAULT_NAME} {signal}", optional=set(DIRECTIONS))
+                raise ValueError(f"{source}: unknown signal {signal!r}")
+            _check_keys(spans, set(), f"{source} {signal}", optional=set(DIRECTIONS))
             for key, direction in DIRECTIONS.items():
                 for stat, minutes in spans.get(key, {}).items():
                     if stat not in STATS:
-                        raise ValueError(f"{DEFAULT_NAME}: {signal} {key}: unknown statistic {stat!r}")
+                        raise ValueError(f"{source}: {signal} {key}: unknown statistic {stat!r}")
                     windows += [Window(signal, stat, direction, int(m)) for m in minutes]
         config = cls(at_time, tuple(windows), bool(data["resample"]), bool(data["uncropped"]))
-        config.validate()
+        config.validate(source)
         return config
 
-    def validate(self) -> None:
+    def validate(self, source: str = DEFAULT_NAME) -> None:
         names = self.names
         repeated = sorted({n for n in names if names.count(n) > 1})
         if repeated:
-            raise ValueError(f"{DEFAULT_NAME}: features listed twice {repeated}")
+            raise ValueError(f"{source}: features listed twice {repeated}")
         for w in self.windows:
             if w.minutes < 1:
-                raise ValueError(f"{DEFAULT_NAME}: {w.name}: a window is at least 1 minute")
+                raise ValueError(f"{source}: {w.name}: a window is at least 1 minute")
             if w.direction == "f" and w.minutes > C.FORWARD_MAX_MIN:
                 raise ValueError(
-                    f"{DEFAULT_NAME}: {w.name}: forward windows reach at most "
+                    f"{source}: {w.name}: forward windows reach at most "
                     f"{C.FORWARD_MAX_MIN} minutes"
                 )
 
