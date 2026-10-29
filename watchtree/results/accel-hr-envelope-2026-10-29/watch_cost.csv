@@ -1,4 +1,0 @@
-estimator,per_sample_mac,per_window_mac,per_window_other,amortized_mac_per_sample,amortized_mac_per_second,state_floats,state_bytes
-"current (0.67-8 Hz, 3-axis autocorrelation)",30,89507,tracker 10 ops/bin x141 included,149.3,3733.6,2403,9612
-squared + low-pass envelope,50,30989,-,91.3,2283.0,909,3636
-Hilbert envelope (window FFT),30,159869,2250 square roots,243.2,6079.0,5201,20804
