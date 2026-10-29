@@ -1,1 +1,1 @@
-"""WatchTree: engineered features for a boosted-tree sleep stager that runs on a wrist watch."""
+"""WatchTree: A boosted-tree sleep stager that runs on a wrist watch."""
