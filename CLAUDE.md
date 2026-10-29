@@ -27,3 +27,21 @@ output means for their recordings.
   "indistinguishable".
 - **Typography.** Use ≤ and ≥ in prose, not <= and >=; use − for negative
   numbers in tables.
+
+## Accelerometer sampling rates
+
+Raw accelerometer data are never sampled at a constant or known rate. Rates differ between recordings
+(about 10 Hz to above 65 Hz, many close to but not at 25, 32 or 50 Hz) and within a recording (jitter,
+bursts, drift).
+
+- Never interpolate samples onto a uniform grid at a "nominal" rate, and never resample and then use a
+  numpy FFT. Interpolation adds artefact lines at (true rate − resampling rate) Hz and attenuates the
+  upper bands.
+- Never treat the sample index as time: no lags in samples, no filters designed at an assumed sampling
+  frequency.
+- Work on the recorded timestamps. Compute spectra, and band-limited signals derived from them, with
+  senpy's NUFFT. Compute jerk with `senpy.compute_jerk`. Prefer the team's existing methods
+  (pisces-lite, `arcasleep process`) over new ones.
+- If an input path assumes a rate, stop and report it; do not build on it.
+- A claim that a resampled stream is free of artefacts needs a test: known signals sampled on the real
+  recorded timestamps.
