@@ -1071,6 +1071,31 @@ def _tree_monkey_c(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stage(value: str) -> int:
+    names = ["wake", "light", "deep", "rem"]
+    if value.lower() in names:
+        return names.index(value.lower())
+    if value in {"0", "1", "2", "3"}:
+        return int(value)
+    raise argparse.ArgumentTypeError(f"{value!r}: use 0-3 or one of {', '.join(names)}")
+
+
+def _tree_plot(args: argparse.Namespace) -> int:
+    from arcasleep_tree import tree, tree_plot
+
+    model = tree.load(args.model)
+    if "real_edges" not in model:
+        raise SystemExit(f"{args.model} has no real_edges; plot the .json model")
+    rounds = range(model["rounds"]) if args.round is None else [args.round]
+    if not set(rounds) <= set(range(model["rounds"])):
+        raise SystemExit(f"--round {args.round}: the model has rounds 0-{model['rounds'] - 1}")
+    classes = range(len(tree_plot.CLS)) if args.stage is None else [args.stage]
+    out = Path(args.output_dir) if args.output_dir else Path(args.model).parent / "tree_pictures"
+    for path in tree_plot.plot(model, rounds, classes, out):
+        print(path)
+    return 0
+
+
 def _add_tree_commands(commands) -> None:
     group = commands.add_parser(
         "tree", help="build tables for, train, run and export the watch trees"
@@ -1115,6 +1140,20 @@ def _add_tree_commands(commands) -> None:
     monkey_c.add_argument("model")
     monkey_c.add_argument("-o", "--app-dir", required=True, help="for example .../stagerlive")
     monkey_c.set_defaults(handler=_tree_monkey_c)
+
+    plot = sub.add_parser("plot", help="draw trees of a .json model as SVG, one file per tree")
+    plot.add_argument("model", help="model .json file")
+    plot.add_argument("--round", type=int, help="boosting round, from 0 (default: every round)")
+    plot.add_argument(
+        "--class",
+        dest="stage",
+        type=_stage,
+        help="stage: 0 wake, 1 light, 2 deep, 3 REM, or the name (default: all four)",
+    )
+    plot.add_argument(
+        "-o", "--output-dir", help="default: tree_pictures beside the model file"
+    )
+    plot.set_defaults(handler=_tree_plot)
 
 
 def build_parser() -> argparse.ArgumentParser:
