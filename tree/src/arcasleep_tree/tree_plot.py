@@ -70,8 +70,10 @@ def draw_tree(m, t):
             yy = y + (k - (len(lines) - 1) / 2) * 14 + 4
             s += f'<text x="{x:.1f}" y="{yy:.1f}" text-anchor="middle" font-size="11" font-family="monospace" fill="#111">{escape(ln)}</text>'
         out.append(s)
-    def edge(p, q, label):
-        out.append(f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{q[0]:.1f}" y2="{q[1]:.1f}" stroke="#666" marker-end="url(#arrowhead)" />')
+    def edge(p, q, label, hw=BW / 2):
+        dx, dy = q[0] - p[0], q[1] - p[1]
+        k = 1 - min(hw / abs(dx) if dx else 9, BH / 2 / abs(dy) if dy else 9)  # stop at q's box border
+        out.append(f'<line x1="{p[0]:.1f}" y1="{p[1]:.1f}" x2="{p[0] + k * dx:.1f}" y2="{p[1] + k * dy:.1f}" stroke="#666" marker-end="url(#arrowhead)" />')
         mx, my = (p[0] + q[0]) / 2, (p[1] + q[1]) / 2
         out.append(f'<text x="{mx:.1f}" y="{my:.1f}" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#a00" stroke="#fff" stroke-width="4" paint-order="stroke">{label}</text>')
     def text(n):
@@ -94,7 +96,7 @@ def draw_tree(m, t):
         walk(n)
     def emit(n, parent=None, label=None):
         x, y = n["xy"]
-        if parent: edge(parent["xy"], n["xy"], label)
+        if parent: edge(parent["xy"], n["xy"], label, (LW if "leaf" in n else BW) / 2)
         lines, leaf = text(n)
         if "leaf" not in n:
             emit(n["l"], n, "≤ or missing" if n["ml"] else "≤"); emit(n["r"], n, ">" if n["ml"] else "> or missing")
