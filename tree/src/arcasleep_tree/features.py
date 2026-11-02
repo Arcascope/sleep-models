@@ -373,16 +373,30 @@ def bout_timing(
     The first is capped at ``tsb_cap_min``, the second at the forward reach ``ahead_epochs``.
     With no bout so far the first is the cap, so it does not count time from the start of the
     recording.
+
+    ``act`` is 1 on a bout epoch, 0 on another epoch and NaN on an epoch without data. A value is
+    NaN when its own epoch has no data or when an epoch without data lies in the span it measures
+    (a bout could be hiding there). The forward span ends at the recording's end.
     """
     since = np.empty(act.size)
     until = np.empty(act.size)
+    missing = np.isnan(act)
     last = -(10**9)
+    last_missing = -(10**9)
+    cap_epochs = tsb_cap_min * EPOCHS_PER_MIN
     for k in range(act.size):
         if act[k] == 1:
             last = k
+        if missing[k]:
+            last_missing = k
         since[k] = min((k - last) / EPOCHS_PER_MIN, tsb_cap_min)
+        if last_missing > max(last, k - cap_epochs):
+            since[k] = np.nan
         ahead = np.flatnonzero(act[k + 1 : k + 1 + ahead_epochs] == 1)
         until[k] = ahead[0] + 1 if ahead.size else ahead_epochs
+        seen = until[k] - 1 if ahead.size else ahead_epochs
+        if missing[k] or missing[k + 1 : k + 1 + int(seen)].any():
+            until[k] = np.nan
     return since, until / EPOCHS_PER_MIN
 
 
@@ -445,9 +459,7 @@ def compute_features(
         (sig["jerk"] >= BOUT_RATIO * low_baseline(sig["jerk"], blocks)).astype(float),
         np.nan,
     )
-    since, until = bout_timing(
-        np.nan_to_num(act, nan=0.0), reach(inputs, "tsb_cap_min"), delay(inputs)
-    )
+    since, until = bout_timing(act, reach(inputs, "tsb_cap_min"), delay(inputs))
     series = {
         **sig, "act": act, "daz": np.abs(np.diff(sig["angle"], prepend=sig["angle"][:1])),
         "hr": hr, "hr_rel": hr - base,
