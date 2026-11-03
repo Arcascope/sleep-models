@@ -71,3 +71,29 @@ def test_compute_features_builds():
     out = features.compute_features(acc, valid, hr_t, np.full(hr_t.size, 60.0))
     assert list(out.columns) == ["epoch", *features.feature_names()]
     assert len(out) == n_epochs
+
+
+def test_bout_timing_without_gaps_matches_plain_counting():
+    rng = np.random.default_rng(2)
+    act = (rng.random(300) < 0.1).astype(float)
+    cap, ahead = 30.0, 20
+    since, until = features.bout_timing(act, cap, ahead)
+    for k in range(act.size):
+        back = np.flatnonzero(act[: k + 1] == 1)
+        want_since = min((k - back[-1]) / features.EPOCHS_PER_MIN, cap) if back.size else cap
+        fwd = np.flatnonzero(act[k + 1 : k + 1 + ahead] == 1)
+        want_until = (fwd[0] + 1 if fwd.size else ahead) / features.EPOCHS_PER_MIN
+        assert since[k] == pytest.approx(want_since)
+        assert until[k] == pytest.approx(want_until)
+
+
+def test_bout_timing_is_nan_across_an_epoch_without_data():
+    act = np.zeros(100)
+    act[10] = 1
+    act[60] = 1
+    act[40] = np.nan
+    since, until = features.bout_timing(act, 30.0, 20)
+    assert np.isnan(since[40]) and np.isnan(until[40])
+    assert np.isnan(since[45]) and np.isnan(until[35])
+    assert not np.isnan(since[20]) and not np.isnan(until[15])
+    assert not np.isnan(since[60]) and not np.isnan(until[45])
