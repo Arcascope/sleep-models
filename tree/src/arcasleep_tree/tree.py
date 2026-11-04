@@ -131,6 +131,7 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
             params, lgb.Dataset(x, y, feature_name=names, params=data_params), rounds
         )
     model = from_booster(booster, tree["inputs"], rounds)
+    model["float_booster"] = booster.model_to_string(num_iteration=rounds)
     model["training"] = {
         "definition": tree,
         "rows": int(len(train)),
@@ -148,11 +149,23 @@ def person_folds(table: pd.DataFrame, k: int, seed: int = 0) -> np.ndarray:
     return np.array([fold_of[p] for p in who])
 
 
-def train(tree: dict, table: pd.DataFrame) -> tuple[dict, np.ndarray]:
+def fold_path(path: Path | str, k: int) -> Path:
+    """Where :func:`train` saves fold ``k``: ``<stem>_fold<k><suffix>`` beside ``path``."""
+    path = Path(path)
+    return path.with_name(f"{path.stem}_fold{k}{path.suffix}")
+
+
+def train(
+    tree: dict, table: pd.DataFrame, folds_to: Path | str | None = None
+) -> tuple[dict, np.ndarray]:
     """The final model and the out-of-fold stage of every row (``-1`` where not predicted).
 
     Each of ``folds`` person-wise folds is fit with early stopping; the final model trains on
     all rows for the median of their best iterations.
+
+    With ``folds_to``, each fold model is saved to ``fold_path(folds_to, k)`` (see :func:`save`).
+    Its ``training`` records the fold index ``fold``, its held-out persons ``fold_persons`` and
+    its best rounds ``rounds``.
     """
     fold = person_folds(table, tree["folds"], tree["params"]["seed"])
     oof = np.full(len(table), -1)
@@ -161,6 +174,10 @@ def train(tree: dict, table: pd.DataFrame) -> tuple[dict, np.ndarray]:
         test = fold == k
         model = fit(tree, table, test)
         best.append(model["rounds"])
+        if folds_to is not None:
+            model["training"]["fold"] = k
+            model["training"]["fold_persons"] = sorted(set(persons(table[test])))
+            save(model, fold_path(folds_to, k))
         oof[test] = predict(model, table[test])
         print(f"fold {k}: {model['rounds']} rounds", flush=True)
     final = fit(tree, table, np.zeros(len(table), bool), rounds=int(np.median(best)))
@@ -339,9 +356,20 @@ def _pack(model: dict) -> bytes:
     return bytes(out)
 
 
+def _float_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}_float.txt")
+
+
 def save(model: dict, path: Path | str) -> None:
-    """Write ``model`` as ``.json`` or ``.safetensors``, by the suffix of ``path``."""
+    """Write ``model`` as ``.json`` or ``.safetensors``, by the suffix of ``path``.
+
+    A model with a ``float_booster`` (the LightGBM text model of a fit) also writes it to
+    ``<stem>_float.txt`` beside ``path``.
+    """
     path = Path(path)
+    if "float_booster" in model:
+        _float_path(path).write_text(model["float_booster"])
+        model = {k: v for k, v in model.items() if k != "float_booster"}
     if path.suffix == ".safetensors":
         from safetensors.numpy import save_file
 
@@ -359,8 +387,16 @@ def load(path: Path | str) -> dict:
     """A model from ``.json`` or ``.safetensors``.
 
     A JSON file without ``trees`` (the older export) reads them from the ``trees.bin`` beside it.
+    The ``<stem>_float.txt`` beside ``path``, if present, is read into ``float_booster``.
     """
     path = Path(path)
+    model = _load_integer(path)
+    if _float_path(path).exists():
+        model["float_booster"] = _float_path(path).read_text()
+    return model
+
+
+def _load_integer(path: Path) -> dict:
     if path.suffix == ".safetensors":
         from safetensors import safe_open
 

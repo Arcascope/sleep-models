@@ -1029,7 +1029,9 @@ def _tree_train(args: argparse.Namespace) -> int:
     )
     table = loaders.read_tables(args.tables)
     held = table.cohort.isin(args.test_cohort).to_numpy()
-    model, oof = tree.train(definition, table[~held].reset_index(drop=True))
+    model, oof = tree.train(
+        definition, table[~held].reset_index(drop=True), folds_to=args.output
+    )
     tree.save(model, args.output)
     scored = tree.trainable(table[~held].reset_index(drop=True), definition["inputs"]) & (oof >= 0)
     y = table[~held].y4.to_numpy()
