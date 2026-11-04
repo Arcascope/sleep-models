@@ -149,11 +149,23 @@ def person_folds(table: pd.DataFrame, k: int, seed: int = 0) -> np.ndarray:
     return np.array([fold_of[p] for p in who])
 
 
-def train(tree: dict, table: pd.DataFrame) -> tuple[dict, np.ndarray]:
+def fold_path(path: Path | str, k: int) -> Path:
+    """Where :func:`train` saves fold ``k``: ``<stem>_fold<k><suffix>`` beside ``path``."""
+    path = Path(path)
+    return path.with_name(f"{path.stem}_fold{k}{path.suffix}")
+
+
+def train(
+    tree: dict, table: pd.DataFrame, folds_to: Path | str | None = None
+) -> tuple[dict, np.ndarray]:
     """The final model and the out-of-fold stage of every row (``-1`` where not predicted).
 
     Each of ``folds`` person-wise folds is fit with early stopping; the final model trains on
     all rows for the median of their best iterations.
+
+    With ``folds_to``, each fold model is saved to ``fold_path(folds_to, k)`` (see :func:`save`).
+    Its ``training`` records the fold index ``fold``, its held-out persons ``fold_persons`` and
+    its best rounds ``rounds``.
     """
     fold = person_folds(table, tree["folds"], tree["params"]["seed"])
     oof = np.full(len(table), -1)
@@ -162,6 +174,10 @@ def train(tree: dict, table: pd.DataFrame) -> tuple[dict, np.ndarray]:
         test = fold == k
         model = fit(tree, table, test)
         best.append(model["rounds"])
+        if folds_to is not None:
+            model["training"]["fold"] = k
+            model["training"]["fold_persons"] = sorted(set(persons(table[test])))
+            save(model, fold_path(folds_to, k))
         oof[test] = predict(model, table[test])
         print(f"fold {k}: {model['rounds']} rounds", flush=True)
     final = fit(tree, table, np.zeros(len(table), bool), rounds=int(np.median(best)))

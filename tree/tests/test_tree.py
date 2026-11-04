@@ -86,3 +86,24 @@ def test_compute_features_builds():
     out = features.compute_features(acc, valid, hr_t, np.full(hr_t.size, 60.0))
     assert list(out.columns) == ["epoch", *features.feature_names()]
     assert len(out) == n_epochs
+
+
+@pytest.mark.parametrize("suffix", [".json", ".safetensors"])
+def test_train_saves_every_fold_model(table, tmp_path, suffix):
+    definition = {**tree.DEFINITION, "folds": 3, "max_rounds": 5, "early_stopping_rounds": 2}
+    out = tmp_path / f"model{suffix}"
+    _, oof = tree.train(definition, table, folds_to=out)
+    fold = tree.person_folds(table, 3, definition["params"]["seed"])
+    held_out = set()
+    for k in range(3):
+        path = tree.fold_path(out, k)
+        assert path.exists()
+        assert (tmp_path / f"model_fold{k}_float.txt").exists()
+        back = tree.load(path)
+        assert "float_booster" in back
+        record = back["training"]
+        assert record["fold"] == k
+        assert record["fold_persons"] == sorted(set(tree.persons(table[fold == k])))
+        held_out.update(record["fold_persons"])
+        np.testing.assert_array_equal(tree.predict(back, table[fold == k]), oof[fold == k])
+    assert held_out == set(tree.persons(table))
