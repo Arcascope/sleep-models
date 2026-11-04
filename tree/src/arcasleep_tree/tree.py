@@ -131,6 +131,7 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
             params, lgb.Dataset(x, y, feature_name=names, params=data_params), rounds
         )
     model = from_booster(booster, tree["inputs"], rounds)
+    model["float_booster"] = booster.model_to_string(num_iteration=rounds)
     model["training"] = {
         "definition": tree,
         "rows": int(len(train)),
@@ -339,9 +340,20 @@ def _pack(model: dict) -> bytes:
     return bytes(out)
 
 
+def _float_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}_float.txt")
+
+
 def save(model: dict, path: Path | str) -> None:
-    """Write ``model`` as ``.json`` or ``.safetensors``, by the suffix of ``path``."""
+    """Write ``model`` as ``.json`` or ``.safetensors``, by the suffix of ``path``.
+
+    A model with a ``float_booster`` (the LightGBM text model of a fit) also writes it to
+    ``<stem>_float.txt`` beside ``path``.
+    """
     path = Path(path)
+    if "float_booster" in model:
+        _float_path(path).write_text(model["float_booster"])
+        model = {k: v for k, v in model.items() if k != "float_booster"}
     if path.suffix == ".safetensors":
         from safetensors.numpy import save_file
 
@@ -359,8 +371,16 @@ def load(path: Path | str) -> dict:
     """A model from ``.json`` or ``.safetensors``.
 
     A JSON file without ``trees`` (the older export) reads them from the ``trees.bin`` beside it.
+    The ``<stem>_float.txt`` beside ``path``, if present, is read into ``float_booster``.
     """
     path = Path(path)
+    model = _load_integer(path)
+    if _float_path(path).exists():
+        model["float_booster"] = _float_path(path).read_text()
+    return model
+
+
+def _load_integer(path: Path) -> dict:
     if path.suffix == ".safetensors":
         from safetensors import safe_open
 

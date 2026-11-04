@@ -51,6 +51,21 @@ def test_save_load_round_trip(model, table, tmp_path, suffix):
     np.testing.assert_array_equal(tree.predict(back, table), tree.predict(model, table))
 
 
+@pytest.mark.parametrize("suffix", [".json", ".safetensors"])
+def test_save_writes_float_booster_beside_integer_model(model, tmp_path, suffix):
+    path = tmp_path / f"model{suffix}"
+    tree.save(model, path)
+    assert path.exists()
+    assert (tmp_path / "model_float.txt").exists()
+    back = tree.load(path)
+    booster = lgb.Booster(model_str=back["float_booster"])
+    again = tree.from_booster(booster, features.INPUTS, model["rounds"])
+    for key in model["trees"]:
+        np.testing.assert_array_equal(again["trees"][key], model["trees"][key])
+    assert again["edges"] == model["edges"]
+    assert again["leaf_scale"] == model["leaf_scale"]
+
+
 def test_early_stopping_fit_runs(table):
     fitted = tree.fit(tree.DEFINITION, table, table.subject.eq("n0").to_numpy())
     assert 1 <= fitted["rounds"] <= tree.DEFINITION["max_rounds"]
