@@ -66,6 +66,8 @@ FOUR_CLASS = np.array([0, 1, 1, 2, 2, 3])
 PARTICIPANT_SEPARATOR = "_"
 
 Reader = Callable[[str], pd.DataFrame]
+AccelTransform = Callable[[np.ndarray], np.ndarray]
+HeartRateTransform = Callable[[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]
 
 
 # ---------------------------------------------------------------------------------- shared pieces
@@ -225,6 +227,37 @@ def e4_heart_rate(e4: E4, start: float) -> pd.DataFrame:
     """Heart rate on the clock where accelerometer sample 0 is at ``start``."""
     t = start + (e4.hr_start - e4.acc_start) + np.arange(e4.hr.size) / e4.hr_rate
     return heart_rate_frame(t, e4.hr)
+
+
+E4_RANGE_G = 2.0
+
+
+def e4_quantize(xyz: np.ndarray) -> np.ndarray:
+    """``xyz`` (``(n, 3)``, g) on the E4's grid: steps of 1/64 g, clipped to ±2 g."""
+    steps = np.round(np.asarray(xyz, float) * E4_UNITS_PER_G) / E4_UNITS_PER_G
+    return np.clip(steps, -E4_RANGE_G, E4_RANGE_G)
+
+
+def smooth_heart_rate(
+    t: np.ndarray, bpm: np.ndarray, window_s: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trailing moving average of heart rate over the last ``window_s`` seconds of recorded time.
+
+    Samples outside the valid heart-rate range are dropped first. The average at each sample covers
+    the samples with ``t - window_s < t_j <= t`` (every sample sharing that timestamp included), so
+    a gap or uneven spacing changes how many samples it holds, not its span in time. Returns the
+    times in order and the smoothed values.
+    """
+    t = np.asarray(t, float)
+    bpm = np.asarray(bpm, float)
+    order = np.argsort(t, kind="stable")
+    t, bpm = t[order], bpm[order]
+    keep = np.isfinite(bpm) & (bpm >= features.HR_MIN_BPM) & (bpm <= features.HR_MAX_BPM)
+    t, bpm = t[keep], bpm[keep]
+    total = np.concatenate([[0.0], np.cumsum(bpm)])
+    start = np.searchsorted(t, t - window_s, side="right")
+    end = np.searchsorted(t, t, side="right")
+    return t, (total[end] - total[start]) / (end - start)
 
 
 # ---------------------------------------------------------------------------------- cohorts
@@ -552,14 +585,27 @@ def align_uncropped(
 
 
 def recording_table(
-    data_set: DataSetObject, subject: str, inputs: dict
+    data_set: DataSetObject,
+    subject: str,
+    inputs: dict,
+    accel_transform: AccelTransform | None = None,
+    hr_transform: HeartRateTransform | None = None,
+    epoch_time: bool = False,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """The feature columns of one recording and its raw labels per epoch."""
+    """The feature columns of one recording and its raw labels per epoch.
+
+    ``accel_transform`` maps the recorded ``(n, 3)`` accelerometer samples (g) to new ones before
+    resampling; ``hr_transform`` maps the heart-rate times and values to new ones. With
+    ``epoch_time`` the table also has ``epoch_start_s`` (start of the epoch on the clock of the
+    PSG timestamps) and ``psg_epoch`` (index of the epoch in the PSG file; negative before its
+    first epoch).
+    """
     accel = data_set.get_feature_data(ACCELEROMETER, subject)
     psg = data_set.get_feature_data(PSG, subject)
     hr = data_set.get_feature_data(HEARTRATE, subject)
     if accel is None or psg is None:
         raise ValueError("no accelerometer or PSG")
+    psg_origin = float(psg[TIMESTAMP_COL].min())
     cleaned = pd.DataFrame(clean_accelerometer_rows(accel.to_numpy()), columns=accel.columns)
     if inputs["uncropped"]:
         cleaned, labels, t0 = align_uncropped(cleaned, psg)
@@ -568,28 +614,36 @@ def recording_table(
         psg = mask_data(cleaned, psg)
         labels, t0 = psg[PSG_COL].to_numpy(), float(psg[TIMESTAMP_COL].iloc[0])
     rows = cleaned.to_numpy(dtype=np.float64)
+    if accel_transform is not None:
+        rows[:, 1:4] = accel_transform(rows[:, 1:4])
     acc25, valid25 = features.to_25hz(rows[:, 0], rows[:, 1:4], t0, labels.size)
     hr = hr.dropna()
-    table = features.compute_features(
-        acc25, valid25, hr[TIMESTAMP_COL].to_numpy(float) - t0, hr[HR_COL].to_numpy(float), inputs
-    )
+    hr_t, hr_bpm = hr[TIMESTAMP_COL].to_numpy(float), hr[HR_COL].to_numpy(float)
+    if hr_transform is not None and hr_t.size:
+        hr_t, hr_bpm = hr_transform(hr_t, hr_bpm)
+    table = features.compute_features(acc25, valid25, hr_t - t0, hr_bpm, inputs)
+    if epoch_time:
+        start = t0 + EPOCH_S * table.epoch.to_numpy()
+        table.insert(1, "epoch_start_s", start)
+        table.insert(2, "psg_epoch", np.rint((start - psg_origin) / EPOCH_S).astype(int))
     return table, labels
 
 
 _STATE: dict = {}
 
 
-def _init(data_dir: str, inputs: dict) -> None:
+def _init(data_dir: str, inputs: dict, options: dict) -> None:
     warnings.simplefilter("ignore")
     _STATE["data_set"] = load(data_dir)
     _STATE["inputs"] = inputs
+    _STATE["options"] = options
 
 
 def _build_one(args: tuple[str, str, str, float]) -> tuple[str, pd.DataFrame | str]:
     subject, reported, person, min_scored_minutes = args
     data_set = _STATE["data_set"]
     try:
-        table, labels = recording_table(data_set, subject, _STATE["inputs"])
+        table, labels = recording_table(data_set, subject, _STATE["inputs"], **_STATE["options"])
     except Exception as exc:  # noqa: BLE001 - counted by type in the manifest
         return "failed", type(exc).__name__
     finally:
@@ -612,10 +666,15 @@ def build(
     min_scored_minutes: float = MIN_SCORED_MINUTES,
     workers: int = 8,
     overwrite: bool = False,
+    accel_transform: AccelTransform | None = None,
+    hr_transform: HeartRateTransform | None = None,
+    epoch_time: bool = False,
 ) -> dict:
     """Write ``features-<dataset>.parquet`` and its manifest into ``out``; returns the manifest.
 
-    Recordings with under ``min_scored_minutes`` of staged PSG are left out.
+    Recordings with under ``min_scored_minutes`` of staged PSG are left out. The transforms and
+    ``epoch_time`` are as in :func:`recording_table`; with them unset the table is the untouched
+    recording's. Transforms must be picklable (module-level functions or ``functools.partial``).
     """
     data_set = load(data_dir)
     out = Path(out)
@@ -637,7 +696,11 @@ def build(
         workers,
         mp_context=multiprocessing.get_context("spawn"),
         initializer=_init,
-        initargs=(str(data_dir), inputs),
+        initargs=(
+            str(data_dir),
+            inputs,
+            dict(accel_transform=accel_transform, hr_transform=hr_transform, epoch_time=epoch_time),
+        ),
     ) as pool:
         for status, payload in pool.map(_build_one, jobs):
             if status == "ok":

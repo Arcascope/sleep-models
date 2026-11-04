@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from arcasleep_tree import features, tree
+from arcasleep_tree import features, loaders, tree
 
 
 @pytest.fixture(scope="module")
@@ -107,3 +107,35 @@ def test_train_saves_every_fold_model(table, tmp_path, suffix):
         held_out.update(record["fold_persons"])
         np.testing.assert_array_equal(tree.predict(back, table[fold == k]), oof[fold == k])
     assert held_out == set(tree.persons(table))
+
+
+def test_weighted_fit_runs(table):
+    weight = np.where(table.subject.eq("n1"), 7.0, 1.0)
+    held_out = table.subject.eq("n0").to_numpy()
+    fitted = tree.fit(tree.DEFINITION, table, held_out, weight=weight)
+    assert 1 <= fitted["rounds"] <= tree.DEFINITION["max_rounds"]
+    fixed = tree.fit(tree.DEFINITION, table, held_out, rounds=5, weight=weight)
+    assert fixed["rounds"] == 5
+    definition = {**tree.DEFINITION, "folds": 3, "max_rounds": 5, "early_stopping_rounds": 2}
+    final, oof = tree.train(definition, table, weight=weight)
+    assert final["rounds"] >= 1
+    assert oof.shape == (len(table),)
+
+
+def test_e4_quantize_snaps_to_grid_and_clips():
+    a = np.array([[0.0, 0.0101, -0.0101], [1.0, 2.5, -3.0], [0.5, 0.2, 0.3]])
+    q = loaders.e4_quantize(a)
+    np.testing.assert_allclose(q * 64, np.round(q * 64))
+    assert q.max() <= 2.0 and q.min() >= -2.0
+    np.testing.assert_array_equal(loaders.e4_quantize(q), q)
+
+
+def test_smooth_heart_rate_uses_recorded_time():
+    t = np.array([0.0, 1.0, 2.0, 3.0, 100.0, 101.0])
+    bpm = np.array([60.0, 70.0, 80.0, 90.0, 50.0, 70.0])
+    out_t, out = loaders.smooth_heart_rate(t, bpm, 2.5)
+    np.testing.assert_array_equal(out_t, t)
+    assert out.shape == bpm.shape
+    assert out[0] == 60.0 and out[4] == 50.0
+    assert out[3] == pytest.approx(80.0)
+    assert out[5] == pytest.approx(60.0)

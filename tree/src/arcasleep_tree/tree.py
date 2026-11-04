@@ -97,17 +97,28 @@ def persons(table: pd.DataFrame) -> np.ndarray:
     return (table.cohort.astype(str) + "/" + table.person.astype(str)).to_numpy()
 
 
-def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = None) -> dict:
+def fit(
+    tree: dict,
+    table: pd.DataFrame,
+    test: np.ndarray,
+    rounds: int | None = None,
+    weight: np.ndarray | None = None,
+) -> dict:
     """Train on the :func:`trainable` rows of ``table`` where ``test`` is False.
+
+    ``weight`` (one value per row of ``table``) weights the rows in training; the early-stopping
+    rows are not weighted. With ``weight`` None every row counts once.
 
     With ``rounds`` None, training runs up to ``max_rounds`` rounds and stops early on
     ``validation_share`` of the training persons; the model keeps the best iteration.
     Otherwise it trains exactly ``rounds`` rounds on all training rows.
     """
     names = features.feature_names(tree["inputs"])
-    train = table[trainable(table, tree["inputs"]) & ~np.asarray(test, bool)]
+    mask = trainable(table, tree["inputs"]) & ~np.asarray(test, bool)
+    train = table[mask]
     x = train[names].to_numpy(np.float32)
     y = train.y4.to_numpy()
+    w = None if weight is None else np.asarray(weight, float)[mask]
     params = tree["params"]
     data_params = {"max_bin": params["max_bin"]}
     if rounds is None:
@@ -116,7 +127,13 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
         rng = np.random.default_rng(params["seed"])
         n_val = max(1, int(round(tree["validation_share"] * pool.size)))
         is_val = np.isin(who, rng.choice(pool, size=n_val, replace=False))
-        dtrain = lgb.Dataset(x[~is_val], y[~is_val], feature_name=names, params=data_params)
+        dtrain = lgb.Dataset(
+            x[~is_val],
+            y[~is_val],
+            weight=None if w is None else w[~is_val],
+            feature_name=names,
+            params=data_params,
+        )
         dval = lgb.Dataset(x[is_val], y[is_val], reference=dtrain)
         booster = lgb.train(
             params,
@@ -128,7 +145,7 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
         rounds = booster.best_iteration
     else:
         booster = lgb.train(
-            params, lgb.Dataset(x, y, feature_name=names, params=data_params), rounds
+            params, lgb.Dataset(x, y, weight=w, feature_name=names, params=data_params), rounds
         )
     model = from_booster(booster, tree["inputs"], rounds)
     model["float_booster"] = booster.model_to_string(num_iteration=rounds)
@@ -156,7 +173,10 @@ def fold_path(path: Path | str, k: int) -> Path:
 
 
 def train(
-    tree: dict, table: pd.DataFrame, folds_to: Path | str | None = None
+    tree: dict,
+    table: pd.DataFrame,
+    folds_to: Path | str | None = None,
+    weight: np.ndarray | None = None,
 ) -> tuple[dict, np.ndarray]:
     """The final model and the out-of-fold stage of every row (``-1`` where not predicted).
 
@@ -166,13 +186,15 @@ def train(
     With ``folds_to``, each fold model is saved to ``fold_path(folds_to, k)`` (see :func:`save`).
     Its ``training`` records the fold index ``fold``, its held-out persons ``fold_persons`` and
     its best rounds ``rounds``.
+
+    ``weight`` is as in :func:`fit`.
     """
     fold = person_folds(table, tree["folds"], tree["params"]["seed"])
     oof = np.full(len(table), -1)
     best = []
     for k in range(tree["folds"]):
         test = fold == k
-        model = fit(tree, table, test)
+        model = fit(tree, table, test, weight=weight)
         best.append(model["rounds"])
         if folds_to is not None:
             model["training"]["fold"] = k
@@ -180,7 +202,9 @@ def train(
             save(model, fold_path(folds_to, k))
         oof[test] = predict(model, table[test])
         print(f"fold {k}: {model['rounds']} rounds", flush=True)
-    final = fit(tree, table, np.zeros(len(table), bool), rounds=int(np.median(best)))
+    final = fit(
+        tree, table, np.zeros(len(table), bool), rounds=int(np.median(best)), weight=weight
+    )
     final["training"]["fold_rounds"] = best
     return final, oof
 
