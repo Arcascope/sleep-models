@@ -61,6 +61,7 @@ WINDOW_ONLY_KEYS = (
     "weak_label_weak_weight",
     "weak_label_sleep_weight",
     "min_sib_bout_minutes",
+    "weight_groups",
 )
 
 # Deblip shape knobs are not spelled in training.json; these mirror the
@@ -127,6 +128,11 @@ class TrainingConfig:
     weak_label_weak_weight: float = 0.3
     weak_label_sleep_weight: float = 0.3
     min_sib_bout_minutes: float = 20.0
+    # Sampling weights of whole datasets in the windowed fit, as
+    # [{"dataset_prefix": ..., "total_weight": ...}, ...]: the fit recordings of the datasets whose
+    # names start with the prefix share `total_weight` equally, so each is drawn that many times per
+    # round (a recording of weight 1 is drawn once); other recordings keep weight 1.
+    weight_groups: list[dict[str, float | str]] = field(default_factory=list)
 
     REQUIRED_KEYS = (
         "run_seed",
@@ -231,6 +237,11 @@ class TrainingConfig:
         unknown = sorted(set(self.weak_label_rules) - set(WEAK_LABEL_RULES))
         if unknown:
             raise ValueError(f"training.json: unknown weak_label_rules {unknown}")
+        for group in self.weight_groups:
+            if set(group) != {"dataset_prefix", "total_weight"} or float(group["total_weight"]) < 0:
+                raise ValueError(
+                    "training.json: each weight_groups entry needs dataset_prefix and a nonnegative total_weight"
+                )
 
     @property
     def window_sampling_mix(self) -> WindowMix:
@@ -469,11 +480,12 @@ def window_recordings(
     features: Mapping[SubjectRef, ModelIOBundle],
     *,
     rules: list[str],
+    kept: list[SubjectRef] | None = None,
 ) -> list[WindowRecording]:
     """Each recording of ``refs`` as a :class:`WindowRecording`, labelled by ``rules``.
 
     The model input is built at the model's frames per epoch. A recording with no
-    supervised epoch is left out.
+    supervised epoch is left out; ``kept``, when given, receives the refs of those that remain.
     """
     num_classes = config.model.num_classes
     fpe = config.model.frames_per_epoch
@@ -491,7 +503,24 @@ def window_recordings(
         x = recording_input(bundle.X[0], y.shape[0], fpe).astype(np.float32)
         if ((targets.labels >= 0) & (targets.weights > 0)).any():
             recordings.append(WindowRecording(x, targets))
+            if kept is not None:
+                kept.append(ref)
     return recordings
+
+
+def recording_weights(refs, groups: list[dict[str, float | str]]) -> list[float] | None:
+    """Sampling weight of each of ``refs``: a group's total shared equally by its recordings, else 1.
+
+    ``None`` when ``groups`` is empty.
+    """
+    if not groups:
+        return None
+    weights = [1.0] * len(refs)
+    for group in groups:
+        members = [i for i, ref in enumerate(refs) if ref.dataset_name.startswith(str(group["dataset_prefix"]))]
+        for i in members:
+            weights[i] = float(group["total_weight"]) / len(members)
+    return weights
 
 
 def _fit_windows(config: RunConfig, fit_refs, eval_refs, features, fit_seed: int):
@@ -501,13 +530,15 @@ def _fit_windows(config: RunConfig, fit_refs, eval_refs, features, fit_seed: int
 
     training: TrainingConfig = config.training
     fpe = config.model.frames_per_epoch
-    fit = window_recordings(config, fit_refs, features, rules=training.weak_label_rules)
+    fit_kept: list[SubjectRef] = []
+    fit = window_recordings(config, fit_refs, features, rules=training.weak_label_rules, kept=fit_kept)
     sampler = WindowSampler(
         fit,
         training.window_epochs,
         training.window_sampling_mix,
         frames_per_epoch=fpe,
         windows_per_recording=training.windows_per_recording,
+        recording_weights=recording_weights(fit_kept, training.weight_groups),
     )
     evaluation = window_recordings(config, eval_refs, features, rules=[])
     eval_batch = WindowSampler(

@@ -1,4 +1,4 @@
-"""Wearanize+ and EESM19 with the whole wrist stream, for uncropped caches.
+"""Wearanize+, EESM19 and AAUWSS with the whole wrist stream, for uncropped caches.
 
 The converted layout of these cohorts (``cleaned_accelerometer/`` and
 ``cleaned_psg/``, time zero at the first scored epoch or at lights-out) keeps
@@ -6,7 +6,7 @@ only the accelerometer samples inside the scored window. A dataset directory
 for an uncropped cache holds two files:
 
     pisces_lite_adapter.py   ``from arcasleep.data.cohorts import load_data_sets``
-    uncropped_source.json    ``{"cohort": "wearanize" | "eesm19",
+    uncropped_source.json    ``{"cohort": "wearanize" | "eesm19" | "aauwss",
                                "raw_root": <raw dataset>,
                                "converted_dir": <converted dataset>}``
 
@@ -48,6 +48,9 @@ GENEACTIV_HZ = 100.0
 # Decimals of the converted accelerometer files' time and acceleration columns.
 WEARANIZE_DECIMALS = (6, 6)
 EESM19_DECIMALS = (3, 4)
+AAUWSS_DECIMALS = (6, 6)
+# Samples of the converted stream compared against the raw one to find where the converted one starts.
+AAUWSS_MATCH_SAMPLES = 256
 
 _XLSX_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
@@ -182,7 +185,50 @@ def _eesm19_loader(converted: Path, raw_root: Path) -> tuple[list[str], Callable
     return list(manifest), load
 
 
-_COHORTS = {"wearanize": _wearanize_loader, "eesm19": _eesm19_loader}
+def _aauwss_loader(converted: Path, raw_root: Path) -> tuple[list[str], Callable]:
+    ids = sorted(
+        p.name[: -len("_cleaned_motion.out")]
+        for p in (converted / "cleaned_accelerometer").glob("*_cleaned_motion.out")
+    )
+
+    def load(subject_id: str) -> pd.DataFrame:
+        path = raw_root / "empatica" / f"subject_{int(subject_id[1:]):02d}" / "ACC.csv"
+        with open(path) as f:
+            f.readline()
+            rate = float(f.readline().split(",")[0])
+        if rate != E4_HZ:
+            raise ValueError(f"E4 ACC rate {rate} Hz, expected {E4_HZ}")
+        raw = pd.read_csv(path, skiprows=2, header=None, dtype=np.float32).to_numpy()
+        kept = pd.read_csv(
+            converted / "cleaned_accelerometer" / f"{subject_id}_cleaned_motion.out",
+            sep=" ",
+            header=None,
+            dtype=np.float64,
+        ).to_numpy()
+        kept_units = np.round(kept[:, 1:] * E4_UNITS_PER_G).astype(np.float32)
+        # The converted stream is a contiguous run of the raw samples; its most variable
+        # block of samples locates it.
+        blocks = kept_units.shape[0] // AAUWSS_MATCH_SAMPLES
+        spread = kept_units[: blocks * AAUWSS_MATCH_SAMPLES].reshape(blocks, -1, 3).std(axis=1).sum(axis=1)
+        mid = int(spread.argmax()) * AAUWSS_MATCH_SAMPLES
+        key = kept_units[mid : mid + AAUWSS_MATCH_SAMPLES]
+        hits = [
+            i
+            for i in np.flatnonzero(np.all(raw[: raw.shape[0] - AAUWSS_MATCH_SAMPLES + 1] == key[0], axis=1))
+            if np.array_equal(raw[i : i + AAUWSS_MATCH_SAMPLES], key)
+        ]
+        if len(hits) != 1:
+            raise ValueError(f"{subject_id}: {len(hits)} places in the raw stream match the converted one")
+        start = hits[0] - mid
+        if not np.array_equal(raw[start : start + kept_units.shape[0]], kept_units):
+            raise ValueError(f"{subject_id}: the converted stream is not a run of the raw samples")
+        times = (np.arange(raw.shape[0]) - start) / E4_HZ
+        return _accel_frame(times, raw.astype(np.float64) / E4_UNITS_PER_G, AAUWSS_DECIMALS)
+
+    return ids, load
+
+
+_COHORTS = {"wearanize": _wearanize_loader, "eesm19": _eesm19_loader, "aauwss": _aauwss_loader}
 
 
 def _load_psg(root: Path, subject_id: str) -> pd.DataFrame:

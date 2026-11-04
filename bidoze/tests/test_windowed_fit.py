@@ -102,6 +102,40 @@ def test_windowed_recipe_trains_and_scores_end_to_end(tmp_path: Path) -> None:
     assert list((results / "model_outputs").glob("*.pisces"))
 
 
+def test_weight_groups_train_end_to_end(tmp_path: Path) -> None:
+    training = {**WINDOWED, "weight_groups": [{"dataset_prefix": "CohortB", "total_weight": 5.0}]}
+    config = _configs(tmp_path / "config", {"gap_from_row": True})
+    (tmp_path / "config" / "training.json").write_text(json.dumps(training))
+    config = type(config).from_paths(
+        family=config.family,
+        inputs=tmp_path / "config" / "inputs.json",
+        model=tmp_path / "config" / "model.json",
+        cv=tmp_path / "config" / "cv.json",
+        training=tmp_path / "config" / "training.json",
+        metrics=tmp_path / "config" / "metrics.json",
+    )
+    cache_root = tmp_path / "feature_cache"
+    _write_uncropped_cache(cache_root / "test", "CohortA", [f"a{i}" for i in range(6)])
+    _write_uncropped_cache(cache_root / "test", "CohortB", ["b0", "b1"])
+    results = tmp_path / "results" / "training"
+    run_training(config, RunPaths(results=results, feature_cache=cache_root), run_id="test")
+    assert list((results / "model_outputs").glob("*.pisces"))
+
+
+def test_weight_groups_split_a_total_over_the_matching_recordings() -> None:
+    from pisces_lite.cv import SubjectRef
+
+    from arcasleep_bidoze.training import recording_weights
+
+    refs = [SubjectRef("CohortA", "a0"), SubjectRef("CohortB1", "b0"), SubjectRef("CohortB2", "b1")]
+    assert recording_weights(refs, []) is None
+    assert recording_weights(refs, [{"dataset_prefix": "CohortB", "total_weight": 5.0}]) == [1.0, 2.5, 2.5]
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**WINDOWED, "weight_groups": [{"dataset_prefix": "CohortB"}]})
+    with pytest.raises(ValueError):
+        TrainingConfig.from_dict({**BALANCED_TRAINING, "weight_groups": [{"dataset_prefix": "B", "total_weight": 1}]})
+
+
 def test_windowed_fit_is_seed_deterministic_and_trains() -> None:
     from arcasleep.data.weak_labels import label_recording
     from arcasleep.training.windows import WindowRecording, WindowSampler

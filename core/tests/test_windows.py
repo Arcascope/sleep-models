@@ -252,3 +252,19 @@ def test_weak_sleep_with_no_stage_in_the_batch_is_weighted_by_its_own_count() ->
     class_weight = (1 - beta) / (1 - beta**count)
     expected = class_weight * weight * -np.log(0.75)
     assert loss == pytest.approx(expected, rel=1e-4)
+
+
+def test_recording_weights_set_how_often_each_recording_is_drawn() -> None:
+    s = sampler(recording_weights=[3.0, 0.5])
+    assert s.windows_per_epoch == 4
+    drawn = np.concatenate([s.sample(np.random.default_rng(i)).recordings for i in range(400)])
+    assert np.bincount(drawn, minlength=2)[0] / len(drawn) > 0.8
+    assert s.sample(np.random.default_rng(0)).x.shape[0] == 4
+    with pytest.raises(ValueError):
+        sampler(recording_weights=[1.0])
+
+
+def test_no_recording_weights_keeps_one_window_per_recording() -> None:
+    s = sampler()
+    assert s.windows_per_epoch == 2
+    assert sorted(s.sample(np.random.default_rng(0)).recordings) == [0, 1]

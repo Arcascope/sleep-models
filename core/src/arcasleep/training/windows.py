@@ -118,9 +118,13 @@ class WindowSampler:
         frames_per_epoch: int = 1,
         windows_per_recording: int = 1,
         max_attempts: int = WINDOW_MAX_ATTEMPTS,
+        recording_weights: Sequence[float] | None = None,
     ) -> None:
         if not recordings:
             raise ValueError("no recordings to sample windows from")
+        if recording_weights is not None:
+            if len(recording_weights) != len(recordings) or min(recording_weights) < 0 or sum(recording_weights) <= 0:
+                raise ValueError("recording_weights needs one nonnegative weight per recording, not all 0")
         if window_epochs < 1 or windows_per_recording < 1 or max_attempts < 1:
             raise ValueError("window_epochs, windows_per_recording and max_attempts must be at least 1")
         self.recordings = list(recordings)
@@ -129,13 +133,21 @@ class WindowSampler:
         self.frames_per_epoch = int(frames_per_epoch)
         self.windows_per_recording = int(windows_per_recording)
         self.max_attempts = int(max_attempts)
+        self.recording_weights = (
+            None if recording_weights is None else np.asarray(recording_weights, dtype=np.float64)
+        )
         self._supervised_cumulative = [
             np.concatenate([[0], np.cumsum(r.supervised())]) for r in self.recordings
         ]
 
     @property
     def windows_per_epoch(self) -> int:
-        """Windows one training epoch draws: ``windows_per_recording`` per recording."""
+        """Windows one training epoch draws: ``windows_per_recording`` per recording.
+
+        With ``recording_weights`` the count is that of the summed weights, rounded.
+        """
+        if self.recording_weights is not None:
+            return max(1, int(round(float(self.recording_weights.sum()) * self.windows_per_recording)))
         return len(self.recordings) * self.windows_per_recording
 
     @property
@@ -151,11 +163,28 @@ class WindowSampler:
         """
         n_windows = self.windows_per_epoch if n_windows is None else int(n_windows)
         count = len(self.recordings)
-        rounds = -(-n_windows // count)
-        order = np.concatenate([rng.permutation(count) for _ in range(rounds)])[:n_windows]
+        if self.recording_weights is None:
+            rounds = -(-n_windows // count)
+            order = np.concatenate([rng.permutation(count) for _ in range(rounds)])[:n_windows]
+        else:
+            order = self._weighted_order(rng, n_windows)
         kinds = rng.choice(len(WINDOW_KINDS), size=n_windows, p=self.mix.probabilities())
         drawn = [self._draw(int(order[i]), WINDOW_KINDS[kinds[i]], rng) for i in range(n_windows)]
         return self._stack(order, drawn)
+
+    def _weighted_order(self, rng: np.random.Generator, n_windows: int) -> np.ndarray:
+        """Recording of each window when a recording of weight ``w`` is drawn ``w`` times per round.
+
+        A round holds every recording ``floor(w)`` times, and once more with probability
+        ``w - floor(w)``, in a random order.
+        """
+        whole = np.floor(self.recording_weights).astype(np.int64)
+        extra = self.recording_weights - whole
+        order = np.empty(0, dtype=np.int64)
+        while order.size < n_windows:
+            counts = whole + (rng.random(len(whole)) < extra)
+            order = np.concatenate([order, rng.permutation(np.repeat(np.arange(len(whole)), counts))])
+        return order[:n_windows]
 
     def centered(self) -> WindowBatch:
         """One ``night`` window per recording, centred on its PSG span; no randomness."""
