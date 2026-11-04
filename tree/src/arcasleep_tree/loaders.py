@@ -615,6 +615,7 @@ def recording_table(
         labels, t0 = psg[PSG_COL].to_numpy(), float(psg[TIMESTAMP_COL].iloc[0])
     rows = cleaned.to_numpy(dtype=np.float64)
     if accel_transform is not None:
+        rows = rows.copy()
         rows[:, 1:4] = accel_transform(rows[:, 1:4])
     acc25, valid25 = features.to_25hz(rows[:, 0], rows[:, 1:4], t0, labels.size)
     hr = hr.dropna()
