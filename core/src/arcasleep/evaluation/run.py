@@ -246,13 +246,7 @@ def _hypnogram_renderer(config: RunConfig):
             ) from exc
         raise
 
-    processing = config.processing
-    feature_kind = "embedding" if getattr(processing, "type", None) == "healthssl" else "spectrogram"
-    channel_names = (
-        ["HealthSSL dim"]
-        if feature_kind == "embedding"
-        else getattr(processing, "spectral_channels", None)
-    )
+    channel_names = getattr(config.processing, "spectral_channels", None)
 
     def render(output_path: Path, inputs, probs, labels, title_prefix) -> dict[str, float]:
         return render_subject_hypnogram(
@@ -262,7 +256,7 @@ def _hypnogram_renderer(config: RunConfig):
             labels=labels,
             title_prefix=title_prefix,
             channel_names=channel_names,
-            feature_kind=feature_kind,
+            feature_kind="spectrogram",
         )
 
     return render
