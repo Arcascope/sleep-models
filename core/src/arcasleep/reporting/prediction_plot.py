@@ -5,10 +5,12 @@ Drawn from a :class:`arcasleep.predict.Prediction`, or from the CSV
 so no model or accelerometer data is needed to redraw it. Rows, top to bottom:
 
 - optional PSG stages, when a caller has them;
-- raw model stages, with the sleep the SIB filter removed shaded;
+- raw model stages, with the sleep the filter removed shaded;
 - the stages after the filter;
-- a track of GGIR's sustained-inactivity bouts (SIB), estimated sleep-period
-  windows (SPT) and epochs with no data.
+- a track of the sleep the filter keeps outside the sleep period (the bundled
+  sleep/wake tree's sleep calls when the bundle has one, otherwise GGIR's
+  sustained-inactivity bouts, SIB), estimated sleep-period windows (SPT) and
+  epochs with no data.
 
 Without the filter only the raw row is drawn. With PSG, removed sleep is
 shaded by whether PSG called it wake or sleep; without PSG it is one neutral
@@ -70,7 +72,9 @@ def plot_prediction(
     is_gap = np.asarray(prediction.is_gap, dtype=bool)
     is_sib = _optional_flags(getattr(prediction, "is_sib", None), n)
     is_spt = _optional_flags(getattr(prediction, "is_spt", None), n)
+    is_tree_sleep = _optional_flags(getattr(prediction, "is_tree_sleep", None), n)
     filter_ran = is_sib is not None
+    keep, keep_name = (is_sib, "SIB") if is_tree_sleep is None else (is_tree_sleep, "tree sleep")
 
     raw_sleep = ~np.isin(raw, ["wake", "gap"])
     filtered_sleep = ~np.isin(filtered, ["wake", "gap"])
@@ -102,28 +106,28 @@ def plot_prediction(
             _shade(axes["raw"], hours, removed & psg_wake, REMOVED_WAKE, 0.35)
             _shade(axes["raw"], hours, removed & psg_sleep, REMOVED_SLEEP, 0.45)
             legend += [
-                Patch(color=REMOVED_WAKE, alpha=0.35, label="Removed by SIB, PSG wake"),
-                Patch(color=REMOVED_SLEEP, alpha=0.45, label="Removed by SIB, PSG sleep"),
+                Patch(color=REMOVED_WAKE, alpha=0.35, label="Removed by the filter, PSG wake"),
+                Patch(color=REMOVED_SLEEP, alpha=0.45, label="Removed by the filter, PSG sleep"),
             ]
         else:
             _shade(axes["raw"], hours, removed, REMOVED, 0.4)
-            legend.append(Patch(color=REMOVED, alpha=0.4, label="Sleep removed by SIB"))
-    raw_title = "Model (raw)" + (", sleep removed by SIB shaded" if filter_ran else "")
+            legend.append(Patch(color=REMOVED, alpha=0.4, label="Sleep removed by the filter"))
+    raw_title = "Model (raw)" + (", sleep removed by the filter shaded" if filter_ran else "")
     _stages(axes["raw"], hours, _levels(raw), RAW, raw_title)
 
     if filter_ran:
         _stages(
-            axes["filtered"], hours, _levels(filtered), FILTERED, "After the SIB filter"
+            axes["filtered"], hours, _levels(filtered), FILTERED, f"After the {keep_name} filter"
         )
         track = axes["track"]
-        _shade(track, hours, is_sib, SIB, 0.8, 0.55, 0.95)
+        _shade(track, hours, keep, SIB, 0.8, 0.55, 0.95)
         spt_found = is_spt is not None and bool(is_spt.any())
         if spt_found:
             _shade(track, hours, is_spt, SPT, 0.8, 0.05, 0.45)
         spt_label = "SPT window" if spt_found else "SPT (not estimated)"
-        track.set_yticks([0.25, 0.75], [spt_label, "SIB"])
+        track.set_yticks([0.25, 0.75], [spt_label, keep_name])
         track.set_ylim(0, 1)
-        legend.append(Patch(color=SIB, alpha=0.8, label="SIB"))
+        legend.append(Patch(color=SIB, alpha=0.8, label=keep_name))
         if spt_found:
             legend.append(Patch(color=SPT, alpha=0.8, label="SPT window"))
     bottom = axes[panels[-1]]
@@ -204,7 +208,7 @@ def _headline(name, raw_sleep, filtered_sleep, removed, prediction, filter_ran, 
     if filter_ran:
         parts.append(
             f"sleep {raw_sleep.sum() * minutes:.0f} → {filtered_sleep.sum() * minutes:.0f} min "
-            f"({removed.sum() * minutes:.0f} removed by SIB)"
+            f"({removed.sum() * minutes:.0f} removed by the filter)"
         )
         is_nap = getattr(prediction, "is_nap", None)
         if is_nap is not None and np.any(is_nap):

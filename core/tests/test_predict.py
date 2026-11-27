@@ -56,7 +56,7 @@ def test_gap_head_column_follows_the_stage_probabilities(tmp_path) -> None:
 
     assert list(rows[0]) == [
         "epoch", "start_s", "wake", "light", "deep", "rem", "gap_head", "stage",
-        "stage_raw", "is_nap", "is_sib", "is_spt", "is_gap",
+        "stage_raw", "is_nap", "is_sib", "is_tree_sleep", "is_spt", "is_gap",
     ]
     assert [float(r["gap_head"]) for r in rows] == pytest.approx([0.01, 0.9, 0.0])
     assert [r["stage"] for r in rows] == ["wake", "gap", "rem"]
@@ -166,3 +166,49 @@ def test_origin_defaults_to_the_first_sample_and_unix_snaps_to_whole_epochs() ->
     assert _resolve_origin(5.0, 12.5) == 5.0
     with pytest.raises(ValueError):
         _resolve_origin("psg", 0.0)
+
+
+def test_tree_sleep_replaces_sib_outside_the_sleep_period():
+    from types import SimpleNamespace
+
+    from arcasleep.predict import _filter_labels
+
+    stage_raw = np.array(["light", "light", "deep", "wake", "rem"], dtype=object)
+    is_gap = np.zeros(5, bool)
+    ggir = SimpleNamespace(
+        is_sib=np.array([True, False, False, False, False]),
+        is_spt=np.array([False, False, False, False, True]),
+    )
+    tree_sleep = np.array([False, True, False, True, False])
+    stage, is_nap = _filter_labels(stage_raw, is_gap, ggir, tree_sleep)
+    assert list(stage) == ["wake", "light", "wake", "wake", "rem"]
+    assert list(is_nap) == [0, 1, 0, 0, 0]
+    stage_sib, _ = _filter_labels(stage_raw, is_gap, ggir)
+    assert list(stage_sib) == ["light", "wake", "wake", "wake", "rem"]
+
+
+def test_the_default_calls_sleep_by_the_summed_probability_and_argmax_restores_the_old_calls() -> None:
+    from arcasleep.predict import Predictor
+
+    class Model:
+        class config:
+            frames_per_epoch = 1
+
+        def infer(self, chunks: np.ndarray) -> np.ndarray:
+            # P(wake), P(light), P(deep), P(REM) = 0.4, 0.3, 0.2, 0.1 in every epoch
+            return np.broadcast_to(np.log([0.4, 0.3, 0.2, 0.1]), (*chunks.shape[:2], 4))
+
+    predictor = Predictor.__new__(Predictor)
+    predictor.model = Model()
+    predictor.stage_names = ("wake", "light", "deep", "rem")
+    predictor.frames_per_epoch = 1
+    predictor.divisor = None
+    predictor.context_epochs, predictor.epoch_multiple = 8, 1
+    predictor.features = lambda accel, origin: (np.zeros((4, 3, 2)), 0.0)
+    accel = np.zeros((10, 4))
+
+    summed = predictor.predict(accel, ggir_sleep_filter=False)
+    legacy = predictor.predict(accel, ggir_sleep_filter=False, argmax=True)
+
+    assert list(summed.stage_raw) == ["light"] * 4
+    assert list(legacy.stage_raw) == ["wake"] * 4

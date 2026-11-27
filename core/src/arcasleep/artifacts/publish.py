@@ -630,19 +630,29 @@ def _quickstart(
     repo_id: str,
     local_dir: str,
     stage_names: Sequence[str],
+    sleep_tree: bool = False,
 ) -> list[str]:
     """Raw accelerometer file in, per-epoch stages out: the card's main use case.
 
     The prose lives in ``templates/quickstart.md`` so it can be edited as
     Markdown; ``$family``, ``$repo_id``, ``$local_dir``, ``$columns`` and
-    ``$n_stages`` are filled from the bundle.
+    ``$n_stages`` are filled from the bundle, and ``$keep_rule`` and ``$keep_track``
+    from whether the bundle holds a sleep/wake tree (``sleep_tree``).
     """
+    if sleep_tree:
+        keep_rule = "unless the bundled sleep/wake tree also calls sleep (`is_tree_sleep`)"
+        keep_track = "tree sleep"
+    else:
+        keep_rule = "unless the wrist was still for at least 5 minutes (`is_sib`)"
+        keep_track = "SIB"
     text = Template(_template_path("quickstart").read_text()).safe_substitute(
         family=family,
         repo_id=repo_id,
         local_dir=local_dir,
         columns=", ".join(stage_names),
         n_stages=len(stage_names),
+        keep_rule=keep_rule,
+        keep_track=keep_track,
     )
     return [*text.rstrip("\n").split("\n"), ""]
 
@@ -863,7 +873,7 @@ def _model_card(
     lines.append("|:---|:---|")
     lines += [f"| **{key}** | {value} |" for key, value in glance[1:]]
     lines.append("")
-    lines += _quickstart(family.name, repo_id, local_dir, stage_names)
+    lines += _quickstart(family.name, repo_id, local_dir, stage_names, sleep_tree="sleep_tree" in config)
     lines += _performance(info, metrics, evaluation, summary, grid_asset)
 
     if reviewed:
@@ -1283,6 +1293,8 @@ def build_release_bundle(
     members: Sequence[Mapping[str, Any]] | None = None,
     stage_divisor: Mapping[str, float] | None = None,
     extra_provenance: Mapping[str, Any] | None = None,
+    window_step: int | None = None,
+    sleep_tree: Path | str | None = None,
     overwrite: bool = False,
 ) -> ReleaseBundle:
     """Build the release bundle from ``training_dir`` into ``output_dir``.
@@ -1301,7 +1313,10 @@ def build_release_bundle(
     ``member0/``, ``member1/``, and so on; ``config.json`` gets ``"members": N``, and
     ``provenance.json`` a ``members`` list of each one's seed, epoch and checkpoint
     hash. ``stage_divisor`` (light, deep and REM, by name) goes in ``config.json``,
-    and ``extra_provenance`` is added to ``provenance.json``.
+    and ``extra_provenance`` is added to ``provenance.json``. ``window_step`` (epochs)
+    goes in ``config.json`` as the overlapping-window step ``predict`` scores the
+    bundle with. ``sleep_tree`` is a tree model file copied in as the sleep/wake tree
+    of the sleep filter (:data:`arcasleep.predict.SLEEP_TREE_FILE`).
 
     ``info`` is a release-info TOML (:class:`ReleaseInfo`) describing the
     variant: its repo, audience, protocol, cohort descriptions and authored
@@ -1372,6 +1387,16 @@ def build_release_bundle(
         bundle_config["members"] = len(models)
     if stage_divisor is not None:
         bundle_config["stage_divisor"] = {name: float(value) for name, value in stage_divisor.items()}
+    if window_step is not None:
+        bundle_config["window_step"] = int(window_step)
+    extra_files: list[str] = []
+    if sleep_tree is not None:
+        from arcasleep.predict import SLEEP_TREE_FILE
+        from arcasleep_tree import tree as sleep_tree_model
+
+        sleep_tree_model.save(sleep_tree_model.load(sleep_tree), output_dir / SLEEP_TREE_FILE)
+        extra_files.append(SLEEP_TREE_FILE)
+        bundle_config["sleep_tree"] = SLEEP_TREE_FILE
 
     _write_json(output_dir / "config.json", bundle_config)
     _write_json(output_dir / "preprocessing.json", preprocessing)
@@ -1473,7 +1498,9 @@ def build_release_bundle(
 
     # Assets are checksummed alongside the fixed bundle files so a tampered
     # figure is caught by verify_bundle and travels in the same upload commit.
-    checksummed = [name for name in BUNDLE_FILES if name != "checksums.sha256"] + list(assets)
+    checksummed = (
+        [name for name in BUNDLE_FILES if name != "checksums.sha256"] + extra_files + list(assets)
+    )
     (output_dir / "checksums.sha256").write_text(_checksums(output_dir, checksummed))
 
     return ReleaseBundle(

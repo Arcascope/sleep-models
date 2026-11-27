@@ -1,0 +1,25 @@
+{
+  "num_classes": 4,
+  "score_gap": true,
+  "gap_from_row": true,
+  "n_heads": 4,
+  "n_transformer_layers": 4,
+  "conv_kernels": [
+    3,
+    7,
+    31,
+    63
+  ],
+  "dropout": 0.2,
+  "attn_dropout": 0.0,
+  "strands": 3,
+  "strand_width": 112,
+  "strand_ffn": 112,
+  "strand_feature_dropout": 0.2,
+  "fusion_proj": 64,
+  "fusion_width": 128,
+  "fusion_layers": 2,
+  "fusion_heads": 4,
+  "fusion_ffn": 256,
+  "strand_loss_weight": 0.0
+}

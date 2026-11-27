@@ -71,3 +71,64 @@ def test_compute_features_builds():
     out = features.compute_features(acc, valid, hr_t, np.full(hr_t.size, 60.0))
     assert list(out.columns) == ["epoch", *features.feature_names()]
     assert len(out) == n_epochs
+
+
+def test_trainable_without_complete_windows_keeps_edge_epochs(table):
+    inputs = tree.DEFINITION["inputs"]
+    edges = tree.trainable(table, inputs, complete=False)
+    inner = tree.trainable(table, inputs)
+    assert edges[table.epoch.to_numpy() == 0].any()
+    assert (inner <= edges).all()
+
+
+def test_weighted_fit_on_edge_rows_runs(table):
+    weight = np.full(len(table), 0.5)
+    fitted = tree.fit(
+        tree.DEFINITION, table, np.zeros(len(table), bool), rounds=5, weight=weight, complete=False
+    )
+    assert fitted["rounds"] == 5
+
+
+@pytest.mark.parametrize("heart_rate", [False, True])
+def test_cirqa_features_build(heart_rate):
+    from arcasleep_tree import enhanced_actigraphy
+
+    rng = np.random.default_rng(2)
+    n_epochs = 20
+    t = np.arange(n_epochs * features.SAMPLES_PER_EPOCH) / 32.0
+    xyz = rng.normal(scale=0.01, size=(t.size, 3)) + [0.0, 0.0, 1.0]
+    acc, valid = features.to_25hz(t, xyz, 0.0, n_epochs)
+    hr_t = np.arange(0, n_epochs * features.EPOCH_S, 1.0)
+    inputs = enhanced_actigraphy.release_inputs(heart_rate)
+    out = features.compute_features(
+        acc,
+        valid,
+        hr_t,
+        np.full(hr_t.size, 60.0),
+        inputs,
+        enhanced_actigraphy.cirqa_signals(acc, valid),
+    )
+    assert list(out.columns) == ["epoch", *features.feature_names(inputs)]
+    assert len(out) == n_epochs
+
+
+def test_predict_recording_runs():
+    from arcasleep_tree import enhanced_actigraphy, recording
+
+    rng = np.random.default_rng(3)
+    n_epochs = 200
+    names = features.feature_names(enhanced_actigraphy.release_inputs(False))
+    train = pd.DataFrame(rng.normal(size=(n_epochs * 4, len(names))), columns=names)
+    train.insert(0, "epoch", np.tile(np.arange(n_epochs), 4))
+    train.insert(0, "y4", rng.integers(0, 4, len(train)).astype(np.int8))
+    train.insert(0, "person", np.repeat(["a", "b", "c", "d"], n_epochs))
+    train.insert(0, "subject", np.repeat(["n0", "n1", "n2", "n3"], n_epochs))
+    train.insert(0, "cohort", "synthetic")
+    definition = {**tree.DEFINITION, "inputs": enhanced_actigraphy.release_inputs(False)}
+    model = tree.fit(definition, train, np.zeros(len(train), bool), rounds=3, complete=False)
+    model["stage_offsets"] = [0.0, 0.1, -0.2, 0.3]
+    t = np.arange(0, 3600, 1 / 31.7)
+    accel = np.column_stack([t, rng.normal(scale=0.01, size=(t.size, 3)) + [0.0, 0.0, 1.0]])
+    out = recording.predict(model, accel)
+    assert len(out) == 120
+    assert set(out.stage.unique()) <= {0, 1, 2, 3}

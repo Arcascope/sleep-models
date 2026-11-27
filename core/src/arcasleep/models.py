@@ -98,6 +98,11 @@ class ModelFamily(ABC):
     def scoring_lengths(self, config: RunConfig, epoch_counts: Sequence[int]) -> tuple[int, int]:
         """``(x_length, y_length)`` in epochs for scoring recordings of these lengths."""
 
+    def scoring_window_step(self, config: RunConfig) -> int | None:
+        """Epochs between window starts when held-out recordings are scored in overlapping
+        windows over the whole recording; ``None`` scores one window of ``scoring_lengths``."""
+        return None
+
     @abstractmethod
     def describe_training(self, config: RunConfig) -> str:
         """Lines for the run banner."""

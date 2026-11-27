@@ -35,7 +35,7 @@ from pisces_lite.datasets import (
     load_subject,
     mask_data,
 )
-from pisces_lite.datasets.constants import PSG_COL, PSG_DT
+from pisces_lite.datasets.constants import PSG_COL, PSG_DT, TIMESTAMP_COL
 from pisces_lite.model_io import get_features_cache_name
 from pisces_lite.proc import ProcessingConfig
 
@@ -49,7 +49,7 @@ from arcasleep.processing import (
     frames_per_label,
     median_sampling_rate,
 )
-from arcasleep.data.constants import MIN_SCORED_MINUTES
+from arcasleep.data.constants import MIN_SCORED_MINUTES, OUTSIDE_PSG_LABEL
 
 
 ADAPTER_FILENAME = "pisces_lite_adapter.py"
@@ -129,7 +129,41 @@ def load_dataset(dataset_dir: Path | str, name: str | None = None) -> DataSetObj
     return data_set
 
 
-def prepare_subject(data_set: DataSetObject, subject_id: str) -> PreparedSubject:
+def align_uncropped(
+    accel: pd.DataFrame, psg: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Place the PSG on the epoch grid of the whole accelerometer stream.
+
+    The grid has :func:`~pisces_lite.datasets.align_trim`'s phase (the PSG's
+    first timestamp modulo the epoch length) and covers every whole epoch of
+    ``accel``, which is trimmed to it. Epochs inside the span ``align_trim``
+    keeps carry its labels; every other epoch is
+    :data:`~arcasleep.data.constants.OUTSIDE_PSG_LABEL`. The two streams must
+    overlap, as ``align_trim`` requires.
+    """
+    accel = accel.sort_values(by=TIMESTAMP_COL)
+    _, psg_inside = align_trim(accel, psg)
+    if psg_inside.empty:
+        raise ValueError("accelerometer and PSG do not overlap")
+    phase = float(psg[TIMESTAMP_COL].min()) % float(PSG_DT)
+    first = accel[TIMESTAMP_COL].iloc[0]
+    last = accel[TIMESTAMP_COL].iloc[-1]
+    start = phase + PSG_DT * np.ceil((first - phase) / PSG_DT)
+    end = phase + PSG_DT * np.floor((last - phase) / PSG_DT)
+    accel = accel[(accel[TIMESTAMP_COL] >= start) & (accel[TIMESTAMP_COL] <= end)]
+    n_epochs = int(round((end - start) / PSG_DT)) + 1
+    inside_from = int(round((psg_inside[TIMESTAMP_COL].iloc[0] - start) / PSG_DT))
+    labels = np.full(n_epochs, OUTSIDE_PSG_LABEL, dtype=int)
+    labels[inside_from : inside_from + len(psg_inside)] = psg_inside[PSG_COL].to_numpy()
+    grid = pd.DataFrame(
+        {TIMESTAMP_COL: start + PSG_DT * np.arange(n_epochs, dtype=float), PSG_COL: labels}
+    )
+    return accel, grid
+
+
+def prepare_subject(
+    data_set: DataSetObject, subject_id: str, *, uncropped: bool = False
+) -> PreparedSubject:
     """Load, clean, and align one recording without running its NUFFT.
 
     Cleaning happens *before* aligning. ``align_trim`` anchors the PSG grid at
@@ -137,13 +171,21 @@ def prepare_subject(data_set: DataSetObject, subject_id: str) -> PreparedSubject
     accelerometer sample; dropping leading rows afterwards would shift X's
     origin while y still began at the old start, pairing every epoch with an
     earlier wall-clock label.
+
+    With ``uncropped`` the accelerometer stream is kept whole instead of being
+    trimmed to the PSG; see :func:`align_uncropped`. Epochs with too little
+    accelerometer data are :data:`~arcasleep.data.constants.GAP_LABEL` wherever
+    they fall.
     """
     subject = load_subject(data_set, subject_id)
     cleaned = pd.DataFrame(
         clean_accelerometer_rows(subject.accel_df.to_numpy()),
         columns=subject.accel_df.columns,
     )
-    accel_aligned, psg_aligned = align_trim(cleaned, subject.psg_df)
+    if uncropped:
+        accel_aligned, psg_aligned = align_uncropped(cleaned, subject.psg_df)
+    else:
+        accel_aligned, psg_aligned = align_trim(cleaned, subject.psg_df)
     psg_masked = mask_data(accel_aligned, psg_aligned)
     return PreparedSubject(
         dataset=data_set.name,
@@ -246,12 +288,17 @@ def _deprioritize() -> None:
 
 
 def _init_load_worker(
-    dataset_dir: str, name: str | None, min_scored_minutes: float, target_fs: float | None
+    dataset_dir: str,
+    name: str | None,
+    min_scored_minutes: float,
+    target_fs: float | None,
+    uncropped: bool = False,
 ) -> None:
     _deprioritize()
     _LOAD_STATE["data_set"] = load_dataset(dataset_dir, name)
     _LOAD_STATE["min_scored_minutes"] = min_scored_minutes
     _LOAD_STATE["target_fs"] = target_fs
+    _LOAD_STATE["uncropped"] = uncropped
 
 
 def _load_one(subject_id: str, cache_id: str) -> tuple[str, object]:
@@ -262,7 +309,7 @@ def _load_one(subject_id: str, cache_id: str) -> tuple[str, object]:
     """
     data_set = _LOAD_STATE["data_set"]
     try:
-        item = prepare_subject(data_set, subject_id)
+        item = prepare_subject(data_set, subject_id, uncropped=_LOAD_STATE["uncropped"])
     except Exception as exc:  # noqa: BLE001 - reported with the subject attached
         return "failed", f"{cache_id}: {type(exc).__name__}: {exc}"
     finally:
@@ -307,8 +354,14 @@ def process_dataset(
     min_scored_minutes: float = MIN_SCORED_MINUTES,
     load_workers: int | None = None,
     write_workers: int | None = None,
+    uncropped: bool = False,
 ) -> List[Path]:
     """Build the cache for one dataset. Returns the NPZ paths written.
+
+    With ``uncropped`` each recording keeps its whole wrist stream; epochs
+    outside the PSG are labelled
+    :data:`~arcasleep.data.constants.OUTSIDE_PSG_LABEL`, and the cache belongs
+    in a directory of its own.
 
     Subjects that fail are reported and skipped rather than aborting the run;
     a dataset usually has a few unusable recordings and re-running the whole
@@ -367,6 +420,7 @@ def process_dataset(
                 name,
                 min_scored_minutes,
                 getattr(processing_config, "fs", None),
+                uncropped,
             ),
         ) as loaders,
         ProcessPoolExecutor(

@@ -6,15 +6,19 @@ audience = "Adults"
 headline = "SleepAccel"
 
 protocol = """\
-The model is the F2 network, trained three times (three seeds) on all 634 \
-revised-Weaver recordings (237 children) plus SleepAccel (28 recordings) and \
-Wearanize+ (92 nights). SleepAccel and Wearanize+ were each split into five \
-fixed, participant-level folds. The SleepAccel and Wearanize+ columns pool \
-five fold models, each scoring the fold it did not train on, with one value \
-per recording. The released model was trained on all of Weaver, SleepAccel \
-and Wearanize+ and scored on SleepAccel-Clinical, which no model trained on."""
+The model is the F2 network scored in 8-hour windows, trained three times \
+(three seeds) on 609 revised-Weaver recordings (237 children), SleepAccel \
+(28 recordings), Wearanize+ (92 nights) and AAUWSS (13 nights). The AAUWSS \
+nights are weighted so that together they count as much as the Wearanize+ \
+nights the model fits on. SleepAccel, Wearanize+ and AAUWSS were each split into five fixed, \
+participant-level folds. Their columns pool five fold models, each scoring \
+the fold it did not train on, with one value per recording. The released \
+model was trained on all four cohorts and scored on SleepAccel-Clinical, \
+which no model trained on. Recordings are scored as the bundle scores them: \
+8-hour windows every hour, summed sleep probability ≥ 0.5, stage divisor."""
 
 [cohorts]
 SleepAccel = "healthy adults; cross-validation"
 "Wearanize+" = "adults, recorded with an Empatica E4; cross-validation"
+AAUWSS = "healthy adults aged 22–71, Empatica E4; cross-validation"
 SleepAccel-Clinical = "adults with sleep apnea of varying severity; scored by the released model"

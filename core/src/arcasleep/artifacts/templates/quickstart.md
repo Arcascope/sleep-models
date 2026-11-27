@@ -4,7 +4,7 @@
 pip install 'arcasleep[$family,inference,hub]'
 hf download $repo_id --local-dir $local_dir
 
-# One CSV per recording: epoch, start_s, $columns, stage, stage_raw, is_nap, is_sib, is_spt, is_gap
+# One CSV per recording: epoch, start_s, $columns, stage, stage_raw, is_nap, is_sib, is_tree_sleep, is_spt, is_gap
 # plus <name>_summary.csv: subject_id, tst_minutes, missing_data_minutes, nap_minutes
 # --hypnogram also saves <name>.png (needs the [report] extra)
 arcasleep $family predict $local_dir recordings/*.csv -o predictions/ --hypnogram
@@ -38,13 +38,13 @@ definition depends on recording length:
   scoring, `stage_raw`.
 - **Longer, such as multi-day wear:** GGIR estimates the main sleep period
   (`is_spt`). Inside this the model's scoring is unchanged. Outside it, sleep becomes
-  `wake` unless the wrist was still for at least 5 minutes (`is_sib`), and the
+  `wake` $keep_rule, and the
   sleep that remains is flagged by `is_nap == 1`.
 
 A gap of 60 minutes or more without data splits a recording, and each part is
 judged on its own length. Pass `ggir_sleep_filter=False` (or
 `--no-ggir-sleep-filter`) for the unfiltered output. The hypnogram shows the
-raw and filtered stages, the sleep the filter removed, and the SIB and SPT
+raw and filtered stages, the sleep the filter removed, and the $keep_track and SPT
 tracks.
 
 Pass `origin=` (seconds on the input clock, or `"unix"`) to put epoch

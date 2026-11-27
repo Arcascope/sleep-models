@@ -2,7 +2,9 @@
 
 A bundle whose ``config.json`` holds a ``stage_divisor`` is scored in two steps:
 
-- **Sleep/wake**: the model's own most probable of wake, light, deep and REM.
+- **Sleep/wake**: sleep when the summed light, deep and REM probability is at least
+  the wake probability (``argmax=True`` in ``predict``: the most probable of wake,
+  light, deep and REM).
 - **Light/deep/REM**: on the epochs it calls sleep, its light, deep and REM
   probabilities are divided by the divisor before the argmax.
 
@@ -16,21 +18,37 @@ WAKE, LIGHT, DEEP, REM, GAP = 0, 1, 2, 3, 4
 SLEEP_STAGE_NAMES = ("light", "deep", "rem")
 
 
+def summed_sleep(proba: np.ndarray) -> np.ndarray:
+    """Per-epoch sleep call: P(light) + P(deep) + P(REM) ≥ P(wake), i.e. summed sleep probability ≥ 0.5."""
+    proba = np.asarray(proba)
+    return proba[:, LIGHT : REM + 1].sum(axis=1) >= proba[:, WAKE]
+
+
 def divisor_vector(stage_divisor: dict[str, float]) -> np.ndarray:
     """``(wake, light, deep, REM)`` divisor of a ``config.json`` ``stage_divisor``; wake is 1."""
     return np.array([1.0] + [float(stage_divisor[name]) for name in SLEEP_STAGE_NAMES])
 
 
 def hybrid_calls(
-    wake_proba: np.ndarray, stage_proba: np.ndarray, divisor: np.ndarray | None = None
+    wake_proba: np.ndarray,
+    stage_proba: np.ndarray,
+    divisor: np.ndarray | None = None,
+    *,
+    summed: bool = False,
 ) -> np.ndarray:
     """Per-epoch calls: the wake source's wake and gap calls; its sleep epochs staged by the stage source.
 
     Both probability arrays are (epochs, 5). With ``divisor`` None the stage
-    source's light/deep/REM argmax is used as is.
+    source's light/deep/REM argmax is used as is. The wake source's sleep epochs
+    are those whose most probable class is light, deep or REM; with ``summed``
+    they are those with :func:`summed_sleep`, and every other epoch is wake.
     """
     calls = np.asarray(wake_proba).argmax(axis=1)
-    sleep = (calls >= LIGHT) & (calls <= REM)
+    if summed:
+        sleep = summed_sleep(wake_proba)
+        calls[~sleep] = WAKE
+    else:
+        sleep = (calls >= LIGHT) & (calls <= REM)
     stages = np.asarray(stage_proba)[sleep, LIGHT : REM + 1]
     if divisor is not None:
         stages = stages / np.asarray(divisor)[LIGHT : REM + 1]
