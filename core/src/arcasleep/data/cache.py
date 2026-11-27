@@ -22,6 +22,7 @@ from pisces_lite.cv import SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.bundle import CacheBundle
+from arcasleep.data.excluded import is_excluded
 
 
 CACHE_SUFFIX = "_features.npz"
@@ -67,6 +68,8 @@ def discover_cached_subjects(
 
     A requested dataset with no cached subjects raises: training on a silent
     subset of the configured cohorts is never what the caller wanted.
+
+    Subjects in :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are skipped.
     """
     cache_dir = Path(cache_dir)
     found: Dict[str, List[CachedSubject]] = {name: [] for name in dataset_names}
@@ -77,10 +80,9 @@ def discover_cached_subjects(
         if index == -1:
             continue
         dataset = core[:index]
-        if dataset in found:
-            found[dataset].append(
-                CachedSubject(dataset, core[index + len(SUBJECT_SEPARATOR) :], npz)
-            )
+        subject_id = core[index + len(SUBJECT_SEPARATOR) :]
+        if dataset in found and not is_excluded(subject_id):
+            found[dataset].append(CachedSubject(dataset, subject_id, npz))
 
     missing = [name for name in dataset_names if not found[name]]
     if missing:

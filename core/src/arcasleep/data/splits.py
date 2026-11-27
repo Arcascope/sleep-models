@@ -28,6 +28,7 @@ import numpy as np
 from pisces_lite.model_io import get_features_cache_name
 
 from arcasleep.data.cache import CACHE_SUFFIX, SUBJECT_SEPARATOR, CachedSubject
+from arcasleep.data.excluded import is_excluded
 
 SPLIT_SCHEMA_VERSION = 1
 FINAL_FOLD_NAME = "final"
@@ -212,12 +213,14 @@ def materialise(
 
     ``passthrough`` datasets (an external test set, say) are linked under their
     own names so one directory holds everything a run needs.
+
+    Plan subjects in :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are not linked.
     """
     link_dir = Path(link_dir)
     link_dir.mkdir(parents=True, exist_ok=True)
 
     by_id = {subject.subject_id: subject for subject in cached.get(plan.cohort, [])}
-    missing = [sid for sid in plan.subjects() if sid not in by_id]
+    missing = [sid for sid in plan.subjects() if sid not in by_id and not is_excluded(sid)]
     if missing:
         raise FileNotFoundError(
             f"split plan names {len(missing)} subject(s) absent from the cache: "
@@ -227,6 +230,8 @@ def materialise(
     written: List[Path] = []
     for fold_name in plan.fold_names:
         for sid in plan.folds[fold_name]:
+            if is_excluded(sid):
+                continue
             written.append(_link(by_id[sid].path, link_dir / get_features_cache_name(fold_name, sid)))
     for name in passthrough:
         if not cached.get(name):
