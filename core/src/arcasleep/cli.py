@@ -1047,12 +1047,41 @@ def _tree_train(args: argparse.Namespace) -> int:
 
 
 def _tree_predict(args: argparse.Namespace) -> int:
-    from arcasleep_tree import loaders, tree
+    from arcasleep_tree import tree
 
     model = tree.load(args.model)
-    table = loaders.read_tables(args.tables)
+    if args.recording:
+        return _tree_predict_recordings(model, args)
+    from arcasleep_tree import loaders
+
+    table = loaders.read_tables(args.inputs)
     out = table[["cohort", "subject", "epoch"]].assign(stage=tree.predict(model, table))
     out.to_csv(args.output, index=False)
+    return 0
+
+
+def _tree_predict_recordings(model: dict, args: argparse.Namespace) -> int:
+    import numpy as np
+
+    from arcasleep.predict import read_accelerometer
+    from arcasleep_tree import recording
+
+    if args.heart_rate and len(args.heart_rate) != len(args.inputs):
+        raise SystemExit("give one --heart-rate file per recording, in the same order")
+    out = Path(args.output)
+    many = len(args.inputs) > 1
+    if many:
+        out.mkdir(parents=True, exist_ok=True)
+    for i, path in enumerate(args.inputs):
+        accel = read_accelerometer(path, args.time_unit)
+        hr = None
+        if args.heart_rate:
+            hr = np.loadtxt(args.heart_rate[i], delimiter=",", skiprows=1, usecols=(0, 1), ndmin=2)
+        result = recording.predict(model, accel, hr)
+        result["stage"] = np.asarray(recording.STAGES)[result.stage.to_numpy()]
+        dst = out / f"{Path(path).stem}_tree.csv" if many else out
+        result.to_csv(dst, index=False)
+        print(dst)
     return 0
 
 
@@ -1126,10 +1155,30 @@ def _add_tree_commands(commands) -> None:
     train.add_argument("--test-cohort", nargs="*", default=[], help="cohorts left out and scored")
     train.set_defaults(handler=_tree_train)
 
-    predict = sub.add_parser("predict", help="stage every epoch of feature tables")
-    predict.add_argument("model")
-    predict.add_argument("tables", nargs="+")
-    predict.add_argument("-o", "--output", required=True, help="CSV: cohort, subject, epoch, stage")
+    predict = sub.add_parser(
+        "predict", help="stage every epoch of raw recordings (--recording) or of feature tables"
+    )
+    predict.add_argument("model", help="model .json or .safetensors")
+    predict.add_argument("inputs", nargs="+", help="recordings with --recording, else feature tables")
+    predict.add_argument(
+        "--recording",
+        action="store_true",
+        help="inputs are raw wrist accelerometer files: t, x, y, z (acceleration in g)",
+    )
+    predict.add_argument(
+        "--heart-rate",
+        nargs="+",
+        help="with --recording: one CSV per recording of t, bpm on the accelerometer's clock",
+    )
+    predict.add_argument(
+        "--time-unit", choices=["s", "ms", "us"], help="unit of t (default: detected)"
+    )
+    predict.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        help="CSV (a directory for several recordings): per epoch, probabilities and stage",
+    )
     predict.set_defaults(handler=_tree_predict)
 
     publish = sub.add_parser("publish", help="write the model as arcasleep_tree.safetensors")

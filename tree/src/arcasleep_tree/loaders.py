@@ -557,15 +557,29 @@ def align_uncropped(
     return accel, labels, float(start)
 
 
-def recording_table(
-    data_set: DataSetObject, subject: str, inputs: dict
-) -> tuple[pd.DataFrame, np.ndarray]:
-    """The feature columns of one recording and its raw labels per epoch."""
+@dataclass
+class Stream:
+    """One recording on the 25 Hz grid: ``acc25`` (g) and ``valid25``, heart rate (``hr_t`` in
+    seconds from the start of epoch 0, ``hr_bpm``), raw labels per epoch, the time of epoch 0
+    and of the first PSG epoch on the PSG clock."""
+
+    acc25: np.ndarray
+    valid25: np.ndarray
+    hr_t: np.ndarray
+    hr_bpm: np.ndarray
+    labels: np.ndarray
+    t0: float
+    psg_origin: float
+
+
+def recording_stream(data_set: DataSetObject, subject: str, inputs: dict) -> Stream:
+    """The 25 Hz stream, heart rate and labels that :func:`recording_table` computes features of."""
     accel = data_set.get_feature_data(ACCELEROMETER, subject)
     psg = data_set.get_feature_data(PSG, subject)
     hr = data_set.get_feature_data(HEARTRATE, subject)
     if accel is None or psg is None:
         raise ValueError("no accelerometer or PSG")
+    psg_origin = float(psg[TIMESTAMP_COL].min())
     cleaned = pd.DataFrame(clean_accelerometer_rows(accel.to_numpy()), columns=accel.columns)
     if inputs["uncropped"]:
         cleaned, labels, t0 = align_uncropped(cleaned, psg)
@@ -576,10 +590,24 @@ def recording_table(
     rows = cleaned.to_numpy(dtype=np.float64)
     acc25, valid25 = features.to_25hz(rows[:, 0], rows[:, 1:4], t0, labels.size)
     hr = hr.dropna()
-    table = features.compute_features(
-        acc25, valid25, hr[TIMESTAMP_COL].to_numpy(float) - t0, hr[HR_COL].to_numpy(float), inputs
+    return Stream(
+        acc25,
+        valid25,
+        hr[TIMESTAMP_COL].to_numpy(float) - t0,
+        hr[HR_COL].to_numpy(float),
+        labels,
+        t0,
+        psg_origin,
     )
-    return table, labels
+
+
+def recording_table(
+    data_set: DataSetObject, subject: str, inputs: dict
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """The feature columns of one recording and its raw labels per epoch."""
+    s = recording_stream(data_set, subject, inputs)
+    table = features.compute_features(s.acc25, s.valid25, s.hr_t, s.hr_bpm, inputs)
+    return table, s.labels
 
 
 _STATE: dict = {}
