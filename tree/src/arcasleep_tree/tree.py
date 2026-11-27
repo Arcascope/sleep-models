@@ -72,18 +72,22 @@ DEFINITION = {
 # ---------------------------------------------------------------------------------- training
 
 
-def trainable(table: pd.DataFrame, inputs: dict = features.INPUTS) -> np.ndarray:
+def trainable(
+    table: pd.DataFrame, inputs: dict = features.INPUTS, complete: bool = True
+) -> np.ndarray:
     """Rows a model with ``inputs`` is trained on.
 
-    These are scored epochs with complete windows, in nights with at least ``MIN_NIGHT_EPOCHS``
-    of them.
+    These are scored epochs, in nights with at least ``MIN_NIGHT_EPOCHS`` of them. With
+    ``complete`` (the default) only epochs whose back and forward windows lie inside the
+    recording count; with ``complete=False`` every scored epoch counts, and the window features
+    that leave the recording are missing.
     """
-    back = features.reach(inputs, "back_min") * features.EPOCHS_PER_MIN
-    epoch = table.epoch.to_numpy()
-    n_rows = table.groupby(["cohort", "subject"]).epoch.transform("size").to_numpy()
-    keep = (
-        (table.y4.to_numpy() >= 0) & (epoch >= back) & (epoch + features.delay(inputs) <= n_rows - 1)
-    )
+    keep = table.y4.to_numpy() >= 0
+    if complete:
+        back = features.reach(inputs, "back_min") * features.EPOCHS_PER_MIN
+        epoch = table.epoch.to_numpy()
+        n_rows = table.groupby(["cohort", "subject"]).epoch.transform("size").to_numpy()
+        keep &= (epoch >= back) & (epoch + features.delay(inputs) <= n_rows - 1)
     per_night = (
         pd.Series(keep)
         .groupby([table.cohort.to_numpy(), table.subject.to_numpy()])
@@ -97,17 +101,27 @@ def persons(table: pd.DataFrame) -> np.ndarray:
     return (table.cohort.astype(str) + "/" + table.person.astype(str)).to_numpy()
 
 
-def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = None) -> dict:
+def fit(
+    tree: dict,
+    table: pd.DataFrame,
+    test: np.ndarray,
+    rounds: int | None = None,
+    weight: np.ndarray | None = None,
+    complete: bool = True,
+) -> dict:
     """Train on the :func:`trainable` rows of ``table`` where ``test`` is False.
 
     With ``rounds`` None, training runs up to ``max_rounds`` rounds and stops early on
     ``validation_share`` of the training persons; the model keeps the best iteration.
-    Otherwise it trains exactly ``rounds`` rounds on all training rows.
+    Otherwise it trains exactly ``rounds`` rounds on all training rows. ``weight`` gives each row
+    of ``table`` a training weight (default 1); ``complete`` is passed to :func:`trainable`.
     """
     names = features.feature_names(tree["inputs"])
-    train = table[trainable(table, tree["inputs"]) & ~np.asarray(test, bool)]
+    keep = trainable(table, tree["inputs"], complete) & ~np.asarray(test, bool)
+    train = table[keep]
     x = train[names].to_numpy(np.float32)
     y = train.y4.to_numpy()
+    w = np.ones(len(train)) if weight is None else np.asarray(weight, float)[keep]
     params = tree["params"]
     data_params = {"max_bin": params["max_bin"]}
     if rounds is None:
@@ -116,8 +130,10 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
         rng = np.random.default_rng(params["seed"])
         n_val = max(1, int(round(tree["validation_share"] * pool.size)))
         is_val = np.isin(who, rng.choice(pool, size=n_val, replace=False))
-        dtrain = lgb.Dataset(x[~is_val], y[~is_val], feature_name=names, params=data_params)
-        dval = lgb.Dataset(x[is_val], y[is_val], reference=dtrain)
+        dtrain = lgb.Dataset(
+            x[~is_val], y[~is_val], weight=w[~is_val], feature_name=names, params=data_params
+        )
+        dval = lgb.Dataset(x[is_val], y[is_val], weight=w[is_val], reference=dtrain)
         booster = lgb.train(
             params,
             dtrain,
@@ -128,7 +144,7 @@ def fit(tree: dict, table: pd.DataFrame, test: np.ndarray, rounds: int | None = 
         rounds = booster.best_iteration
     else:
         booster = lgb.train(
-            params, lgb.Dataset(x, y, feature_name=names, params=data_params), rounds
+            params, lgb.Dataset(x, y, weight=w, feature_name=names, params=data_params), rounds
         )
     model = from_booster(booster, tree["inputs"], rounds)
     model["training"] = {
@@ -298,9 +314,24 @@ def scores(model: dict, table: pd.DataFrame) -> np.ndarray:
     return out
 
 
+def probabilities(model: dict, table: pd.DataFrame) -> np.ndarray:
+    """``(n, 4)`` stage probabilities: the softmax of the model's raw scores."""
+    s = scores(model, table) * model["leaf_scale"]
+    s = s - s.max(axis=1, keepdims=True)
+    e = np.exp(s)
+    return e / e.sum(axis=1, keepdims=True)
+
+
 def predict(model: dict, table: pd.DataFrame) -> np.ndarray:
-    """Stage of each row: 0 wake, 1 light, 2 deep, 3 REM."""
-    return scores(model, table).argmax(axis=1)
+    """Stage of each row: 0 wake, 1 light, 2 deep, 3 REM.
+
+    A model with ``stage_offsets`` (four values added to the log probabilities, wake 0) calls the
+    stage with the largest offset log probability; otherwise the largest raw score.
+    """
+    if model.get("stage_offsets") is None:
+        return scores(model, table).argmax(axis=1)
+    offsets = np.asarray(model["stage_offsets"], float)
+    return (np.log(probabilities(model, table) + 1e-12) + offsets).argmax(axis=1)
 
 
 # ---------------------------------------------------------------------------------- files

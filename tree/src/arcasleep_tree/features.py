@@ -210,6 +210,32 @@ def scales(inputs: dict = INPUTS) -> dict[str, int]:
     return out
 
 
+def blank_incomplete(table: pd.DataFrame, inputs: dict = INPUTS) -> pd.DataFrame:
+    """``table`` with every window feature missing where its window leaves the recording.
+
+    A recording that starts or ends without wake data around it (for example at lights out) has
+    epochs whose back or forward windows run past its edges; these windows are set missing rather
+    than computed from the part that exists. ``hr_base``, ``hr_rel`` and ``tsb_min`` need the full
+    back reach and ``tnb_min`` the full forward reach. Rows are grouped into recordings by
+    ``cohort`` and ``subject`` when the table has them.
+    """
+    out = table.copy()
+    k = out.epoch.to_numpy()
+    keys = [c for c in ("cohort", "subject") if c in out.columns]
+    n = out.groupby(keys).epoch.transform("size").to_numpy() if keys else np.full(len(out), len(out))
+    names = set(feature_names(inputs))
+    for w in windows(inputs):
+        bad = (k - w["epochs"] + 1 < 0) if w["dir"] == "b" else (k + w["epochs"] > n - 1)
+        out.loc[bad, w["name"]] = np.nan
+    back = reach(inputs, "back_min") * EPOCHS_PER_MIN
+    for name in ("hr_base", "hr_rel", "tsb_min"):
+        if name in names:
+            out.loc[k < back, name] = np.nan
+    if "tnb_min" in names:
+        out.loc[k + delay(inputs) > n - 1, "tnb_min"] = np.nan
+    return out
+
+
 # ---------------------------------------------------------------------------------- the stream
 
 
@@ -427,14 +453,17 @@ def compute_features(
     hr_t: np.ndarray,
     hr_bpm: np.ndarray,
     inputs: dict = INPUTS,
+    signals: dict[str, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     """The feature table of one recording: ``epoch`` and the columns of ``inputs``, in order.
 
     ``acc25`` is ``(n_epochs * 750, 3)`` in g on the 25 Hz grid, ``valid25`` marks the samples
     that are not inside a gap, and ``hr_t`` (seconds from the start of epoch 0) and ``hr_bpm``
-    are the heart-rate samples, which may be empty.
+    are the heart-rate samples, which may be empty. ``signals`` replaces the per-epoch
+    accelerometer signals of :func:`epoch_signals` (it must hold ``present`` and ``jerk``); ``daz``
+    exists only when it holds ``angle``.
     """
-    sig = epoch_signals(acc25, valid25)
+    sig = dict(signals) if signals is not None else epoch_signals(acc25, valid25)
     present = sig.pop("present")
     n_epochs = present.size
     hr, hr_std, hr_n = epoch_heart_rate(hr_t, hr_bpm, n_epochs)
@@ -449,10 +478,11 @@ def compute_features(
         np.nan_to_num(act, nan=0.0), reach(inputs, "tsb_cap_min"), delay(inputs)
     )
     series = {
-        **sig, "act": act, "daz": np.abs(np.diff(sig["angle"], prepend=sig["angle"][:1])),
-        "hr": hr, "hr_rel": hr - base,
+        **sig, "act": act, "hr": hr, "hr_rel": hr - base,
         "hr_valid": np.where(present, (hr_n > 0).astype(float), np.nan),
     }  # fmt: skip
+    if "angle" in sig:
+        series["daz"] = np.abs(np.diff(sig["angle"], prepend=sig["angle"][:1]))
     at_time = {
         **series, "hr_std": hr_std, "hr_n": hr_n, "hr_missing": (hr_n == 0).astype(float),
         "hr_base": base, "tsb_min": since, "tnb_min": until,
