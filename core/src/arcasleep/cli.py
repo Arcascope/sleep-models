@@ -1004,12 +1004,166 @@ def _add_family_commands(commands, family: str) -> None:
 
 
 
+def _tree_process(args: argparse.Namespace) -> int:
+    from arcasleep_tree import loaders
+
+    for data_dir in args.data_dir:
+        manifest = loaders.build(
+            data_dir, args.output_dir, workers=args.workers, overwrite=args.overwrite
+        )
+        print(
+            f"{manifest['dataset']}: {manifest['recordings_built']} recordings, "
+            f"{manifest['epochs']} epochs"
+        )
+    return 0
+
+
+def _tree_train(args: argparse.Namespace) -> int:
+    import json
+
+    from sklearn.metrics import cohen_kappa_score
+
+    from arcasleep_tree import loaders, tree
+
+    definition = (
+        json.loads(Path(args.definition).read_text()) if args.definition else tree.DEFINITION
+    )
+    table = loaders.read_tables(args.tables)
+    held = table.cohort.isin(args.test_cohort).to_numpy()
+    model, oof = tree.train(definition, table[~held].reset_index(drop=True))
+    tree.save(model, args.output)
+    scored = tree.trainable(table[~held].reset_index(drop=True), definition["inputs"]) & (oof >= 0)
+    y = table[~held].y4.to_numpy()
+    print(
+        f"{model['rounds']} rounds; "
+        f"out-of-fold kappa {cohen_kappa_score(y[scored], oof[scored]):.3f}"
+    )
+    if held.any():
+        test = table[held].reset_index(drop=True)
+        keep = tree.trainable(test, definition["inputs"])
+        stages = tree.predict(model, test[keep])
+        print(f"held-out {args.test_cohort}: kappa {cohen_kappa_score(test.y4[keep], stages):.3f}")
+    return 0
+
+
+def _tree_predict(args: argparse.Namespace) -> int:
+    from arcasleep_tree import loaders, tree
+
+    model = tree.load(args.model)
+    table = loaders.read_tables(args.tables)
+    out = table[["cohort", "subject", "epoch"]].assign(stage=tree.predict(model, table))
+    out.to_csv(args.output, index=False)
+    return 0
+
+
+def _tree_publish(args: argparse.Namespace) -> int:
+    from arcasleep_tree import tree
+
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    tree.save(tree.load(args.model), out / "arcasleep_tree.safetensors")
+    return 0
+
+
+def _tree_monkey_c(args: argparse.Namespace) -> int:
+    from arcasleep_tree import tree
+
+    tree.to_monkey_c(tree.load(args.model), args.app_dir)
+    return 0
+
+
+def _stage(value: str) -> int:
+    names = ["wake", "light", "deep", "rem"]
+    if value.lower() in names:
+        return names.index(value.lower())
+    if value in {"0", "1", "2", "3"}:
+        return int(value)
+    raise argparse.ArgumentTypeError(f"{value!r}: use 0-3 or one of {', '.join(names)}")
+
+
+def _tree_plot(args: argparse.Namespace) -> int:
+    from arcasleep_tree import tree, tree_plot
+
+    model = tree.load(args.model)
+    if "real_edges" not in model:
+        raise SystemExit(f"{args.model} has no real_edges; plot the .json model")
+    rounds = range(model["rounds"]) if args.round is None else [args.round]
+    if not set(rounds) <= set(range(model["rounds"])):
+        raise SystemExit(f"--round {args.round}: the model has rounds 0-{model['rounds'] - 1}")
+    classes = range(len(tree_plot.CLS)) if args.stage is None else [args.stage]
+    out = Path(args.output_dir) if args.output_dir else Path(args.model).parent / "tree_pictures"
+    for path in tree_plot.plot(model, rounds, classes, out):
+        print(path)
+    return 0
+
+
+def _add_tree_commands(commands) -> None:
+    group = commands.add_parser(
+        "tree", help="build tables for, train, run and export the watch trees"
+    )
+    sub = group.add_subparsers(dest="family_command", required=True)
+
+    process = sub.add_parser("process", help="write each dataset's feature table as parquet")
+    process.add_argument(
+        "-dd", "--data-dir", nargs="+", required=True, help="raw dataset directories"
+    )
+    process.add_argument("-o", "--output-dir", required=True)
+    process.add_argument("--workers", type=int, default=8)
+    process.add_argument("--overwrite", action="store_true")
+    process.set_defaults(handler=_tree_process)
+
+    train = sub.add_parser(
+        "train", help="train a model (5 person-wise folds, then the final model)"
+    )
+    train.add_argument("tables", nargs="+", help="feature parquet files or directories of them")
+    train.add_argument(
+        "-o",
+        "--output",
+        default="arcasleep_tree.json",
+        help="model file, .json or .safetensors (default: arcasleep_tree.json)",
+    )
+    train.add_argument("--definition", help="JSON file replacing the default tree definition")
+    train.add_argument("--test-cohort", nargs="*", default=[], help="cohorts left out and scored")
+    train.set_defaults(handler=_tree_train)
+
+    predict = sub.add_parser("predict", help="stage every epoch of feature tables")
+    predict.add_argument("model")
+    predict.add_argument("tables", nargs="+")
+    predict.add_argument("-o", "--output", required=True, help="CSV: cohort, subject, epoch, stage")
+    predict.set_defaults(handler=_tree_predict)
+
+    publish = sub.add_parser("publish", help="write the model as arcasleep_tree.safetensors")
+    publish.add_argument("model")
+    publish.add_argument("-o", "--output-dir", required=True)
+    publish.set_defaults(handler=_tree_publish)
+
+    monkey_c = sub.add_parser("monkey-c", help="write the model into a Garmin app directory")
+    monkey_c.add_argument("model")
+    monkey_c.add_argument("-o", "--app-dir", required=True, help="for example .../stagerlive")
+    monkey_c.set_defaults(handler=_tree_monkey_c)
+
+    plot = sub.add_parser("plot", help="draw trees of a .json model as SVG, one file per tree")
+    plot.add_argument("model", help="model .json file")
+    plot.add_argument("--round", type=int, help="boosting round, from 0 (default: every round)")
+    plot.add_argument(
+        "--class",
+        dest="stage",
+        type=_stage,
+        help="stage: 0 wake, 1 light, 2 deep, 3 REM, or the name (default: all four)",
+    )
+    plot.add_argument(
+        "-o", "--output-dir", help="default: tree_pictures beside the model file"
+    )
+    plot.set_defaults(handler=_tree_plot)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="arcasleep")
     commands = parser.add_subparsers(dest="command", required=True)
 
     for family in family_names():
         _add_family_commands(commands, family)
+    _add_tree_commands(commands)
 
     process = commands.add_parser(
         "process", help="build the feature cache one dataset directory at a time"
