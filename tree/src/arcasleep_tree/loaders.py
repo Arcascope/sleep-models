@@ -413,6 +413,7 @@ def wearanize(root: Path) -> DataSetObject:
     )
 
 
+WEAVER_DATASET = "weaver_revised"
 WEAVER_DEVICES = ("apple", "fitbit", "actigraph", "garmin", "axivity", "pixel")
 WEAVER_PSG_FIELDS = ("time", "epoch", "bp", "stg")
 
@@ -465,7 +466,7 @@ def weaver(root: Path) -> DataSetObject:
         child, night = path.stem.rsplit("_n", 1)
         for device in WEAVER_DEVICES:
             id_ = f"{child}_{device}_n{night}"
-            if is_excluded(id_):
+            if is_excluded(WEAVER_DATASET, id_):
                 continue
             if all(f"{device}{c}" in columns for c in ("time", "x", "y", "z")):
                 nights[id_] = (path, device, columns)
@@ -484,7 +485,7 @@ def weaver(root: Path) -> DataSetObject:
         return _weaver_read(path, columns, keys, HR_COLUMNS)
 
     return data_set(
-        "weaver_revised",
+        WEAVER_DATASET,
         root,
         nights,
         accelerometer=accelerometer,

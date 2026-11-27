@@ -220,7 +220,7 @@ def materialise(
     link_dir.mkdir(parents=True, exist_ok=True)
 
     by_id = {subject.subject_id: subject for subject in cached.get(plan.cohort, [])}
-    missing = [sid for sid in plan.subjects() if sid not in by_id and not is_excluded(sid)]
+    missing = [sid for sid in plan.subjects() if sid not in by_id and not is_excluded(plan.cohort, sid)]
     if missing:
         raise FileNotFoundError(
             f"split plan names {len(missing)} subject(s) absent from the cache: "
@@ -230,7 +230,7 @@ def materialise(
     written: List[Path] = []
     for fold_name in plan.fold_names:
         for sid in plan.folds[fold_name]:
-            if is_excluded(sid):
+            if is_excluded(plan.cohort, sid):
                 continue
             written.append(_link(by_id[sid].path, link_dir / get_features_cache_name(fold_name, sid)))
     for name in passthrough:

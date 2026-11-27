@@ -55,6 +55,13 @@ def resolve_feature_cache_dir(cache_root: Path | str, cache_prefix: str) -> Path
     return Path(cache_root) / cache_prefix
 
 
+def _source_ids(npz: Path) -> tuple[str, str]:
+    """The dataset and subject ID of the cache file ``npz`` is, or links to."""
+    core = npz.resolve().name[: -len(CACHE_SUFFIX)]
+    dataset, _, subject_id = core.partition(SUBJECT_SEPARATOR)
+    return dataset, subject_id
+
+
 def discover_cached_subjects(
     dataset_names: Sequence[str],
     cache_dir: Path | str,
@@ -69,7 +76,9 @@ def discover_cached_subjects(
     A requested dataset with no cached subjects raises: training on a silent
     subset of the configured cohorts is never what the caller wanted.
 
-    Subjects in :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are skipped.
+    Subjects in :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are skipped. A file that is a
+    link (a fold or a renamed dataset) is checked under the dataset and subject ID of the file it
+    points to.
     """
     cache_dir = Path(cache_dir)
     found: Dict[str, List[CachedSubject]] = {name: [] for name in dataset_names}
@@ -81,7 +90,7 @@ def discover_cached_subjects(
             continue
         dataset = core[:index]
         subject_id = core[index + len(SUBJECT_SEPARATOR) :]
-        if dataset in found and not is_excluded(subject_id):
+        if dataset in found and not is_excluded(*_source_ids(npz)):
             found[dataset].append(CachedSubject(dataset, subject_id, npz))
 
     missing = [name for name in dataset_names if not found[name]]
