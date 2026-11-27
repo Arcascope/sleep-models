@@ -26,9 +26,22 @@ class BiDozeFamily(ModelFamily):
         # The model is fitted at a fixed context and always scored at it.
         return config.training.x_length, config.training.y_length
 
+    def scoring_window_step(self, config) -> int | None:
+        from arcasleep.training.driver import WINDOW_STEP_DIVISOR
+
+        training = config.training
+        return max(1, training.window_epochs // WINDOW_STEP_DIVISOR) if training.windowed else None
+
     def describe_training(self, config) -> str:
         training = config.training
         if training.recipe == "balanced":
+            windows = (
+                f"\nwindowed: {training.windows_per_recording} x {training.window_epochs}-epoch "
+                f"windows per recording, mix={training.window_mix}, "
+                f"weak label rules={training.weak_label_rules}"
+                if training.windowed
+                else ""
+            )
             return (
                 f"recipe=balanced x_length={training.x_length} y_length={training.y_length} "
                 f"batch_size={training.batch_size} lr={training.lr} "
@@ -36,7 +49,7 @@ class BiDozeFamily(ModelFamily):
                 f"max epochs={training.epochs} lr_drop_patience={training.lr_drop_patience} "
                 f"early_stop_patience={training.early_stop_patience} "
                 f"({training.patience_unit}) eval_smoothing_steps={training.eval_smoothing_steps} "
-                f"eval_fraction={training.eval_fraction}"
+                f"eval_fraction={training.eval_fraction}{windows}"
             )
         return (
             f"x_length={training.x_length} y_length={training.y_length} "

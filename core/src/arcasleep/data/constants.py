@@ -8,12 +8,16 @@ from __future__ import annotations
 
 # Raw 5C PSG labels: 0=Wake, 1..4=N1..N4, 5=REM. Anything negative is
 # PSG_MASK (-1, unscored) or PAD_CLASS_LABEL (-2), so a scored epoch is y >= 0.
+# In an uncropped cache an epoch outside the PSG span is OUTSIDE_PSG_LABEL (-3).
 # A recording with less staged PSG than this is skipped during preparation.
 MIN_SCORED_MINUTES = 120.0
 
 #: The label of an epoch with no accelerometer data, including padding. Models
 #: with a gap head predict it as its own class.
 GAP_LABEL = -2
+#: The label of an epoch outside the PSG span in an uncropped cache: the wrist
+#: was recorded but no staging exists, so a sampler may give it a weak label.
+OUTSIDE_PSG_LABEL = -3
 #: The value pisces-lite writes into every bin and channel of a frame with no
 #: accelerometer data.
 SPECTROGRAM_PADDING_VALUE = -1.0
