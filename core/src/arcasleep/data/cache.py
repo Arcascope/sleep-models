@@ -22,6 +22,7 @@ from pisces_lite.cv import SubjectRef
 from pisces_lite.model_io import ModelIOBundle
 
 from arcasleep.data.bundle import CacheBundle
+from arcasleep.data.excluded import is_excluded
 
 
 CACHE_SUFFIX = "_features.npz"
@@ -54,6 +55,13 @@ def resolve_feature_cache_dir(cache_root: Path | str, cache_prefix: str) -> Path
     return Path(cache_root) / cache_prefix
 
 
+def _source_ids(npz: Path) -> tuple[str, str]:
+    """The dataset and subject ID of the cache file ``npz`` is, or links to."""
+    core = npz.resolve().name[: -len(CACHE_SUFFIX)]
+    dataset, _, subject_id = core.partition(SUBJECT_SEPARATOR)
+    return dataset, subject_id
+
+
 def discover_cached_subjects(
     dataset_names: Sequence[str],
     cache_dir: Path | str,
@@ -67,6 +75,10 @@ def discover_cached_subjects(
 
     A requested dataset with no cached subjects raises: training on a silent
     subset of the configured cohorts is never what the caller wanted.
+
+    Subjects in :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are skipped. A file that is a
+    link (a fold or a renamed dataset) is checked under the dataset and subject ID of the file it
+    points to.
     """
     cache_dir = Path(cache_dir)
     found: Dict[str, List[CachedSubject]] = {name: [] for name in dataset_names}
@@ -77,10 +89,9 @@ def discover_cached_subjects(
         if index == -1:
             continue
         dataset = core[:index]
-        if dataset in found:
-            found[dataset].append(
-                CachedSubject(dataset, core[index + len(SUBJECT_SEPARATOR) :], npz)
-            )
+        subject_id = core[index + len(SUBJECT_SEPARATOR) :]
+        if dataset in found and not is_excluded(*_source_ids(npz)):
+            found[dataset].append(CachedSubject(dataset, subject_id, npz))
 
     missing = [name for name in dataset_names if not found[name]]
     if missing:

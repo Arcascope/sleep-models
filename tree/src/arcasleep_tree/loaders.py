@@ -46,6 +46,7 @@ from pisces_lite.datasets.constants import (
 from pisces_lite.datasets.data_set_object import DataSetObject
 
 from arcasleep.data.constants import MIN_SCORED_MINUTES
+from arcasleep.data.excluded import is_excluded
 from arcasleep.data.pseudonyms import cache_ids, load_pseudonym_key, pseudonym
 from arcasleep.processing import clean_accelerometer_rows
 from arcasleep_tree import features
@@ -412,6 +413,7 @@ def wearanize(root: Path) -> DataSetObject:
     )
 
 
+WEAVER_DATASET = "weaver_revised"
 WEAVER_DEVICES = ("apple", "fitbit", "actigraph", "garmin", "axivity", "pixel")
 WEAVER_PSG_FIELDS = ("time", "epoch", "bp", "stg")
 
@@ -453,7 +455,8 @@ def weaver(root: Path) -> DataSetObject:
     """Weaver (revised): one CSV per child's night with every wrist device and the PSG on one clock.
 
     Each device's recording is its own id, ``<child>_<device>_n<night>``. A device without a
-    heart-rate column has no heart rate.
+    heart-rate column has no heart rate. Recordings in
+    :data:`arcasleep.data.excluded.EXCLUDED_RECORDINGS` are left out.
     """
     nights: dict[str, tuple[Path, str, dict[str, str]]] = {}
     for path in sorted((root / "raw").glob("*.csv")):
@@ -462,8 +465,11 @@ def weaver(root: Path) -> DataSetObject:
             continue
         child, night = path.stem.rsplit("_n", 1)
         for device in WEAVER_DEVICES:
+            id_ = f"{child}_{device}_n{night}"
+            if is_excluded(WEAVER_DATASET, id_):
+                continue
             if all(f"{device}{c}" in columns for c in ("time", "x", "y", "z")):
-                nights[f"{child}_{device}_n{night}"] = (path, device, columns)
+                nights[id_] = (path, device, columns)
 
     def accelerometer(id_: str) -> pd.DataFrame:
         path, device, columns = nights[id_]
@@ -479,7 +485,7 @@ def weaver(root: Path) -> DataSetObject:
         return _weaver_read(path, columns, keys, HR_COLUMNS)
 
     return data_set(
-        "weaver_revised",
+        WEAVER_DATASET,
         root,
         nights,
         accelerometer=accelerometer,
