@@ -26,13 +26,16 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from scipy.signal import sosfilt_zi
 
 from arcasleep_tree import features
+
+if TYPE_CHECKING:
+    import lightgbm
 
 DEPTH = 6
 SPLITS = 2**DEPTH - 1
@@ -116,6 +119,8 @@ def fit(
     Otherwise it trains exactly ``rounds`` rounds on all training rows. ``weight`` gives each row
     of ``table`` a training weight (default 1); ``complete`` is passed to :func:`trainable`.
     """
+    import lightgbm as lgb
+
     names = features.feature_names(tree["inputs"])
     keep = trainable(table, tree["inputs"], complete) & ~np.asarray(test, bool)
     train = table[keep]
@@ -205,7 +210,7 @@ def _nan_goes_left(node: dict) -> bool:
     return 0.0 <= float(node["threshold"])  # missing_type None: NaN is read as 0.0
 
 
-def from_booster(booster: lgb.Booster, inputs: dict, rounds: int) -> dict:
+def from_booster(booster: lightgbm.Booster, inputs: dict, rounds: int) -> dict:
     """The model of the first ``rounds`` rounds of ``booster``."""
     names = features.feature_names(inputs)
     scale_of = features.scales(inputs)

@@ -146,7 +146,7 @@ def test_a_flat_bundle_scores_the_mean_of_its_members_and_decodes_with_the_divis
     mean = five_way / five_way.sum(axis=1, keepdims=True)
     divisor = divisor_vector(DIVISOR)
     expected = adult_probabilities(mean, divisor)
-    calls = hybrid_calls(mean, mean, divisor)
+    calls = hybrid_calls(mean, mean, divisor, summed=True)
 
     np.testing.assert_allclose(result.probabilities, expected, rtol=0, atol=1e-4)
     # An epoch whose two best divided stages are this close can fall either way between GPU and CPU rounding.
@@ -156,7 +156,7 @@ def test_a_flat_bundle_scores_the_mean_of_its_members_and_decodes_with_the_divis
     assert (result.raw_labels[clear & ~result.is_gap] == names[clear & ~result.is_gap]).all()
 
 
-def test_a_bundle_without_a_divisor_labels_epochs_by_the_argmax(tmp_path: Path) -> None:
+def test_a_bundle_without_a_divisor_calls_sleep_by_the_summed_probability_and_stages_by_the_argmax(tmp_path: Path) -> None:
     pytest.importorskip("senpy")
     pytest.importorskip("safetensors")
     from arcasleep.predict import Predictor
@@ -166,7 +166,10 @@ def test_a_bundle_without_a_divisor_labels_epochs_by_the_argmax(tmp_path: Path) 
     )
 
     keep = ~result.is_gap
-    assert (result.raw_labels[keep] == np.asarray(result.stage_names, dtype=object)[result.stages][keep]).all()
+    p = result.probabilities
+    asleep = p[:, LIGHT : REM + 1].sum(axis=1) >= p[:, WAKE]
+    calls = np.where(asleep, LIGHT + p[:, LIGHT : REM + 1].argmax(axis=1), WAKE)
+    assert (result.raw_labels[keep] == np.asarray(result.stage_names, dtype=object)[calls][keep]).all()
 
 
 def test_stacked_seeds_give_the_mean_of_their_probabilities(tmp_path: Path) -> None:

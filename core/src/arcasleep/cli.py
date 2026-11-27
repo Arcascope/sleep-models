@@ -604,6 +604,7 @@ def _predict(args: argparse.Namespace) -> int:
             ggir_error_fails=args.ggir_error_fails,
             hypnogram=args.hypnogram,
             time_unit=args.time,
+            argmax=args.argmax,
         )
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
@@ -984,10 +985,17 @@ def _add_family_commands(commands, family: str) -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="demote quiet wakefulness outside the main sleep window to wake "
-             "and flag sleep outside it as naps, GGIR-style; sleep inside the "
+             "and flag sleep outside it as naps, GGIR-style; outside the window "
+             "model sleep is kept where the bundle's sleep/wake tree calls sleep "
+             "(GGIR's SIB test for a bundle without one); sleep inside the "
              "window is never flipped, and a recording <= 9 h is all main sleep "
              "window (default: on; use --no-ggir-sleep-filter for the raw "
              "model stage)",
+    )
+    predict.add_argument(
+        "--argmax",
+        action="store_true",
+        help="call the most probable stage per epoch, restoring the calls of releases before 0.3.0",
     )
     predict.add_argument(
         "--ggir-error-fails",

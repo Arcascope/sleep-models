@@ -1283,6 +1283,8 @@ def build_release_bundle(
     members: Sequence[Mapping[str, Any]] | None = None,
     stage_divisor: Mapping[str, float] | None = None,
     extra_provenance: Mapping[str, Any] | None = None,
+    window_step: int | None = None,
+    sleep_tree: Path | str | None = None,
     overwrite: bool = False,
 ) -> ReleaseBundle:
     """Build the release bundle from ``training_dir`` into ``output_dir``.
@@ -1301,7 +1303,10 @@ def build_release_bundle(
     ``member0/``, ``member1/``, and so on; ``config.json`` gets ``"members": N``, and
     ``provenance.json`` a ``members`` list of each one's seed, epoch and checkpoint
     hash. ``stage_divisor`` (light, deep and REM, by name) goes in ``config.json``,
-    and ``extra_provenance`` is added to ``provenance.json``.
+    and ``extra_provenance`` is added to ``provenance.json``. ``window_step`` (epochs)
+    goes in ``config.json`` as the overlapping-window step ``predict`` scores the
+    bundle with. ``sleep_tree`` is a tree model file copied in as the sleep/wake tree
+    of the sleep filter (:data:`arcasleep.predict.SLEEP_TREE_FILE`).
 
     ``info`` is a release-info TOML (:class:`ReleaseInfo`) describing the
     variant: its repo, audience, protocol, cohort descriptions and authored
@@ -1372,6 +1377,15 @@ def build_release_bundle(
         bundle_config["members"] = len(models)
     if stage_divisor is not None:
         bundle_config["stage_divisor"] = {name: float(value) for name, value in stage_divisor.items()}
+    if window_step is not None:
+        bundle_config["window_step"] = int(window_step)
+    extra_files: list[str] = []
+    if sleep_tree is not None:
+        from arcasleep.predict import SLEEP_TREE_FILE
+        from arcasleep_tree import tree as sleep_tree_model
+
+        sleep_tree_model.save(sleep_tree_model.load(sleep_tree), output_dir / SLEEP_TREE_FILE)
+        extra_files.append(SLEEP_TREE_FILE)
 
     _write_json(output_dir / "config.json", bundle_config)
     _write_json(output_dir / "preprocessing.json", preprocessing)
@@ -1473,7 +1487,9 @@ def build_release_bundle(
 
     # Assets are checksummed alongside the fixed bundle files so a tampered
     # figure is caught by verify_bundle and travels in the same upload commit.
-    checksummed = [name for name in BUNDLE_FILES if name != "checksums.sha256"] + list(assets)
+    checksummed = (
+        [name for name in BUNDLE_FILES if name != "checksums.sha256"] + extra_files + list(assets)
+    )
     (output_dir / "checksums.sha256").write_text(_checksums(output_dir, checksummed))
 
     return ReleaseBundle(

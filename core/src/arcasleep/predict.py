@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from arcasleep.divisor import adult_probabilities, divisor_vector, hybrid_calls
+from arcasleep.divisor import adult_probabilities, divisor_vector, hybrid_calls, summed_sleep
 
 #: Stage names in readout order; the network emits ``num_classes`` of them.
 STAGE_NAMES = ("wake", "light", "deep", "rem")
@@ -118,11 +118,13 @@ class Prediction:
 
     ``stage`` is the corrected label (the model with the GGIR sleep filter
     applied); ``None`` means no correction was made, and it falls back to the
-    raw argmax. ``stage_raw`` is always that raw argmax. ``is_nap`` flags
+    raw call. ``stage_raw`` is always that raw call (see :func:`predict`). ``is_nap`` flags
     corrected sleep outside every estimated main-sleep window; that sleep is
     kept, not removed. ``is_sib`` and ``is_spt`` are GGIR's per-epoch
     sustained-inactivity and sleep-period judgements, ``None`` without the
-    filter.
+    filter. ``is_tree_sleep`` is the bundled sleep/wake tree's sleep call, ``None``
+    when the bundle has no tree or the filter did not run; when it is set, it
+    replaces ``is_sib`` as the test for model sleep outside the sleep period.
 
     ``psg`` is the PSG stage name per epoch, ``""`` where the epoch is not
     scored. Only a recording scored against its PSG has one
@@ -141,6 +143,7 @@ class Prediction:
     is_sib: np.ndarray | None = None
     is_spt: np.ndarray | None = None
     psg: np.ndarray | None = None
+    is_tree_sleep: np.ndarray | None = None
 
     @property
     def stages(self) -> np.ndarray:
@@ -188,12 +191,14 @@ class Prediction:
             "stage_raw",
             "is_nap",
             "is_sib",
+            "is_tree_sleep",
             "is_spt",
             "is_gap",
             *(["psg"] if self.psg is not None else []),
         ]
         n = self.epoch_start_s.shape[0]
         sib = _flag_text(self.is_sib, n)
+        tree_sleep = _flag_text(self.is_tree_sleep, n)
         spt = _flag_text(self.is_spt, n)
         with path.open("w", newline="") as handle:
             writer = csv.writer(handle)
@@ -221,6 +226,7 @@ class Prediction:
                         raw,
                         int(nap),
                         sib[k],
+                        tree_sleep[k],
                         spt[k],
                         int(gap),
                         *([self.psg[k]] if self.psg is not None else []),
@@ -288,6 +294,7 @@ def read_prediction_csv(path: Path | str) -> Prediction:
         is_nap=None if is_nap is None else is_nap.astype(np.int8),
         is_sib=flags("is_sib"),
         is_spt=flags("is_spt"),
+        is_tree_sleep=flags("is_tree_sleep"),
         psg=np.array([row["psg"] for row in rows], dtype=object) if "psg" in columns else None,
     )
 
@@ -303,6 +310,10 @@ class Predictor:
 
     #: ``(wake, light, deep, REM)`` stage divisor of the bundle, ``None`` for the model's own argmax.
     divisor: np.ndarray | None = None
+    #: Overlapping-window step (epochs) the bundle is scored with by default, ``None`` for consecutive windows.
+    window_step: int | None = None
+    #: The bundle's sleep/wake tree for the sleep filter, ``None`` when it has none.
+    sleep_tree: dict | None = None
 
     def __init__(self, bundle_dir: Path | str):
         from arcasleep.artifacts.publish import bundle_family, load_bundle_model
@@ -323,6 +334,8 @@ class Predictor:
         self.min_sampling_hz = float(self.processing.fs)
         stage_divisor = json.loads((bundle_dir / "config.json").read_text()).get("stage_divisor")
         self.divisor = None if stage_divisor is None else divisor_vector(stage_divisor)
+        self.sleep_tree = load_sleep_tree(bundle_dir)
+        self.window_step = json.loads((bundle_dir / "config.json").read_text()).get("window_step")
 
     def features(
         self, accel: np.ndarray, origin: float | str | None = None
@@ -361,13 +374,15 @@ class Predictor:
         ggir_error_fails: bool = False,
         subject_id: str | None = None,
         window_step: int | None = None,
+        argmax: bool = False,
     ) -> Prediction:
         """Score one recording; see :func:`predict`.
 
         With ``window_step`` a model with a fixed context scores overlapping windows
-        that start every ``window_step`` epochs, and each epoch's logits are the
-        taper-weighted mean over the windows covering it
-        (:func:`overlapping_window_logits`). ``None`` scores consecutive windows.
+        that start every ``window_step`` epochs, and each epoch's probabilities are the
+        taper-weighted mean of the windows' softmax outputs covering it
+        (:func:`overlapping_window_probabilities`). ``None`` uses the bundle's
+        ``window_step``, and consecutive windows when it has none.
         """
         n_stages = len(self.stage_names)
         if return_gap_head and self.model.config.output_classes <= n_stages:
@@ -390,12 +405,15 @@ class Predictor:
         # consecutive windows; the last one, or a whole recording scored in
         # one pass, is padded with absent epochs, as in training.
         L = self.context_epochs or -(-n_epochs // self.epoch_multiple) * self.epoch_multiple
+        if window_step is None:
+            window_step = self.window_step
         if window_step is not None:
             if not self.context_epochs:
                 raise ValueError("window_step needs a model with a fixed context window")
-            logits = overlapping_window_logits(
+            blended = overlapping_window_probabilities(
                 self.model.infer, inputs, n_epochs, L, window_step, model_fpe
             )
+            probabilities, gap_head = _stage_and_gap_from_probabilities(blended, n_stages)
         else:
             chunks = [
                 pad_recording_input(inputs[s * model_fpe : (s + L) * model_fpe], L, model_fpe)
@@ -403,15 +421,17 @@ class Predictor:
             ]
             logits = self.model.infer(np.stack(chunks))
             logits = logits.reshape(-1, logits.shape[-1])[:n_epochs]
-        probabilities, gap_head = _stage_and_gap_probabilities(logits, n_stages)
+            probabilities, gap_head = _stage_and_gap_probabilities(logits, n_stages)
         _, missing = split_gap_row(pooled)
         epoch_start_s = origin_s + EPOCH_SECONDS * np.arange(n_epochs)
         is_gap = missing >= 1.0
         if self.divisor is None:
-            stage_raw = _label_epochs(probabilities, self.stage_names, is_gap)
+            stage_raw = _label_epochs(probabilities, self.stage_names, is_gap, summed=not argmax)
         else:
             names = np.asarray(self.stage_names, dtype=object)
-            stage_raw = names[hybrid_calls(probabilities, probabilities, self.divisor)]
+            stage_raw = names[
+                hybrid_calls(probabilities, probabilities, self.divisor, summed=not argmax)
+            ]
             stage_raw[is_gap] = GAP_LABEL_NAME
             probabilities = adult_probabilities(probabilities, self.divisor)
         return finish_prediction(
@@ -426,6 +446,7 @@ class Predictor:
             ggir_sleep_filter=ggir_sleep_filter,
             ggir_error_fails=ggir_error_fails,
             subject_id=subject_id,
+            sleep_tree=self.sleep_tree,
         )
 
 
@@ -447,6 +468,32 @@ def window_starts(n_epochs: int, window: int, step: int) -> list[int]:
     if starts[-1] != last:
         starts.append(last)
     return starts
+
+
+def overlapping_window_probabilities(
+    infer,
+    inputs: np.ndarray,
+    n_epochs: int,
+    window: int,
+    step: int,
+    frames_per_epoch: int,
+    batch_size: int = 8,
+) -> np.ndarray:
+    """Per-epoch class probabilities ``(n_epochs, classes)`` from overlapping windows.
+
+    As :func:`overlapping_window_logits`, but each window's output is turned into
+    probabilities by a softmax over all its classes first, and each epoch's
+    probabilities are the taper-weighted mean of those of the windows covering it.
+    """
+    return overlapping_window_logits(
+        lambda x: _softmax(np.asarray(infer(x), dtype=np.float64)),
+        inputs,
+        n_epochs,
+        window,
+        step,
+        frames_per_epoch,
+        batch_size,
+    )
 
 
 def overlapping_window_logits(
@@ -508,11 +555,13 @@ def finish_prediction(
     ggir_sleep_filter: bool = True,
     ggir_error_fails: bool = False,
     subject_id: str | None = None,
+    sleep_tree: dict | None = None,
 ) -> Prediction:
     """A :class:`Prediction` from per-epoch model output and its raw stage labels.
 
     Applies the GGIR sleep filter (see :func:`predict`) to ``stage_raw`` and
-    summarizes the result.
+    summarizes the result. With ``sleep_tree``, the tree's sleep call replaces
+    GGIR's SIB test for model sleep outside the sleep period.
     """
     from arcasleep.data.prepare import clean_accelerometer_rows
     from arcasleep.ggir import evaluate as ggir_evaluate
@@ -520,6 +569,7 @@ def finish_prediction(
     stage = None
     is_nap = None
     ggir = None
+    tree_sleep = None
     nap_minutes: float | None = None
     if ggir_sleep_filter:
         try:
@@ -527,7 +577,9 @@ def finish_prediction(
             clean = clean_accelerometer_rows(np.asarray(accel, dtype=np.float64))
             clean = clean[clean[:, 0] >= origin_s]
             ggir = ggir_evaluate(clean, epoch_start_s, epoch_start_s.shape[0])
-            stage, is_nap = _filter_labels(stage_raw, is_gap, ggir)
+            if sleep_tree is not None:
+                tree_sleep = tree_sleep_epochs(sleep_tree, clean, origin_s, epoch_start_s.shape[0])
+            stage, is_nap = _filter_labels(stage_raw, is_gap, ggir, tree_sleep)
             nap_minutes = float(np.count_nonzero(is_nap)) * EPOCH_SECONDS / 60.0
         except Exception as exc:
             if ggir_error_fails:
@@ -538,7 +590,7 @@ def finish_prediction(
                 RuntimeWarning,
                 stacklevel=3,
             )
-            stage = is_nap = ggir = nap_minutes = None
+            stage = is_nap = ggir = tree_sleep = nap_minutes = None
 
     summary = _summarize(stage if stage is not None else stage_raw, is_gap, nap_minutes, subject_id)
     return Prediction(
@@ -553,7 +605,38 @@ def finish_prediction(
         summary=summary,
         is_sib=None if ggir is None else ggir.is_sib,
         is_spt=None if ggir is None else ggir.is_spt,
+        is_tree_sleep=tree_sleep,
     )
+
+
+#: File name of the sleep/wake tree a bundle may carry for the sleep filter.
+SLEEP_TREE_FILE = "sleep_wake_tree.safetensors"
+
+
+def load_sleep_tree(bundle_dir: Path | str) -> dict | None:
+    """The bundle's sleep/wake tree (:data:`SLEEP_TREE_FILE`), ``None`` when it has none."""
+    path = Path(bundle_dir) / SLEEP_TREE_FILE
+    if not path.exists():
+        return None
+    from arcasleep_tree import tree
+
+    return tree.load(path)
+
+
+def tree_sleep_epochs(
+    sleep_tree: dict, accel: np.ndarray, origin_s: float, n_epochs: int
+) -> np.ndarray:
+    """Per epoch of the model's grid, whether the tree calls sleep (any stage but wake).
+
+    The tree scores the same accelerometer rows on the same 30 s grid from ``origin_s``.
+    """
+    from arcasleep_tree import recording
+
+    stage = recording.predict(sleep_tree, accel, origin=origin_s).stage.to_numpy()
+    out = np.zeros(n_epochs, dtype=bool)
+    m = min(n_epochs, stage.shape[0])
+    out[:m] = stage[:m] != 0
+    return out
 
 
 def load_predictor(bundle_dir: Path | str) -> Predictor:
@@ -571,6 +654,7 @@ def predict(
     ggir_error_fails: bool = False,
     subject_id: str | None = None,
     window_step: int | None = None,
+    argmax: bool = False,
 ) -> Prediction:
     """Per-epoch sleep stages for one recording.
 
@@ -586,18 +670,27 @@ def predict(
     ``gap_head`` output; it needs a model trained with a gap head.
 
     With ``ggir_sleep_filter`` (the default) the corrected ``stage`` column has
-    non-SIB quiet wakefulness outside the main sleep window demoted to wake,
-    and sleep outside that window flagged as naps but kept; inside the window
-    sleep is never flipped to wake, and a recording <= 9 h is all one main
-    sleep window, so the SIB judgement changes nothing for it. Pass ``False``
+    quiet wakefulness outside the main sleep window demoted to wake, and sleep
+    outside that window flagged as naps but kept. Inside the window sleep is
+    never flipped to wake, and a recording <= 9 h is all one main sleep window,
+    so the filter changes nothing for it. Outside the window, model sleep is
+    kept where the bundle's sleep/wake tree (:data:`SLEEP_TREE_FILE`) calls
+    sleep; a bundle without one uses GGIR's SIB judgement instead. Pass ``False``
     for the raw model argmax. If the filter itself raises, the raw prediction
     is returned with the filter columns empty and a warning;
     ``ggir_error_fails=True`` re-raises instead.
 
+    An epoch is sleep when P(light) + P(deep) + P(REM) ≥ P(wake), that is when the
+    summed sleep probability is ≥ 0.5; its stage is the most probable of light,
+    deep and REM (after the bundle's stage divisor, when it has one), and any
+    other epoch is wake. ``argmax=True`` calls the most probable of the four
+    stages instead, as releases before 0.3.0 did.
+
     ``window_step`` scores a model with a fixed context in overlapping windows
-    that start every ``window_step`` epochs, weighting each window's output by a
-    taper that counts epochs near its edges less (:meth:`Predictor.predict`);
-    the default scores consecutive windows.
+    that start every ``window_step`` epochs, averaging the windows' probabilities
+    under a taper that counts epochs near a window's edges less
+    (:meth:`Predictor.predict`); the default is the bundle's own ``window_step``,
+    and consecutive windows for a bundle without one.
 
     Loads the bundle on every call; use :class:`Predictor` for many recordings.
     """
@@ -609,6 +702,7 @@ def predict(
         ggir_error_fails=ggir_error_fails,
         subject_id=subject_id,
         window_step=window_step,
+        argmax=argmax,
     )
 
 
@@ -669,10 +763,22 @@ def _is_numeric_row(line: str, delimiter: str | None) -> bool:
 
 
 def _label_epochs(
-    probabilities: np.ndarray, stage_names: tuple[str, ...], is_gap: np.ndarray
+    probabilities: np.ndarray,
+    stage_names: tuple[str, ...],
+    is_gap: np.ndarray,
+    *,
+    summed: bool = False,
 ) -> np.ndarray:
-    """Argmax stage name per epoch, overwriting gaps with ``"gap"``."""
-    names = np.asarray(stage_names, dtype=object)[probabilities.argmax(axis=-1)]
+    """Stage name per epoch, overwriting gaps with ``"gap"``.
+
+    The argmax stage; with ``summed`` an epoch is sleep when its summed sleep
+    probability is ≥ 0.5, staged by its most probable sleep class, else wake.
+    """
+    calls = probabilities.argmax(axis=-1)
+    if summed:
+        asleep = summed_sleep(probabilities)
+        calls = np.where(asleep, 1 + probabilities[:, 1:4].argmax(axis=-1), 0)
+    names = np.asarray(stage_names, dtype=object)[calls]
     names = np.array(names, dtype=object)
     names[is_gap] = GAP_LABEL_NAME
     return names
@@ -700,12 +806,17 @@ def _apply_ggir_filter(
 
 
 def _filter_labels(
-    stage_raw: np.ndarray, is_gap: np.ndarray, ggir
+    stage_raw: np.ndarray, is_gap: np.ndarray, ggir, tree_sleep: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
-    """:func:`_apply_ggir_filter` on stage labels already decided."""
+    """:func:`_apply_ggir_filter` on stage labels already decided.
+
+    Outside the sleep period, model sleep is kept where ``tree_sleep`` is True, or
+    where GGIR found sustained inactivity when ``tree_sleep`` is None.
+    """
     stage = np.array(stage_raw, dtype=object)
     sleep = ~np.isin(stage, ["wake", GAP_LABEL_NAME])
-    demote = sleep & ~ggir.is_sib & ~ggir.is_spt
+    keep = ggir.is_sib if tree_sleep is None else tree_sleep
+    demote = sleep & ~keep & ~ggir.is_spt
     stage[demote] = "wake"
     sleep = sleep & ~demote
     is_nap = np.zeros(stage.shape[0], dtype=np.int8)
@@ -747,6 +858,20 @@ def _softmax(logits: np.ndarray) -> np.ndarray:
     return exp / exp.sum(axis=-1, keepdims=True)
 
 
+def _stage_and_gap_from_probabilities(
+    probabilities: np.ndarray, n_stages: int
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """``(stage probabilities, gap-head probability or None)`` from probabilities over all classes.
+
+    The stages are the stage columns renormalised to sum to 1; the gap head is its column.
+    """
+    stages = probabilities[:, :n_stages]
+    stages = stages / stages.sum(axis=-1, keepdims=True)
+    if probabilities.shape[-1] <= n_stages:
+        return stages, None
+    return stages, probabilities[:, n_stages]
+
+
 def _stage_and_gap_probabilities(
     logits: np.ndarray, n_stages: int
 ) -> tuple[np.ndarray, np.ndarray | None]:
@@ -773,6 +898,7 @@ def predict_files(
     ggir_error_fails: bool = False,
     hypnogram: bool = False,
     time_unit: str | None = None,
+    argmax: bool = False,
 ) -> list[Path]:
     """Write ``<output_dir>/<input stem>.csv`` per input, one CSV containing per-subject 
     summary metrics, and one CSV that has macro statistics for all iputs.
@@ -782,7 +908,7 @@ def predict_files(
     their ``tst_minutes`` into a mean, standard error and deciles. With ``hypnogram``, a
     ``<stem>.png`` hypnogram is saved beside each prediction. ``time_unit`` is
     the inputs' timestamp unit, detected per file when ``None``; see
-    :func:`read_accelerometer`.
+    :func:`read_accelerometer`. ``argmax`` is as in :func:`predict`.
     """
     predictor = load_predictor(bundle_dir)
     output_dir = Path(output_dir)
@@ -796,6 +922,7 @@ def predict_files(
             ggir_sleep_filter=ggir_sleep_filter,
             ggir_error_fails=ggir_error_fails,
             subject_id=path.stem,
+            argmax=argmax,
         )
         written.append(result.to_csv(output_dir / f"{path.stem}.csv"))
         if result.summary is not None:
